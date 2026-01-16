@@ -18,6 +18,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_csp_header(request: Request, call_next):
+    response = await call_next(request)
+    # Allow unsafe-eval and unsafe-inline to fix frontend loading issues
+    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: http: https: ws: wss:;"
+    return response
+
 app.include_router(router, prefix="/api/v1")
 
 # --- Frontend Static Serving ---
