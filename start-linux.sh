@@ -7,8 +7,8 @@ BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
 export FRONTEND_DIST="$ROOT_DIR/dist"
 RUNS_DIR="$ROOT_DIR/.local/runs"
 NODE_DIR="$ROOT_DIR/.local/node"
-# Using Node v18 (LTS)
-NODE_VER="v18.19.0"
+# Using Node v20 (LTS) for compatibility with modern libs
+NODE_VER="v20.10.0"
 NODE_DIST="node-$NODE_VER-linux-x64"
 
 GREEN='\033[0;32m'
@@ -34,7 +34,13 @@ if [ ! -f "$FRONTEND_DIST/index.html" ]; then
 
     echo "Building Frontend..."
     cd "$ROOT_DIR"
+    # Clean install to avoid version conflicts
+    rm -rf node_modules package-lock.json
+    
+    # Install dependencies, forcing Tailwind v3 for stability
     npm install
+    npm install -D tailwindcss@3.4.1 postcss autoprefixer
+    
     npm run build
     
     if [ ! -d "$FRONTEND_DIST" ]; then
