@@ -33,15 +33,16 @@ if [ ! -f "$FRONTEND_DIST/index.html" ]; then
     echo "NPM version: $(npm -v)"
 
     echo "Building Frontend..."
-    cd "$ROOT_DIR/apps/portal-frontend"
+    cd "$ROOT_DIR"
     npm install
     npm run build
     
-    # Move artifacts to expected location
-    echo "Deploying to $FRONTEND_DIST..."
-    rm -rf "$FRONTEND_DIST"
-    mv dist "$FRONTEND_DIST"
-    cd "$ROOT_DIR"
+    if [ ! -d "$FRONTEND_DIST" ]; then
+        echo "Error: Build failed, dist directory not found."
+        exit 1
+    fi
+    
+    echo "Frontend built successfully at $FRONTEND_DIST"
 else
     echo -e "${GREEN}[0/4] Frontend build found at $FRONTEND_DIST. Skipping build.${NC}"
 fi
