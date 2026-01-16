@@ -1,18 +1,24 @@
 services:
+  # 1. Database
   postgres:
-    image: postgres:16
+    image: postgres:15-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: rl
       POSTGRES_PASSWORD: rl
       POSTGRES_DB: rl_platform
-    ports:
-      - "5432:5432"
     volumes:
-      - rl_postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
+  # 2. Object Storage
   minio:
-    image: minio/minio:RELEASE.2024-12-18T00-00-00Z
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -21,24 +27,36 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - rl_minio_data:/data
+      - minio_data:/data
 
-  portal-backend:
+  # 3. RL Platform (All-in-One)
+  rl-platform:
     build:
-      context: ./apps/portal-backend
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
     depends_on:
-      - postgres
-      - minio
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000" # Web UI + API
+      - "6006:6006" # TensorBoard
+    volumes:
+      - ./runs_data:/app/.local/runs # Persist experiment data
     environment:
+      # Database
       DATABASE_URL: postgresql+psycopg2://rl:rl@postgres:5432/rl_platform
+      # MinIO Config
       S3_ENDPOINT_URL: http://minio:9000
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: rl-artifacts
-      ALLOW_ANON: "true"
-    ports:
-      - "8000:8000"
+      # Executor Config
+      EXECUTOR_MODE: local
+      LOCAL_RUN_ROOT: /app/.local/runs
+      # Frontend Hosting
+      SERVE_FRONTEND: "true"
 
 volumes:
-  rl_postgres_data:
-  rl_minio_data:
+  postgres_data:
+  minio_data:

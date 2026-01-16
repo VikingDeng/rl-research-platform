@@ -30,26 +30,40 @@ Designed for researchers who need reproducible experiments, automated evaluation
 
 ## 🚀 Quick Start
 
-### Prerequisites
-*   **OS**: Linux (Recommended) or macOS.
-*   **Dependencies**: Python 3.9+, Node.js 16+, npm.
-*   **Optional**: NVIDIA Drivers (for GPU training).
+### Option A: Docker Deployment (Recommended)
+**Best for**: Servers with Docker installed. Zero configuration required.
 
-### One-Click Launch
+```bash
+# 1. Start the platform (Builds everything automatically)
+docker-compose up -d --build
 
-We provide a unified startup script that manages Backend, Frontend, and TensorBoard services.
+# 2. View logs
+docker-compose logs -f
+```
+Access at: **http://localhost:8000**
 
+---
+
+### Option B: User-Space Deployment (No Docker/Sudo)
+**Best for**: Shared HPC clusters, School servers without root access.
+
+**Step 1: Local Preparation (On your Mac/PC)**
+Build the frontend assets locally to avoid installing Node.js on the server.
+```bash
+cd apps/portal-frontend
+npm install && npm run build
+# Now upload the entire project (including the new 'dist' folder) to your server.
+```
+
+**Step 2: Server Launch**
 ```bash
 # 1. Grant execution permissions
 chmod +x start-linux.sh
 
-# 2. Start the platform
+# 2. Start the platform (Uses Python venv + SQLite)
 ./start-linux.sh
 ```
-
-Access the dashboard at: **http://localhost:5173** (or your server IP).
-
-> **Note**: The first launch will take a few minutes to create the Python virtual environment and install dependencies (`torch`, `ray`, `stable-baselines3`, etc.).
+Access at: **http://localhost:8000**
 
 ---
 

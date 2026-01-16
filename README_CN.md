@@ -28,26 +28,40 @@
 
 ## 🚀 快速开始
 
-### 前置要求
-*   **操作系统**: Linux (推荐) 或 macOS。
-*   **环境依赖**: Python 3.9+, Node.js 16+, npm。
-*   **硬件建议**: NVIDIA GPU（用于加速训练）。
-
-### 一键启动
-
-我们提供了一个统一的启动脚本，自动管理后端、前端和 TensorBoard 服务。
+### 方案 A：Docker 部署 (强烈推荐)
+**适用场景**: 有 Docker 环境的服务器。零配置，全自动。
 
 ```bash
-# 1. 赋予执行权限
-chmod +x start-linux.sh
+# 1. 启动平台 (自动构建镜像、初始化数据库)
+docker-compose up -d --build
 
-# 2. 启动平台
-./start-linux.sh
+# 2. 查看日志
+docker-compose logs -f
+```
+访问地址: **http://localhost:8000**
+
+---
+
+### 方案 B：用户态部署 (无 Docker/无 Sudo)
+**适用场景**: 学校集群、共享服务器。
+
+**步骤 1: 本地准备 (在你的电脑上)**
+先编译前端，避免在服务器上安装 Node.js。
+```bash
+cd apps/portal-frontend
+npm install && npm run build
+# 然后将整个项目（包含生成的 dist 文件夹）上传到服务器。
 ```
 
-启动后访问: **http://localhost:5173** (或服务器 IP)。
+**步骤 2: 服务器启动**
+```bash
+# 1. 赋予权限
+chmod +x start-linux.sh
 
-> **注意**: 首次启动会创建 Python 虚拟环境并安装依赖 (`torch`, `ray`, `sb3` 等)，可能需要几分钟时间。
+# 2. 启动平台 (使用 Python venv + SQLite)
+./start-linux.sh
+```
+访问地址: **http://localhost:8000**
 
 ---
 
