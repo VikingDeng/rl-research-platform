@@ -47,25 +47,16 @@ pip install -r runner/requirements.txt tensorboard
 
 # 2. Database & Seeding (Using SQLite for User Mode)
 echo -e "${GREEN}[2/4] Initializing Database...${NC}"
-export DATABASE_URL="sqlite:///$ROOT_DIR/rl_platform.db"
+# Use relative path to avoid path parsing issues (3 vs 4 slashes)
+export DATABASE_URL="sqlite:///rl_platform.db"
 
-# Check if migrations exist, if not, generate them
-VERSIONS_DIR="$BACKEND_DIR/app/db/migrations/versions"
+# Initialize DB directly (Force Create Tables)
+export PYTHONPATH=$BACKEND_DIR
+echo "Running direct DB initialization..."
+python3 scripts/init_db_direct.py
 
-# FORCE CLEANUP for SQLite: Remove old migrations to avoid Postgres/SQLite mismatch (ARRAY types)
-# This is a destructive operation but necessary for the "User Mode" deployment to work out-of-the-box.
-if [[ "$DATABASE_URL" == sqlite* ]]; then
-    echo "SQLite mode detected. Cleaning up old migration versions to ensure compatibility..."
-    rm -f "$VERSIONS_DIR"/*.py
-fi
-
-if [ -z "$(ls -A $VERSIONS_DIR 2>/dev/null)" ]; then
-   echo "No migration versions found. Generating initial revision..."
-   python3 -m alembic revision --autogenerate -m "init_sqlite_compatible"
-fi
-
-# Run Migrations using python3 -m to ensure it finds the venv's alembic
-python3 -m alembic upgrade head
+# Run Seed
+python3 runner/scripts/patch_db.py || python3 -c "from scripts.seed_full import seed; seed()" || echo "Seed skipped or failed."
 
 # Run Seed
 export PYTHONPATH=$BACKEND_DIR
