@@ -1,0 +1,444 @@
+import json
+import queue
+import threading
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from app.db import models
+from app.db.session import SessionLocal
+from sqlalchemy.orm import Session
+from app.executors.base import ExecutionJob
+from app.core.config import settings
+from app.executors.determined import DeterminedExecutor
+from app.executors.local import LocalExecutor
+from app.services.artifacts import artifact_service
+from app.services.eval_matrix import eval_matrix_service
+from app.services.metrics import metrics_service
+from app.services.repro_bundle import repro_bundle_service
+from app.services.retention import apply_checkpoint_policy
+from app.services.runner_bundle import runner_bundle_service
+from app.services.status import can_transition
+
+
+class JobManager:
+    def __init__(self) -> None:
+        self._queue: "queue.Queue[str]" = queue.Queue()
+        executor_mode = settings.executor_mode.lower()
+        if executor_mode == "determined":
+            self._executor = DeterminedExecutor()
+            self._executor_name = "determined"
+        else:
+            self._executor = LocalExecutor()
+            self._executor_name = "local"
+        self._stop = threading.Event()
+        self._dispatcher = threading.Thread(target=self._dispatch_loop, daemon=True)
+        self._lock = threading.Lock()
+        self._active: dict[str, str] = {}
+
+    def start(self, enqueue_pending: bool = True) -> None:
+        if self._stop.is_set():
+            self._stop.clear()
+        started = False
+        if not self._dispatcher.is_alive():
+            self._dispatcher = threading.Thread(target=self._dispatch_loop, daemon=True)
+            self._dispatcher.start()
+            started = True
+        if enqueue_pending and started:
+            self._enqueue_pending()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _enqueue_pending(self) -> None:
+        db = SessionLocal()
+        try:
+            jobs = db.query(models.Job).filter(models.Job.status == "PENDING").all()
+            for job in jobs:
+                self._queue.put(job.id)
+        finally:
+            db.close()
+
+    def submit(self, job_id: str) -> None:
+        if not self._dispatcher.is_alive():
+            self.start(enqueue_pending=False)
+        self._queue.put(job_id)
+
+    def cancel(self, job_id: str, reason: Optional[str] = None) -> models.Job:
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            if not job:
+                raise ValueError("job_not_found")
+            if not can_transition(job.status, "CANCELED"):
+                raise ValueError("invalid_status_transition")
+            job.status = "CANCELED"
+            job.message = reason or job.message
+            run = db.query(models.Run).filter(models.Run.id == job.run_id).first()
+            if run:
+                run.status = "CANCELED"
+            db.commit()
+            db.refresh(job)
+        finally:
+            db.close()
+
+        backend_ref = None
+        with self._lock:
+            backend_ref = self._active.get(job_id)
+        if backend_ref:
+            self._executor.cancel(backend_ref)
+        return job
+
+    def pause(self, job_id: str, reason: Optional[str] = None) -> models.Job:
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            if not job:
+                raise ValueError("job_not_found")
+            if job.status != "RUNNING":
+                raise ValueError("invalid_status_transition")
+            job.message = reason or "paused"
+            db.commit()
+            db.refresh(job)
+        finally:
+            db.close()
+
+        backend_ref = None
+        with self._lock:
+            backend_ref = self._active.get(job_id)
+        if backend_ref and hasattr(self._executor, "pause"):
+            self._executor.pause(backend_ref)
+        return job
+
+    def resume(self, job_id: str, reason: Optional[str] = None) -> models.Job:
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            if not job:
+                raise ValueError("job_not_found")
+            if job.status == "RUNNING" and (job.message or "").lower().startswith("paused"):
+                job.message = reason or None
+                db.commit()
+                db.refresh(job)
+                backend_ref = None
+                with self._lock:
+                    backend_ref = self._active.get(job_id)
+                if backend_ref and hasattr(self._executor, "resume"):
+                    self._executor.resume(backend_ref)
+                return job
+            if job.status != "CANCELED":
+                raise ValueError("invalid_status_transition")
+            job.status = "PENDING"
+            job.message = reason or job.message
+            job.backend_ref = None
+            run = db.query(models.Run).filter(models.Run.id == job.run_id).first()
+            if run:
+                run.status = "PENDING"
+            db.commit()
+            db.refresh(job)
+        finally:
+            db.close()
+
+        self.submit(job_id)
+        return job
+
+    def _dispatch_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                job_id = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            threading.Thread(target=self._run_job, args=(job_id,), daemon=True).start()
+
+    def _run_job(self, job_id: str) -> None:
+        job = self._load_job(job_id)
+        if not job or job.status != "PENDING":
+            return
+
+        run = self._load_run(job.run_id)
+        if not run:
+            return
+
+        self._update_status(run, job, "RUNNING")
+        exec_job = ExecutionJob(
+            job_id=job.id,
+            run_id=run.id,
+            run_type=run.type,
+            config=run.config,
+            gpus=run.gpu or 0,
+        )
+        try:
+            backend_ref = self._executor.submit(exec_job)
+        except Exception as exc:
+            self._update_status(run, job, "FAILED")
+            self._set_job_message(job.id, str(exc))
+            return
+        self._set_backend_ref(job_id, backend_ref, self._executor_name)
+
+        with self._lock:
+            self._active[job_id] = backend_ref
+
+        result = self._executor.wait(backend_ref)
+
+        with self._lock:
+            self._active.pop(job_id, None)
+
+        self._finalize_job(job_id, result.exit_code, result.metrics_path, result.checkpoint_path)
+
+    def _load_job(self, job_id: str) -> Optional[models.Job]:
+        db = SessionLocal()
+        try:
+            return db.query(models.Job).filter(models.Job.id == job_id).first()
+        finally:
+            db.close()
+
+    def _load_run(self, run_id: str) -> Optional[models.Run]:
+        db = SessionLocal()
+        try:
+            return db.query(models.Run).filter(models.Run.id == run_id).first()
+        finally:
+            db.close()
+
+    def _update_status(self, run: models.Run, job: models.Job, status: str) -> None:
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job.id).first()
+            run = db.query(models.Run).filter(models.Run.id == run.id).first()
+            if job and run:
+                job.status = status
+                run.status = status
+                db.commit()
+        finally:
+            db.close()
+
+    def _set_backend_ref(self, job_id: str, backend_ref: str, executor: str) -> None:
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            if job:
+                job.backend_ref = backend_ref
+                job.executor = executor
+                db.commit()
+        finally:
+            db.close()
+
+    def _set_job_message(self, job_id: str, message: str) -> None:
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            if job:
+                job.message = message
+                db.commit()
+        finally:
+            db.close()
+
+    def _finalize_job(
+        self,
+        job_id: str,
+        exit_code: int,
+        metrics_path: str,
+        checkpoint_path: Optional[str],
+    ) -> None:
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            if not job:
+                return
+            run = db.query(models.Run).filter(models.Run.id == job.run_id).first()
+            if not run:
+                return
+
+            final_status = "SUCCEEDED" if exit_code == 0 else "FAILED"
+            if not can_transition(job.status, final_status):
+                return
+            if job.status == "CANCELED":
+                return
+
+            series = metrics_service.read_series(run.id)
+            if series:
+                run.metrics = series
+                if run.type == "EVAL":
+                    result = db.query(models.EvalResult).filter(models.EvalResult.run_id == run.id).first()
+                    if result:
+                        result.metrics = {
+                            key: values[-1]["value"] for key, values in series.items() if values
+                        }
+
+            checkpoint_added = False
+            try:
+                existing_checkpoints = (
+                    db.query(models.Checkpoint).filter(models.Checkpoint.run_id == run.id).all()
+                )
+                for checkpoint in existing_checkpoints:
+                    if "latest" in (checkpoint.tags or []):
+                        checkpoint.tags = [tag for tag in checkpoint.tags if tag != "latest"]
+
+                if metrics_path:
+                    metrics_content = metrics_service.read_raw(metrics_path)
+                    if metrics_content:
+                        artifact_service.write_artifact(
+                            db,
+                            run.id,
+                            "/metrics/metrics.jsonl",
+                            metrics_content,
+                            "application/json",
+                        )
+
+                if checkpoint_path and Path(checkpoint_path).exists():
+                    checkpoint_data = Path(checkpoint_path).read_text(encoding="utf-8")
+                    checkpoint_payload = json.loads(checkpoint_data)
+                    step = int(checkpoint_payload.get("step", 0))
+                    metrics = checkpoint_payload.get("metrics") or {}
+                    artifact_service.write_artifact(
+                        db,
+                        run.id,
+                        f"/checkpoints/ckpt_{step}.json",
+                        checkpoint_data,
+                        "application/json",
+                    )
+                    checkpoint = models.Checkpoint(
+                        run_id=run.id,
+                        step=step,
+                        metrics=metrics,
+                        path=f"s3://runs/{run.id}/checkpoints/ckpt_{step}.json",
+                        tags=["latest"],
+                    )
+                    db.add(checkpoint)
+                    checkpoint_added = True
+
+                if not checkpoint_added:
+                    last_step = 0
+                    last_metrics = {}
+                    for key, values in (series or {}).items():
+                        if values:
+                            last_step = max(last_step, int(values[-1]["step"]))
+                            last_metrics[key] = values[-1]["value"]
+                    if series or metrics_path:
+                        step = last_step
+                        payload = {
+                            "run_id": run.id,
+                            "step": step,
+                            "metrics": {
+                                "winRate": float(last_metrics.get("winRate", 0.0)),
+                                "returnMean": float(last_metrics.get("returnMean", 0.0)),
+                                "entropy": float(last_metrics.get("entropy", 0.0)),
+                            },
+                        }
+                        checkpoint_json = json.dumps(payload, indent=2)
+                        artifact_service.write_artifact(
+                            db,
+                            run.id,
+                            f"/checkpoints/ckpt_{step}.json",
+                            checkpoint_json,
+                            "application/json",
+                        )
+                        checkpoint = models.Checkpoint(
+                            run_id=run.id,
+                            step=step,
+                            metrics=payload["metrics"],
+                            path=f"s3://runs/{run.id}/checkpoints/ckpt_{step}.json",
+                            tags=["latest"],
+                        )
+                        db.add(checkpoint)
+                        checkpoint_added = True
+
+                db.flush()
+                apply_checkpoint_policy(db, run.id)
+            except ValueError as exc:
+                final_status = "FAILED"
+                job.message = str(exc)
+
+            if final_status == "SUCCEEDED":
+                try:
+                    if run.type == "EVAL":
+                        eval_matrix_service.materialize_eval_result(db, run)
+                    elif run.type == "MATRIX":
+                        eval_matrix_service.materialize_matrix_result(db, run)
+                except ValueError as exc:
+                    final_status = "FAILED"
+                    job.message = str(exc)
+
+            job.status = final_status
+            run.status = final_status
+
+            try:
+                runner_bundle_service.write_run_manifest(db, run, job, job.executor or "local")
+            except ValueError:
+                pass
+
+            try:
+                repro_bundle_service.generate(db, run)
+            except ValueError:
+                pass
+
+            if final_status == "SUCCEEDED":
+                try:
+                    self._trigger_auto_eval(db, run)
+                except Exception:
+                    pass
+
+            db.commit()
+        finally:
+            db.close()
+
+    def _trigger_auto_eval(self, db: Session, run: models.Run) -> None:
+        if run.type != "TRAIN":
+            return
+        if not isinstance(run.config, dict):
+            return
+        auto_eval = run.config.get("autoEval")
+        if not isinstance(auto_eval, dict):
+            return
+        protocol_id = auto_eval.get("protocolId")
+        trigger_on = str(auto_eval.get("triggerOn") or "").lower()
+        if not protocol_id:
+            return
+        if trigger_on and trigger_on not in {"train_succeeded", "succeeded", "on_train_succeeded"}:
+            return
+        protocol = db.query(models.EvalProtocol).filter(models.EvalProtocol.id == protocol_id).first()
+        if not protocol:
+            return
+        checkpoint = (
+            db.query(models.Checkpoint)
+            .filter(models.Checkpoint.run_id == run.id)
+            .order_by(models.Checkpoint.step.desc())
+            .first()
+        )
+        if not checkpoint:
+            return
+        project = db.query(models.Project).filter(models.Project.id == "system").first()
+        if not project:
+            project = models.Project(id="system", name="System", description="System generated runs", tags=["system"])
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+        eval_run = models.Run(
+            project_id=project.id,
+            name=f"eval-{protocol_id}-{datetime.utcnow().strftime('%H%M%S')}",
+            type="EVAL",
+            status="PENDING",
+            algo="eval",
+            env=protocol_id,
+            config={"protocolId": protocol_id, "policySnapshotId": checkpoint.id, "parentRunId": run.id},
+            metrics={"returnMean": [], "winRate": [], "entropy": []},
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        eval_job = models.Job(run_id=eval_run.id, status="PENDING")
+        db.add(eval_job)
+        db.commit()
+        db.refresh(eval_job)
+
+        result = models.EvalResult(run_id=eval_run.id, protocol_id=protocol_id, metrics={})
+        db.add(result)
+        db.commit()
+        db.refresh(result)
+
+        eval_run.config = {**(eval_run.config or {}), "evalResultId": result.id}
+        db.commit()
+        self.submit(eval_job.id)
+
+
+job_manager = JobManager()

@@ -1,0 +1,5 @@
+{
+  "name": "RL Research Platform",
+  "description": "A comprehensive frontend for Reinforcement Learning experiments, evaluation, and cross-play matrix analysis.",
+  "requestFramePermissions": []
+}

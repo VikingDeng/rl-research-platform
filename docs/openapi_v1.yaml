@@ -1,0 +1,3133 @@
+openapi: 3.1.0
+info:
+  title: RL Research Platform API
+  version: 1.0.0
+  description: |
+    Single source of truth for the RL Research Platform API.
+    This contract aligns the existing docs with the current frontend data model.
+  license:
+    name: Proprietary
+    identifier: UNLICENSED
+servers:
+  - url: /api/v1
+tags:
+  - name: Auth
+    description: Authentication
+  - name: Settings
+    description: System settings and platform metadata
+  - name: Projects
+    description: Project lifecycle and metadata
+  - name: Environments
+    description: Environment registry and versions
+  - name: Templates
+    description: Algorithm templates and versions
+  - name: Plugins
+    description: Plugin registry and versions
+  - name: Runs
+    description: Runs, checkpoints, and training submissions
+  - name: Jobs
+    description: Job lifecycle control
+  - name: Eval
+    description: Evaluation protocols, pools, and jobs
+  - name: Matrix
+    description: Matrix jobs and results
+  - name: Metrics
+    description: Metrics, logs, and streaming
+  - name: Artifacts
+    description: Artifacts and repro bundles
+  - name: Webhooks
+    description: Webhook subscriptions
+security:
+  - bearerAuth: []
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and receive an access token
+      operationId: postAuthLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      operationId: getAuthMe
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /settings:
+    get:
+      tags: [Settings]
+      summary: Get system settings summary
+      operationId: getSettings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [Settings]
+      summary: Update settings
+      operationId: patchSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /settings/token/rotate:
+    post:
+      tags: [Settings]
+      summary: Rotate API token
+      operationId: postSettingsTokenRotate
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRotateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /settings/retention/apply:
+    post:
+      tags: [Settings]
+      summary: Apply checkpoint retention policy to all runs
+      operationId: postSettingsRetentionApply
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionApplyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      operationId: getProjects
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Projects]
+      summary: Create project
+      operationId: postProjects
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /projects/{project_id}:
+    get:
+      tags: [Projects]
+      summary: Get project by ID
+      operationId: getProjectsByProjectId
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Projects]
+      summary: Update project
+      operationId: patchProjectsByProjectId
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Projects]
+      summary: Delete project
+      operationId: deleteProjectsByProjectId
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /envs:
+    get:
+      tags: [Environments]
+      summary: List environments
+      operationId: getEnvs
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EnvSpec'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /envs/{env_id}/versions:
+    get:
+      tags: [Environments]
+      summary: List environment versions
+      operationId: getEnvsByEnvIdVersions
+      parameters:
+        - $ref: '#/components/parameters/EnvId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EnvVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/envs:
+    post:
+      tags: [Environments]
+      summary: Register or update environment metadata
+      operationId: postAdminEnvs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvVersionUpsert'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/envs/{env_id}:
+    patch:
+      tags: [Environments]
+      summary: Update environment metadata
+      operationId: patchAdminEnvs
+      parameters:
+        - $ref: '#/components/parameters/EnvId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvSpecUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvSpec'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Environments]
+      summary: Archive environment
+      operationId: deleteAdminEnvs
+      parameters:
+        - $ref: '#/components/parameters/EnvId'
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/envs/{env_id}/versions:
+    post:
+      tags: [Environments]
+      summary: Add environment version
+      operationId: postAdminEnvsByEnvIdVersions
+      parameters:
+        - $ref: '#/components/parameters/EnvId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvVersionCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/envs/{env_id}/versions/{version}:
+    patch:
+      tags: [Environments]
+      summary: Update environment version
+      operationId: patchAdminEnvsByEnvIdVersionsByVersion
+      parameters:
+        - $ref: '#/components/parameters/EnvId'
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvVersionUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/envs/{env_id}/versions/{version}/freeze:
+    post:
+      tags: [Environments]
+      summary: Freeze environment version
+      operationId: postAdminEnvVersionsFreeze
+      parameters:
+        - $ref: '#/components/parameters/EnvId'
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /algos:
+    get:
+      tags: [Templates]
+      summary: List registered algorithms
+      operationId: getAlgos
+      parameters:
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Algo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /algos/{algo_id}/versions:
+    get:
+      tags: [Templates]
+      summary: List algorithm versions
+      operationId: getAlgoVersions
+      parameters:
+        - name: algo_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AlgoVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/algos:
+    post:
+      tags: [Templates]
+      summary: Register or update algorithm
+      operationId: postAdminAlgos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Algo'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Algo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/algos/{algo_id}:
+    patch:
+      tags: [Templates]
+      summary: Update algorithm metadata
+      operationId: patchAdminAlgos
+      parameters:
+        - name: algo_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlgoUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Algo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Templates]
+      summary: Archive algorithm
+      operationId: deleteAdminAlgos
+      parameters:
+        - name: algo_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/algos/{algo_id}/versions:
+    post:
+      tags: [Templates]
+      summary: Create algorithm version
+      operationId: postAdminAlgoVersions
+      parameters:
+        - name: algo_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlgoVersionCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlgoVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/algos/{algo_id}/versions/{version}:
+    patch:
+      tags: [Templates]
+      summary: Update algorithm version
+      operationId: patchAdminAlgoVersions
+      parameters:
+        - name: algo_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlgoVersionUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlgoVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/algos/{algo_id}/versions/{version}/freeze:
+    post:
+      tags: [Templates]
+      summary: Freeze algorithm version
+      operationId: postAdminAlgoVersionsFreeze
+      parameters:
+        - name: algo_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlgoVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /templates:
+    get:
+      tags: [Templates]
+      summary: List templates
+      operationId: getTemplates
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Template'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /projects/{project_id}/templates:
+    post:
+      tags: [Templates]
+      summary: Create template under project
+      operationId: postProjectsByProjectIdTemplates
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /templates/{template_id}:
+    get:
+      tags: [Templates]
+      summary: Get template by ID
+      operationId: getTemplatesByTemplateId
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Templates]
+      summary: Update template
+      operationId: patchTemplatesByTemplateId
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Templates]
+      summary: Archive template
+      operationId: deleteTemplatesByTemplateId
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /templates/{template_id}/versions:
+    post:
+      tags: [Templates]
+      summary: Create template version
+      operationId: postTemplatesByTemplateIdVersions
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateVersionCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /templates/{template_id}/versions/{version_id}/freeze:
+    post:
+      tags: [Templates]
+      summary: Freeze template version
+      operationId: postTemplateVersionsFreeze
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+        - name: version_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /plugins:
+    get:
+      tags: [Plugins]
+      summary: List plugins
+      operationId: getPlugins
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Plugin'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/plugins:
+    post:
+      tags: [Plugins]
+      summary: Register plugin version
+      operationId: postAdminPlugins
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginVersionCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/plugins/{plugin_id}:
+    patch:
+      tags: [Plugins]
+      summary: Update plugin metadata
+      operationId: patchAdminPlugins
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plugin'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Plugins]
+      summary: Archive plugin
+      operationId: deleteAdminPlugins
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /plugins/{plugin_id}/versions:
+    get:
+      tags: [Plugins]
+      summary: List plugin versions
+      operationId: getPluginsByPluginIdVersions
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PluginVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/plugins/{plugin_id}/versions/{version}/freeze:
+    post:
+      tags: [Plugins]
+      summary: Freeze plugin version
+      operationId: postAdminPluginVersionsFreeze
+      parameters:
+        - $ref: '#/components/parameters/PluginId'
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /train-jobs:
+    post:
+      tags: [Runs]
+      summary: Submit training job
+      operationId: postTrainJobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrainJobRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainJobResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /runs:
+    get:
+      tags: [Runs]
+      summary: List runs
+      operationId: getRuns
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: projectId
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/RunType'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /runs/{run_id}:
+    get:
+      tags: [Runs]
+      summary: Get run by ID
+      operationId: getRunsByRunId
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/job:
+    get:
+      tags: [Runs]
+      summary: Get job for run
+      operationId: getRunsByRunIdJob
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/checkpoints:
+    get:
+      tags: [Runs]
+      summary: List run checkpoints
+      operationId: getRunsByRunIdCheckpoints
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Checkpoint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/checkpoints/{ckpt_id}/tag:
+    post:
+      tags: [Runs]
+      summary: Tag a checkpoint
+      operationId: postRunsByRunIdCheckpointsByCkptIdTag
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CheckpointId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckpointTagRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkpoint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{job_id}:
+    get:
+      tags: [Jobs]
+      summary: Get job status
+      operationId: getJobsByJobId
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{job_id}/cancel:
+    post:
+      tags: [Jobs]
+      summary: Cancel job
+      operationId: postJobsByJobIdCancel
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobControlRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{job_id}/pause:
+    post:
+      tags: [Jobs]
+      summary: Pause job
+      operationId: postJobsByJobIdPause
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobControlRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{job_id}/resume:
+    post:
+      tags: [Jobs]
+      summary: Resume job
+      operationId: postJobsByJobIdResume
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobControlRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /eval-protocols:
+    get:
+      tags: [Eval]
+      summary: List evaluation protocols
+      operationId: getEvalProtocols
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EvalProtocolSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Eval]
+      summary: Create evaluation protocol
+      operationId: postEvalProtocols
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalProtocolCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalProtocol'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /eval-protocols/{protocol_id}:
+    get:
+      tags: [Eval]
+      summary: Get evaluation protocol
+      operationId: getEvalProtocolsByProtocolId
+      parameters:
+        - $ref: '#/components/parameters/ProtocolId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalProtocol'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Eval]
+      summary: Delete evaluation protocol (all versions)
+      operationId: deleteEvalProtocolsByProtocolId
+      parameters:
+        - $ref: '#/components/parameters/ProtocolId'
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /eval-protocols/{protocol_id}/versions:
+    get:
+      tags: [Eval]
+      summary: List evaluation protocol versions
+      operationId: getEvalProtocolsByProtocolIdVersions
+      parameters:
+        - $ref: '#/components/parameters/ProtocolId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EvalProtocolSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Eval]
+      summary: Create evaluation protocol version
+      operationId: postEvalProtocolsByProtocolIdVersions
+      parameters:
+        - $ref: '#/components/parameters/ProtocolId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalProtocolVersionCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalProtocol'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /eval-protocols/{protocol_id}/freeze:
+    post:
+      tags: [Eval]
+      summary: Freeze evaluation protocol
+      operationId: postEvalProtocolsByProtocolIdFreeze
+      parameters:
+        - $ref: '#/components/parameters/ProtocolId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalProtocol'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /opponent-pools:
+    get:
+      tags: [Eval]
+      summary: List opponent pools
+      operationId: getOpponentPools
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OpponentPoolSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Eval]
+      summary: Create opponent pool
+      operationId: postOpponentPools
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpponentPoolCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpponentPool'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /opponent-pools/{pool_id}:
+    get:
+      tags: [Eval]
+      summary: Get opponent pool
+      operationId: getOpponentPoolsByPoolId
+      parameters:
+        - $ref: '#/components/parameters/PoolId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpponentPool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Eval]
+      summary: Delete opponent pool (all versions)
+      operationId: deleteOpponentPoolsByPoolId
+      parameters:
+        - $ref: '#/components/parameters/PoolId'
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /opponent-pools/{pool_id}/versions:
+    get:
+      tags: [Eval]
+      summary: List opponent pool versions
+      operationId: getOpponentPoolsByPoolIdVersions
+      parameters:
+        - $ref: '#/components/parameters/PoolId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OpponentPoolSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Eval]
+      summary: Create opponent pool version
+      operationId: postOpponentPoolsByPoolIdVersions
+      parameters:
+        - $ref: '#/components/parameters/PoolId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpponentPoolVersionCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpponentPool'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /opponent-pools/{pool_id}/members:
+    post:
+      tags: [Eval]
+      summary: Add or remove opponent pool members
+      operationId: postOpponentPoolsByPoolIdMembers
+      parameters:
+        - $ref: '#/components/parameters/PoolId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpponentPoolMembersUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpponentPool'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /opponent-pools/{pool_id}/freeze:
+    post:
+      tags: [Eval]
+      summary: Freeze opponent pool
+      operationId: postOpponentPoolsByPoolIdFreeze
+      parameters:
+        - $ref: '#/components/parameters/PoolId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpponentPool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /eval-jobs:
+    post:
+      tags: [Eval]
+      summary: Submit evaluation job
+      operationId: postEvalJobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalJobRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalJobResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /matrix-jobs:
+    post:
+      tags: [Matrix]
+      summary: Submit matrix job
+      operationId: postMatrixJobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MatrixJobRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatrixJobResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /eval-results/{eval_result_id}:
+    get:
+      tags: [Eval]
+      summary: Get evaluation result
+      operationId: getEvalResultsByEvalResultId
+      parameters:
+        - $ref: '#/components/parameters/EvalResultId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /matrix-results:
+    get:
+      tags: [Matrix]
+      summary: List matrix results
+      operationId: getMatrixResults
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: runId
+          in: query
+          schema:
+            type: string
+        - name: protocolId
+          in: query
+          schema:
+            type: string
+        - name: poolId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MatrixResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /matrix-results/{matrix_id}:
+    get:
+      tags: [Matrix]
+      summary: Get matrix result
+      operationId: getMatrixResultsByMatrixId
+      parameters:
+        - $ref: '#/components/parameters/MatrixId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatrixResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/metrics:
+    get:
+      tags: [Metrics]
+      summary: Query run metrics
+      operationId: getRunsByRunIdMetrics
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - name: keys
+          in: query
+          description: Metric keys to fetch
+          schema:
+            type: array
+            items:
+              type: string
+        - name: fromStep
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunMetricsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/logs:
+    get:
+      tags: [Metrics]
+      summary: Query run logs
+      operationId: getRunsByRunIdLogs
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/stream:
+    get:
+      tags: [Metrics]
+      summary: Stream run metrics and status (WebSocket)
+      operationId: getRunsByRunIdStream
+      description: |
+        WebSocket endpoint that pushes metrics, job status, and checkpoint events.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: OK
+        '101':
+          description: Switching Protocols
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      x-websocket: true
+  /runs/{run_id}/artifacts:
+    get:
+      tags: [Artifacts]
+      summary: List run artifacts
+      operationId: getRunsByRunIdArtifacts
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ArtifactFile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/artifacts/archive:
+    get:
+      tags: [Artifacts]
+      summary: Download all run artifacts as a zip archive
+      operationId: getRunsByRunIdArtifactsArchive
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /artifacts/{artifact_id}/download_url:
+    get:
+      tags: [Artifacts]
+      summary: Get artifact download URL
+      operationId: getArtifactsByArtifactIdDownloadUrl
+      parameters:
+        - $ref: '#/components/parameters/ArtifactId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactDownloadResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/repro-bundle:
+    get:
+      tags: [Artifacts]
+      summary: Get reproducibility bundle
+      operationId: getRunsByRunIdReproBundle
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReproBundleResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/webhooks:
+    post:
+      tags: [Webhooks]
+      summary: Create webhook subscription
+      operationId: postAdminWebhooks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+    EnvId:
+      name: env_id
+      in: path
+      required: true
+      schema:
+        type: string
+    TemplateId:
+      name: template_id
+      in: path
+      required: true
+      schema:
+        type: string
+    PluginId:
+      name: plugin_id
+      in: path
+      required: true
+      schema:
+        type: string
+    CheckpointId:
+      name: ckpt_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ProtocolId:
+      name: protocol_id
+      in: path
+      required: true
+      schema:
+        type: string
+    PoolId:
+      name: pool_id
+      in: path
+      required: true
+      schema:
+        type: string
+    EvalResultId:
+      name: eval_result_id
+      in: path
+      required: true
+      schema:
+        type: string
+    MatrixId:
+      name: matrix_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 6
+    LoginResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+        tokenType:
+          type: string
+          default: Bearer
+        expiresAt:
+          type: string
+          format: date-time
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+    ExecutorSettings:
+      type: object
+      required: [mode, localGpuCount]
+      properties:
+        mode:
+          type: string
+        localGpuCount:
+          type: integer
+        determinedMasterUrl:
+          type:
+            - string
+            - 'null'
+        determinedConnected:
+          type:
+            - boolean
+            - 'null'
+        scheduler:
+          type:
+            - string
+            - 'null'
+    StorageUsage:
+      type: object
+      required: [artifactBytes]
+      properties:
+        artifactBytes:
+          type: integer
+        dbBytes:
+          type:
+            - integer
+            - 'null'
+    RetentionPolicy:
+      type: object
+      required: [checkpointPolicy]
+      properties:
+        checkpointPolicy:
+          type: string
+    SettingsResponse:
+      type: object
+      required: [apiToken, executor, storage, retention]
+      properties:
+        apiToken:
+          type: string
+        executor:
+          $ref: '#/components/schemas/ExecutorSettings'
+        storage:
+          $ref: '#/components/schemas/StorageUsage'
+        retention:
+          $ref: '#/components/schemas/RetentionPolicy'
+    SettingsUpdate:
+      type: object
+      properties:
+        checkpointPolicy:
+          type: string
+    TokenRotateResponse:
+      type: object
+      required: [apiToken]
+      properties:
+        apiToken:
+          type: string
+    RetentionApplyResponse:
+      type: object
+      required: [runsProcessed, checkpointsRemoved, artifactsRemoved]
+      properties:
+        runsProcessed:
+          type: integer
+        checkpointsRemoved:
+          type: integer
+        artifactsRemoved:
+          type: integer
+    Project:
+      type: object
+      required: [id, name, tags, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        activeRuns:
+          type: integer
+          minimum: 0
+        totalRuns:
+          type: integer
+          minimum: 0
+    ProjectCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    ProjectUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    EnvSpec:
+      type: object
+      required: [id, versions, maps]
+      properties:
+        id:
+          type: string
+        versions:
+          type: array
+          items:
+            type: string
+        maps:
+          type: array
+          items:
+            type: string
+        archived:
+          type: boolean
+    EnvSpecUpdate:
+      type: object
+      properties:
+        archived:
+          type: boolean
+    EnvMapSet:
+      type: object
+      required: [id, maps]
+      properties:
+        id:
+          type: string
+        maps:
+          type: array
+          items:
+            type: string
+    EnvVersion:
+      type: object
+      required: [envId, version, apiMode]
+      properties:
+        envId:
+          type: string
+        version:
+          type: string
+        apiMode:
+          type: string
+        entrypoint:
+          type: string
+          description: Python entrypoint in module:function format.
+        package:
+          type: string
+          description: Python package specifier to install (e.g. smac==1.0.0).
+        active:
+          type: boolean
+        frozen:
+          type: boolean
+        defaultImageDigest:
+          type: string
+        mapSets:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvMapSet'
+        scenarioSchema:
+          type: object
+          additionalProperties: true
+    EnvVersionUpsert:
+      type: object
+      required: [envId, version, apiMode, entrypoint]
+      properties:
+        envId:
+          type: string
+        version:
+          type: string
+        apiMode:
+          type: string
+        entrypoint:
+          type: string
+          description: Python entrypoint in module:function format.
+        package:
+          type: string
+          description: Python package specifier to install (e.g. smac==1.0.0).
+        active:
+          type: boolean
+        frozen:
+          type: boolean
+        defaultImageDigest:
+          type: string
+        mapSets:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvMapSet'
+        scenarioSchema:
+          type: object
+          additionalProperties: true
+    EnvVersionCreate:
+      type: object
+      required: [version, apiMode, entrypoint]
+      properties:
+        version:
+          type: string
+        apiMode:
+          type: string
+        entrypoint:
+          type: string
+          description: Python entrypoint in module:function format.
+        package:
+          type: string
+          description: Python package specifier to install (e.g. smac==1.0.0).
+        active:
+          type: boolean
+        frozen:
+          type: boolean
+        defaultImageDigest:
+          type: string
+        mapSets:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvMapSet'
+        scenarioSchema:
+          type: object
+          additionalProperties: true
+    EnvVersionUpdate:
+      type: object
+      properties:
+        apiMode:
+          type: string
+        entrypoint:
+          type: string
+        package:
+          type: string
+        active:
+          type: boolean
+        frozen:
+          type: boolean
+        defaultImageDigest:
+          type: string
+        mapSets:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvMapSet'
+        scenarioSchema:
+          type: object
+          additionalProperties: true
+    Algo:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        archived:
+          type: boolean
+    AlgoUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        archived:
+          type: boolean
+    AlgoVersion:
+      type: object
+      required: [id, algoId, version, entrypoint, active]
+      properties:
+        id:
+          type: string
+        algoId:
+          type: string
+        version:
+          type: string
+        entrypoint:
+          type: string
+        package:
+          type: string
+        artifactUri:
+          type: string
+        configSchema:
+          type: object
+          additionalProperties: true
+        defaultConfig:
+          type: object
+          additionalProperties: true
+        resourceProfile:
+          type: object
+          additionalProperties: true
+        envConstraints:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        active:
+          type: boolean
+        frozen:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    AlgoVersionCreate:
+      type: object
+      required: [version, entrypoint]
+      properties:
+        version:
+          type: string
+        entrypoint:
+          type: string
+        package:
+          type: string
+        artifactUri:
+          type: string
+        configSchema:
+          type: object
+          additionalProperties: true
+        defaultConfig:
+          type: object
+          additionalProperties: true
+        resourceProfile:
+          type: object
+          additionalProperties: true
+        envConstraints:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        active:
+          type: boolean
+        frozen:
+          type: boolean
+    AlgoVersionUpdate:
+      type: object
+      properties:
+        entrypoint:
+          type: string
+        package:
+          type: string
+        artifactUri:
+          type: string
+        configSchema:
+          type: object
+          additionalProperties: true
+        defaultConfig:
+          type: object
+          additionalProperties: true
+        resourceProfile:
+          type: object
+          additionalProperties: true
+        envConstraints:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        active:
+          type: boolean
+        frozen:
+          type: boolean
+    TemplateType:
+      type: string
+      enum: ['Single-Agent', 'Multi-Agent']
+    Template:
+      type: object
+      required: [id, projectId, name, type, defaultConfig]
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          $ref: '#/components/schemas/TemplateType'
+        defaultConfig:
+          type: object
+          additionalProperties: true
+        archived:
+          type: boolean
+    TemplateDetail:
+      allOf:
+        - $ref: '#/components/schemas/Template'
+        - type: object
+          properties:
+            versions:
+              type: array
+              items:
+                $ref: '#/components/schemas/TemplateVersion'
+    TemplateCreate:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          $ref: '#/components/schemas/TemplateType'
+        defaultConfig:
+          type: object
+          additionalProperties: true
+    TemplateUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        defaultConfig:
+          type: object
+          additionalProperties: true
+        archived:
+          type: boolean
+    TemplateVersion:
+      type: object
+      required: [id, templateId, version]
+      properties:
+        id:
+          type: string
+        templateId:
+          type: string
+        algoVersionId:
+          type: string
+        version:
+          type: string
+        defaultConfig:
+          type: object
+          additionalProperties: true
+        networkTemplate:
+          type: object
+          additionalProperties: true
+        envConstraints:
+          type: object
+          additionalProperties: true
+        wrappers:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        frozen:
+          type: boolean
+    TemplateVersionCreate:
+      type: object
+      required: [version, algoVersionId]
+      properties:
+        version:
+          type: string
+        algoVersionId:
+          type: string
+        defaultConfig:
+          type: object
+          additionalProperties: true
+        networkTemplate:
+          type: object
+          additionalProperties: true
+        envConstraints:
+          type: object
+          additionalProperties: true
+        wrappers:
+          type: array
+          items:
+            type: string
+    PluginType:
+      type: string
+      enum: ['Algorithm', 'Model', 'Wrapper']
+    Plugin:
+      type: object
+      required: [id, name, version, type]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        type:
+          $ref: '#/components/schemas/PluginType'
+        description:
+          type: string
+        author:
+          type: string
+        installed:
+          type: boolean
+        archived:
+          type: boolean
+    PluginUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        author:
+          type: string
+        type:
+          $ref: '#/components/schemas/PluginType'
+        installed:
+          type: boolean
+        archived:
+          type: boolean
+    PluginVersion:
+      type: object
+      required: [pluginId, version, wheelUri, sha256]
+      properties:
+        pluginId:
+          type: string
+        version:
+          type: string
+        wheelUri:
+          type: string
+        sha256:
+          type: string
+        manifest:
+          type: object
+          additionalProperties: true
+        frozen:
+          type: boolean
+    PluginVersionCreate:
+      type: object
+      required: [pluginId, version, wheelUri, sha256]
+      properties:
+        pluginId:
+          type: string
+        version:
+          type: string
+        wheelUri:
+          type: string
+        sha256:
+          type: string
+        manifest:
+          type: object
+          additionalProperties: true
+    RunType:
+      type: string
+      enum: [TRAIN, EVAL, MATRIX]
+    JobStatus:
+      type: string
+      enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED]
+    MetricPoint:
+      type: object
+      required: [step, value]
+      properties:
+        step:
+          type: integer
+        value:
+          type: number
+    RunMetrics:
+      type: object
+      required: [returnMean, winRate, entropy]
+      properties:
+        returnMean:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricPoint'
+        winRate:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricPoint'
+        entropy:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricPoint'
+    GitInfo:
+      type: object
+      required: [branch, commit, url, isDirty]
+      properties:
+        branch:
+          type: string
+        commit:
+          type: string
+        url:
+          type: string
+        isDirty:
+          type: boolean
+        diff:
+          type: string
+    Run:
+      type: object
+      required: [id, projectId, name, type, status, algo, env, created, config, metrics]
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/RunType'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        algo:
+          type: string
+        env:
+          type: string
+        duration:
+          type: string
+        gpu:
+          type: integer
+        created:
+          type: string
+          format: date-time
+        config:
+          type: object
+          additionalProperties: true
+        git:
+          $ref: '#/components/schemas/GitInfo'
+        metrics:
+          $ref: '#/components/schemas/RunMetrics'
+    CheckpointMetrics:
+      type: object
+      required: [winRate, returnMean]
+      properties:
+        winRate:
+          type: number
+        returnMean:
+          type: number
+    Checkpoint:
+      type: object
+      required: [id, runId, step, metrics, path, tags, createdAt]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        step:
+          type: integer
+        metrics:
+          $ref: '#/components/schemas/CheckpointMetrics'
+        path:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+    CheckpointTagRequest:
+      type: object
+      required: [tag]
+      properties:
+        tag:
+          type: string
+    Job:
+      type: object
+      required: [id, runId, status]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        message:
+          type: string
+    JobControlRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+    TrainJobEnv:
+      type: object
+      required: [envId, version, mapSet]
+      properties:
+        envId:
+          type: string
+        version:
+          type: string
+        mapSet:
+          type: string
+        wrappers:
+          type: array
+          items:
+            type: string
+    TrainJobAlgo:
+      type: object
+      required: [algoId, algoVersionId]
+      properties:
+        algoId:
+          type: string
+        algoVersionId:
+          type: string
+        preset:
+          type: string
+    TrainJobAgent:
+      type: object
+      properties:
+        policySharing:
+          type: string
+        arch:
+          type: string
+        recurrent:
+          type: boolean
+    TrainJobTrain:
+      type: object
+      required: [totalEnvSteps, rolloutLen, batchSize, lr]
+      properties:
+        totalEnvSteps:
+          type: integer
+        rolloutLen:
+          type: integer
+        batchSize:
+          type: integer
+        lr:
+          type: number
+        entropyCoef:
+          type: number
+        gamma:
+          type: number
+        gaeLambda:
+          type: number
+    ResourceSpec:
+      type: object
+      required: [gpus]
+      properties:
+        gpus:
+          type: integer
+        cpus:
+          type: integer
+        memGb:
+          type: integer
+    PluginRef:
+      type: object
+      required: [pluginId, version]
+      properties:
+        pluginId:
+          type: string
+        version:
+          type: string
+    AutoEvalConfig:
+      type: object
+      required: [protocolId, triggerOn]
+      properties:
+        protocolId:
+          type: string
+        triggerOn:
+          type: string
+    TrainJobRequest:
+      type: object
+      required: [projectId, templateVersionId, env, algo, train, resources]
+      properties:
+        projectId:
+          type: string
+        templateVersionId:
+          type: string
+        env:
+          $ref: '#/components/schemas/TrainJobEnv'
+        algo:
+          $ref: '#/components/schemas/TrainJobAlgo'
+        agent:
+          $ref: '#/components/schemas/TrainJobAgent'
+        train:
+          $ref: '#/components/schemas/TrainJobTrain'
+        resources:
+          $ref: '#/components/schemas/ResourceSpec'
+        seedSet:
+          type: array
+          items:
+            type: integer
+        plugin:
+          $ref: '#/components/schemas/PluginRef'
+        autoEval:
+          $ref: '#/components/schemas/AutoEvalConfig'
+    TrainJobResponse:
+      type: object
+      required: [runId, jobId]
+      properties:
+        runId:
+          type: string
+        jobId:
+          type: string
+    EnvRef:
+      type: object
+      required: [envId, version, mapSet]
+      properties:
+        envId:
+          type: string
+        version:
+          type: string
+        mapSet:
+          type: string
+    OpponentPoolRef:
+      type: object
+      required: [poolId, version]
+      properties:
+        poolId:
+          type: string
+        version:
+          type: string
+    EvalProtocolSummary:
+      type: object
+      required: [id, name, version, envId, map, evalSeeds, episodes, frozen]
+      properties:
+        id:
+          type: string
+        protocolKey:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        envId:
+          type: string
+        map:
+          type: string
+        evalSeeds:
+          type: array
+          items:
+            type: integer
+        episodes:
+          type: integer
+        frozen:
+          type: boolean
+        created:
+          type: string
+          format: date-time
+    EvalProtocol:
+      type: object
+      required: [id, name, version, env, evalSeeds, episodesPerMatch, frozen]
+      properties:
+        id:
+          type: string
+        protocolKey:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        env:
+          $ref: '#/components/schemas/EnvRef'
+        evalSeeds:
+          type: array
+          items:
+            type: integer
+        episodesPerMatch:
+          type: integer
+        timeoutSec:
+          type: integer
+        metrics:
+          type: array
+          items:
+            type: string
+        opponentPoolRef:
+          $ref: '#/components/schemas/OpponentPoolRef'
+        frozen:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    EvalProtocolCreate:
+      type: object
+      required: [name, env, evalSeeds, episodesPerMatch]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        env:
+          $ref: '#/components/schemas/EnvRef'
+        evalSeeds:
+          type: array
+          items:
+            type: integer
+        episodesPerMatch:
+          type: integer
+        timeoutSec:
+          type: integer
+        metrics:
+          type: array
+          items:
+            type: string
+        opponentPoolRef:
+          $ref: '#/components/schemas/OpponentPoolRef'
+    EvalProtocolVersionCreate:
+      type: object
+      properties:
+        version:
+          type: string
+        name:
+          type: string
+        env:
+          $ref: '#/components/schemas/EnvRef'
+        evalSeeds:
+          type: array
+          items:
+            type: integer
+        episodesPerMatch:
+          type: integer
+        timeoutSec:
+          type: integer
+        metrics:
+          type: array
+          items:
+            type: string
+        opponentPoolRef:
+          $ref: '#/components/schemas/OpponentPoolRef'
+    OpponentPoolSummary:
+      type: object
+      required: [id, name, version, size, env, frozen]
+      properties:
+        id:
+          type: string
+        poolKey:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        size:
+          type: integer
+        env:
+          type: string
+        frozen:
+          type: boolean
+        created:
+          type: string
+          format: date-time
+    OpponentPool:
+      type: object
+      required: [id, name, version, env, frozen]
+      properties:
+        id:
+          type: string
+        poolKey:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        env:
+          type: string
+        size:
+          type: integer
+        frozen:
+          type: boolean
+        created:
+          type: string
+          format: date-time
+        memberSnapshotIds:
+          type: array
+          items:
+            type: string
+    OpponentPoolCreate:
+      type: object
+      required: [name, env]
+      properties:
+        name:
+          type: string
+        env:
+          type: string
+        version:
+          type: string
+        memberSnapshotIds:
+          type: array
+          items:
+            type: string
+    OpponentPoolVersionCreate:
+      type: object
+      properties:
+        version:
+          type: string
+        memberSnapshotIds:
+          type: array
+          items:
+            type: string
+    OpponentPoolMembersUpdate:
+      type: object
+      required: [snapshotIds, mode]
+      properties:
+        snapshotIds:
+          type: array
+          items:
+            type: string
+        mode:
+          type: string
+          enum: [append, remove]
+    EvalJobRequest:
+      type: object
+      required: [policySnapshotId, protocolId]
+      properties:
+        policySnapshotId:
+          type: string
+        protocolId:
+          type: string
+        resources:
+          $ref: '#/components/schemas/ResourceSpec'
+    EvalJobResponse:
+      type: object
+      required: [runId, jobId, evalResultId]
+      properties:
+        runId:
+          type: string
+        jobId:
+          type: string
+        evalResultId:
+          type: string
+    MatrixJobRequest:
+      type: object
+      required: [policySnapshotIds, protocolId]
+      properties:
+        poolId:
+          type: string
+        policySnapshotIds:
+          type: array
+          items:
+            type: string
+        protocolId:
+          type: string
+        gamesPerPair:
+          type: integer
+        metric:
+          type: string
+        resources:
+          $ref: '#/components/schemas/ResourceSpec'
+    MatrixJobResponse:
+      type: object
+      required: [matrixId, jobId]
+      properties:
+        matrixId:
+          type: string
+        jobId:
+          type: string
+    EvalResult:
+      type: object
+      required: [id, protocolId]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        protocolId:
+          type: string
+        metrics:
+          type: object
+          additionalProperties:
+            type: number
+        summary:
+          $ref: '#/components/schemas/EvalResultSummary'
+        ci:
+          $ref: '#/components/schemas/ConfidenceInterval'
+        createdAt:
+          type: string
+          format: date-time
+        artifactUrl:
+          type: string
+    EvalResultSummary:
+      type: object
+      properties:
+        mean:
+          type: number
+        std:
+          type: number
+        n:
+          type: integer
+    ConfidenceInterval:
+      type: object
+      properties:
+        low:
+          type: number
+        high:
+          type: number
+        level:
+          type: number
+    MatrixCell:
+      type: object
+      required: [row, col, value]
+      properties:
+        row:
+          type: string
+        col:
+          type: string
+        value:
+          type: number
+    MatrixResult:
+      type: object
+      required: [id, cells]
+      properties:
+        id:
+          type: string
+        protocolId:
+          type: string
+        poolId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        cells:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatrixCell'
+        labels:
+          type: array
+          items:
+            type: string
+        matrix:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+        meta:
+          $ref: '#/components/schemas/MatrixMeta'
+        ranking:
+          type: array
+          items:
+            $ref: '#/components/schemas/RankingEntry'
+        artifacts:
+          $ref: '#/components/schemas/MatrixArtifacts'
+        summary:
+          type: object
+          additionalProperties: true
+        exportUrl:
+          type: string
+    MatrixMeta:
+      type: object
+      properties:
+        gamesPerPair:
+          type: integer
+        seeds:
+          type: array
+          items:
+            type: integer
+        metric:
+          type: string
+    RankingEntry:
+      type: object
+      required: [id, score]
+      properties:
+        id:
+          type: string
+        score:
+          type: number
+        ci:
+          $ref: '#/components/schemas/ConfidenceInterval'
+    MatrixArtifacts:
+      type: object
+      properties:
+        csvUri:
+          type: string
+        jsonUri:
+          type: string
+        heatmapUri:
+          type: string
+    RunMetricsResponse:
+      type: object
+      required: [runId, series]
+      properties:
+        runId:
+          type: string
+        series:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: '#/components/schemas/MetricPoint'
+    LogPage:
+      type: object
+      required: [lines, page, pageSize, hasMore]
+      properties:
+        lines:
+          type: array
+          items:
+            type: string
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        hasMore:
+          type: boolean
+    ArtifactFile:
+      type: object
+      required: [id, name, path, type, lastModified]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        size:
+          type: string
+        type:
+          type: string
+          enum: [file, folder]
+        lastModified:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        objectKey:
+          type: string
+    ArtifactDownloadResponse:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+    ReproBundleResponse:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+        manifest:
+          type: object
+          additionalProperties: true
+    WebhookCreate:
+      type: object
+      required: [url, events]
+      properties:
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        secret:
+          type: string
+    Webhook:
+      type: object
+      required: [id, url, events]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
