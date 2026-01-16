@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { Project, Template, EnvSpec, Plugin, TemplateVersion, EnvVersion, Algo, AlgoVersion, EvalProtocol } from '../types';
-import { ChevronRight, Layers, Box, Cpu, PlayCircle, Check, Code, Settings, Plus, GitBranch, Zap, Copy } from 'lucide-react';
+import { Project, EnvSpec, Algo, Template, TemplateDetail } from '../types';
+import { Play, Settings, Cpu, ChevronRight, GitFork, Info } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '../components/Toast';
 
@@ -41,6 +41,7 @@ export const CreateJob: React.FC = () => {
   const [configTouched, setConfigTouched] = useState(false);
   const [selectedPlugins, setSelectedPlugins] = useState<string[]>([]);
   const [gpuCount, setGpuCount] = useState(1);
+  const [priority, setPriority] = useState(2);
   const [seedCount, setSeedCount] = useState(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [autoEvalEnabled, setAutoEvalEnabled] = useState(false);
@@ -330,12 +331,36 @@ export const CreateJob: React.FC = () => {
     const plugin = selectedPlugins.length
       ? plugins.find(p => p.id === selectedPlugins[0])
       : null;
+    
+    // Extract algo overrides
+    const algoOverride = parsedConfig?.algo && typeof parsedConfig.algo === 'object' ? parsedConfig.algo : {};
+    // Extract dataset overrides (if any)
+    const datasetId = parsedConfig?.datasetId || undefined;
+
     setIsSubmitting(true);
     try {
       const seeds = Array.from({ length: seedCount }, (_, idx) => idx + 1);
       const autoEval = autoEvalEnabled && autoEvalProtocolId
         ? { protocolId: autoEvalProtocolId, triggerOn: autoEvalTrigger }
         : undefined;
+      
+      // Git Config
+      let gitConfig = undefined;
+      if (useGit) {
+          const project = projects.find(p => p.id === selectedProject);
+          if (project?.gitRepo) {
+               gitConfig = {
+                  repo: project.gitRepo,
+                  branch: gitBranch || 'main',
+                  commit: gitCommit || undefined
+              };
+          }
+      }
+
+      // Generate Group ID for Sweeps
+      const isSweep = trainConfigs.length > 1 || seedCount > 1;
+      const groupId = isSweep ? `sweep-${Date.now()}` : undefined;
+
       const results = [];
       for (const config of trainConfigs) {
         for (const seed of seeds) {
@@ -343,20 +368,27 @@ export const CreateJob: React.FC = () => {
             projectId: selectedProject,
             templateVersionId: selectedTemplateVersionId,
             env: { envId: selectedEnv, version: envVersion, mapSet: selectedMap },
-            algo: { algoId: algoInfo.algoId, algoVersionId: templateVersion.algoVersionId },
+            algo: { 
+                algoId: algoInfo.algoId, 
+                algoVersionId: templateVersion.algoVersionId,
+                ...algoOverride 
+            },
             train: config,
-            resources: { gpus: gpuCount },
+            resources: { gpus: gpuCount, priority },
             seedSet: [seed],
             ...(autoEval ? { autoEval } : {}),
             ...(plugin ? { plugin: { pluginId: plugin.id, version: plugin.version } } : {}),
+            ...(gitConfig ? { git: gitConfig } : {}),
+            ...(groupId ? { groupId } : {}),
+            ...(datasetId ? { datasetId } : {}),
           });
           results.push(res);
         }
       }
       if (results.length > 1) {
-        showToast(`Submitted ${results.length} jobs.`, 'success');
-      }
-      if (results[0]?.runId) {
+        showToast(`Submitted ${results.length} jobs in sweep ${groupId}.`, 'success');
+        navigate(`/projects/${selectedProject}`);
+      } else if (results[0]?.runId) {
         navigate(`/runs/${results[0].runId}`);
       }
     } catch (err) {
@@ -366,7 +398,6 @@ export const CreateJob: React.FC = () => {
       setIsSubmitting(false);
     }
   };
-
   const handleBack = () => setCurrentStep(c => Math.max(0, c - 1));
 
   const togglePlugin = (id: string) => {
@@ -743,6 +774,28 @@ export const CreateJob: React.FC = () => {
                             ))}
                         </div>
                         <p className="text-xs text-gray-500">Current Cluster load allows up to 4 GPUs immediately.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                         <label className="block text-sm font-medium text-gray-700">Scheduling Priority</label>
+                         <div className="flex gap-4">
+                            {[
+                                { val: 1, label: 'Low', color: 'bg-gray-100 text-gray-700 border-gray-200' },
+                                { val: 2, label: 'Normal', color: 'bg-blue-50 text-blue-700 border-blue-200' },
+                                { val: 3, label: 'High', color: 'bg-red-50 text-red-700 border-red-200' }
+                            ].map(opt => (
+                                <button
+                                    key={opt.val}
+                                    onClick={() => setPriority(opt.val)}
+                                    className={`px-4 py-2 rounded-lg border text-sm font-bold transition-all ${
+                                        priority === opt.val ? `${opt.color} ring-2 ring-offset-1 ring-blue-100` : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                         </div>
+                         <p className="text-xs text-gray-500">High priority jobs preempt idle resources.</p>
                     </div>
 
                     <div className="space-y-4">

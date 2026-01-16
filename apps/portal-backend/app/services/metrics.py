@@ -35,24 +35,49 @@ class MetricsService:
             "winRate": [],
             "entropy": [],
         }
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            step = payload.get("step")
-            values = payload.get("values")
-            if not isinstance(values, dict):
-                values = {k: v for k, v in payload.items() if k != "step"}
-            if step is None:
-                continue
-            for key, value in values.items():
-                mapped = self._normalize_key(key)
-                if mapped not in series:
-                    series[mapped] = []
-                series[mapped].append({"step": step, "value": value})
+        try:
+            # Optimize: Use file iterator instead of read_text() to save memory on large files
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    step = payload.get("step")
+                    values = payload.get("values")
+                    # Fallback for flat format
+                    if not isinstance(values, dict):
+                        values = {k: v for k, v in payload.items() if k != "step"}
+                    if step is None:
+                        continue
+                    for key, value in values.items():
+                        mapped = self._normalize_key(key)
+                        if mapped not in series:
+                            series[mapped] = []
+                        series[mapped].append({"step": step, "value": value})
+        except Exception as e:
+            print(f"Error parsing metrics: {e}")
+            return {}
+
+        # Downsample if too large
+        MAX_POINTS = 1000
+        for key in series:
+            data = series[key]
+            count = len(data)
+            if count > MAX_POINTS:
+                step_size = count / MAX_POINTS
+                downsampled = []
+                for i in range(MAX_POINTS):
+                    idx = int(i * step_size)
+                    if idx < count:
+                        downsampled.append(data[idx])
+                # Ensure the last point is included
+                if data[-1] not in downsampled:
+                    downsampled.append(data[-1])
+                series[key] = downsampled
+                
         return series
 
     def _normalize_key(self, key: str) -> str:

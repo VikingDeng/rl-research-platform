@@ -3,10 +3,23 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { Run } from '../types';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ScatterChart, Scatter, ZAxis } from 'recharts';
-import { X, BarChart2, GitBranch, Zap } from 'lucide-react';
+import { X, BarChart2, GitBranch, Zap, FileText } from 'lucide-react';
 
 type MetricKey = 'returnMean' | 'winRate' | 'entropy';
-type ViewMode = 'timeseries' | 'correlation';
+type ViewMode = 'timeseries' | 'correlation' | 'config';
+
+// Helper to flatten object
+const flattenObject = (obj: any, prefix = ''): Record<string, any> => {
+    return Object.keys(obj).reduce((acc: any, k) => {
+        const pre = prefix.length ? prefix + '.' : '';
+        if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
+            Object.assign(acc, flattenObject(obj[k], pre + k));
+        } else {
+            acc[pre + k] = obj[k];
+        }
+        return acc;
+    }, {});
+}
 
 export const CompareRuns: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -87,6 +100,35 @@ export const CompareRuns: React.FC = () => {
       };
   });
 
+  // --- Config Diff Data Prep ---
+  const configDiffData: { key: string; values: Record<string, any>; diff: boolean }[] = [];
+  if (selectedRuns.length > 0) {
+      const allKeys = new Set<string>();
+      const flattenedConfigs = selectedRuns.map(r => ({ id: r.id, cfg: flattenObject(r.config || {}) }));
+      
+      flattenedConfigs.forEach(fc => Object.keys(fc.cfg).forEach(k => allKeys.add(k)));
+      
+      Array.from(allKeys).sort().forEach(key => {
+          const values: Record<string, any> = {};
+          const distinctValues = new Set();
+          
+          flattenedConfigs.forEach(fc => {
+              const val = fc.cfg[key];
+              values[fc.id] = val;
+              distinctValues.add(JSON.stringify(val)); // Simple distinct check
+          });
+          
+          // Filter out internal keys
+          if (!key.startsWith('git.') && !key.startsWith('autoEval') && !key.includes('Id')) {
+             configDiffData.push({
+                 key,
+                 values,
+                 diff: distinctValues.size > 1
+             });
+          }
+      });
+  }
+
   const colors = ["#2563eb", "#16a34a", "#db2777", "#ea580c", "#7c3aed", "#0891b2", "#be185d"];
 
   const metricOptions: { key: MetricKey; label: string }[] = [
@@ -114,6 +156,12 @@ export const CompareRuns: React.FC = () => {
                 className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center gap-1 transition-colors ${viewMode === 'correlation' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
             >
                 <Zap className="w-3 h-3" /> Hyperparams
+            </button>
+            <button 
+                onClick={() => setViewMode('config')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center gap-1 transition-colors ${viewMode === 'config' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+                <FileText className="w-3 h-3" /> Config Diff
             </button>
         </div>
       </div>
@@ -143,7 +191,7 @@ export const CompareRuns: React.FC = () => {
             </div>
         </div>
 
-        {/* Charts Area */}
+        {/* Main Content Area */}
         <div className="lg:col-span-3 space-y-6">
             {selectedRuns.length === 0 ? (
                 <div className="bg-gray-50 rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-500 flex flex-col items-center">
@@ -163,83 +211,117 @@ export const CompareRuns: React.FC = () => {
                         ))}
                     </div>
                     
-                    {/* Controls Row */}
-                    <div className="bg-white p-4 rounded-t-xl border border-gray-200 border-b-0 flex gap-6 items-center">
-                         <div>
-                            <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">Y-Axis Metric</span>
-                            <select 
-                                value={selectedMetric}
-                                onChange={(e) => setSelectedMetric(e.target.value as MetricKey)}
-                                className="p-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            >
-                                {metricOptions.map(opt => (
-                                    <option key={opt.key} value={opt.key}>{opt.label}</option>
-                                ))}
-                            </select>
-                         </div>
-                         
-                         {viewMode === 'correlation' && (
-                            <div>
-                                <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">X-Axis Parameter</span>
-                                <select 
-                                    value={xAxisParam}
-                                    onChange={(e) => setXAxisParam(e.target.value)}
-                                    className="p-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none min-w-[150px]"
-                                >
-                                    {paramKeys.map(k => (
-                                        <option key={k} value={k}>{k}</option>
-                                    ))}
-                                </select>
-                            </div>
-                         )}
-                    </div>
-
-                    <div className="bg-white p-6 rounded-b-xl border border-gray-200 shadow-sm border-t-0 mt-0">
-                        <div className="h-[400px]">
-                            {viewMode === 'timeseries' ? (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={timeSeriesData}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                        <XAxis dataKey="step" fontSize={12} tickFormatter={(val) => `${val/1000}k`} />
-                                        <YAxis fontSize={12} />
-                                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                                        {selectedRuns.map((r, idx) => (
-                                            <Line 
-                                                key={r.id} 
-                                                type="monotone" 
-                                                dataKey={r.name} 
-                                                stroke={colors[idx % colors.length]} 
-                                                strokeWidth={2} 
-                                                dot={false} 
-                                            />
+                    {/* View Content */}
+                    {viewMode === 'config' ? (
+                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-gray-50 border-b border-gray-200">
+                                        <tr>
+                                            <th className="px-4 py-3 font-semibold text-gray-500 w-48">Parameter</th>
+                                            {selectedRuns.map((r, idx) => (
+                                                <th key={r.id} className="px-4 py-3 font-semibold" style={{color: colors[idx % colors.length]}}>
+                                                    {r.name}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {configDiffData.map((row) => (
+                                            <tr key={row.key} className={`hover:bg-gray-50 ${row.diff ? 'bg-yellow-50/50' : ''}`}>
+                                                <td className="px-4 py-2 font-mono text-gray-600 truncate" title={row.key}>{row.key}</td>
+                                                {selectedRuns.map((r) => (
+                                                    <td key={r.id} className={`px-4 py-2 font-mono ${row.diff ? 'font-bold text-gray-900' : 'text-gray-500'}`}>
+                                                        {row.values[r.id] !== undefined ? JSON.stringify(row.values[r.id]) : '-'}
+                                                    </td>
+                                                ))}
+                                            </tr>
                                         ))}
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            ) : (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                                        <CartesianGrid strokeDasharray="3 3" />
-                                        <XAxis type="number" dataKey="x" name={xAxisParam} label={{ value: xAxisParam, position: 'insideBottom', offset: -10 }} />
-                                        <YAxis type="number" dataKey="y" name={selectedMetric} label={{ value: selectedMetric, angle: -90, position: 'insideLeft' }} />
-                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
-                                            if (active && payload && payload.length) {
-                                                const data = payload[0].payload;
-                                                return (
-                                                    <div className="bg-white p-2 border border-gray-200 shadow-lg rounded text-sm">
-                                                        <p className="font-bold mb-1">{data.name}</p>
-                                                        <p>{xAxisParam}: {data.x}</p>
-                                                        <p>{selectedMetric}: {data.y.toFixed(4)}</p>
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        }} />
-                                        <Scatter name="Runs" data={scatterData} fill="#2563eb" />
-                                    </ScatterChart>
-                                </ResponsiveContainer>
-                            )}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <>
+                            {/* Chart Controls */}
+                            <div className="bg-white p-4 rounded-t-xl border border-gray-200 border-b-0 flex gap-6 items-center">
+                                <div>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">Y-Axis Metric</span>
+                                    <select 
+                                        value={selectedMetric}
+                                        onChange={(e) => setSelectedMetric(e.target.value as MetricKey)}
+                                        className="p-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                    >
+                                        {metricOptions.map(opt => (
+                                            <option key={opt.key} value={opt.key}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                
+                                {viewMode === 'correlation' && (
+                                    <div>
+                                        <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">X-Axis Parameter</span>
+                                        <select 
+                                            value={xAxisParam}
+                                            onChange={(e) => setXAxisParam(e.target.value)}
+                                            className="p-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none min-w-[150px]"
+                                        >
+                                            {paramKeys.map(k => (
+                                                <option key={k} value={k}>{k}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="bg-white p-6 rounded-b-xl border border-gray-200 shadow-sm border-t-0 mt-0">
+                                <div className="h-[400px]">
+                                    {viewMode === 'timeseries' ? (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <LineChart data={timeSeriesData}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                <XAxis dataKey="step" fontSize={12} tickFormatter={(val) => `${val/1000}k`} />
+                                                <YAxis fontSize={12} />
+                                                <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                                                {selectedRuns.map((r, idx) => (
+                                                    <Line 
+                                                        key={r.id} 
+                                                        type="monotone" 
+                                                        dataKey={r.name} 
+                                                        stroke={colors[idx % colors.length]} 
+                                                        strokeWidth={2} 
+                                                        dot={false} 
+                                                    />
+                                                ))}
+                                            </LineChart>
+                                        </ResponsiveContainer>
+                                    ) : (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                                                <CartesianGrid strokeDasharray="3 3" />
+                                                <XAxis type="number" dataKey="x" name={xAxisParam} label={{ value: xAxisParam, position: 'insideBottom', offset: -10 }} />
+                                                <YAxis type="number" dataKey="y" name={selectedMetric} label={{ value: selectedMetric, angle: -90, position: 'insideLeft' }} />
+                                                <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
+                                                    if (active && payload && payload.length) {
+                                                        const data = payload[0].payload;
+                                                        return (
+                                                            <div className="bg-white p-2 border border-gray-200 shadow-lg rounded text-sm">
+                                                                <p className="font-bold mb-1">{data.name}</p>
+                                                                <p>{xAxisParam}: {data.x}</p>
+                                                                <p>{selectedMetric}: {data.y.toFixed(4)}</p>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
+                                                }} />
+                                                <Scatter name="Runs" data={scatterData} fill="#2563eb" />
+                                            </ScatterChart>
+                                        </ResponsiveContainer>
+                                    )}
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </>
             )}
         </div>

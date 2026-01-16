@@ -138,19 +138,15 @@ export const ProjectDetail: React.FC = () => {
         </div>
         <table className="w-full text-left">
             <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase tracking-wider">
-              <tr>
-                <th className="px-6 py-3 w-10">
-                    <button onClick={toggleSelectAll} className="text-gray-400 hover:text-gray-600">
-                        {selectedRunIds.size === runs.length && runs.length > 0 ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
-                    </button>
-                </th>
-                <th className="px-6 py-3">Run Name</th>
-                <th className="px-6 py-3">Type</th>
-                <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3">Algo / Env</th>
-                <th className="px-6 py-3">Created</th>
-                <th className="px-6 py-3">Actions</th>
-              </tr>
+                    <tr>
+                        <th className="px-6 py-3">Run Name</th>
+                        <th className="px-6 py-3">Group</th>
+                        <th className="px-6 py-3">Status</th>
+                        <th className="px-6 py-3">Algorithm</th>
+                        <th className="px-6 py-3">Environment</th>
+                        <th className="px-6 py-3">Metrics</th>
+                        <th className="px-6 py-3">Created</th>
+                    </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {runs.map((run) => (
@@ -160,13 +156,22 @@ export const ProjectDetail: React.FC = () => {
                           {selectedRunIds.has(run.id) ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
                       </button>
                   </td>
-                  <td className="px-6 py-4">
-                    <Link to={`/runs/${run.id}`} className="font-medium text-blue-600 hover:underline">
-                        {run.name}
-                    </Link>
-                    <div className="text-xs text-gray-400 font-mono mt-0.5">{run.id}</div>
-                  </td>
-                  <td className="px-6 py-4"><StatusBadge type={run.type} /></td>
+                            <td className="px-6 py-4">
+                                <Link to={`/runs/${run.id}`} className="font-medium text-gray-900 hover:text-blue-600 block">
+                                    {run.name}
+                                </Link>
+                                <span className="text-xs text-gray-400 font-mono">{run.id.slice(0,8)}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                                {run.groupId ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100" title={run.groupId}>
+                                        {run.groupId.includes('sweep') ? 'Sweep' : 'Group'}
+                                    </span>
+                                ) : <span className="text-gray-300">-</span>}
+                            </td>
+                            <td className="px-6 py-4">
+                                <StatusBadge status={run.status} type={run.type} />
+                            </td>
                   <td className="px-6 py-4"><StatusBadge status={run.status} /></td>
                   <td className="px-6 py-4 text-sm text-gray-600">
                     <div className="font-medium">{run.algo}</div>

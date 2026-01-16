@@ -13,110 +13,7 @@ from app.services.artifacts import artifact_service
 from app.services.s3 import s3_client
 
 
-def _stable_int(value: str) -> int:
-    acc = 0
-    for char in value:
-        acc = (acc * 33 + ord(char)) % 2**31
-    return acc
-
-
-def _compute_stats(values: List[float], level: float = 0.95) -> Tuple[Dict[str, float], Dict[str, float]]:
-    n = len(values)
-    if n == 0:
-        return {"mean": 0.0, "std": 0.0, "n": 0}, {"low": 0.0, "high": 0.0, "level": level}
-    mean = sum(values) / n
-    if n > 1:
-        variance = sum((v - mean) ** 2 for v in values) / (n - 1)
-        std = math.sqrt(variance)
-    else:
-        std = 0.0
-    z = 1.96 if level == 0.95 else 1.96
-    margin = z * (std / math.sqrt(n)) if n > 1 else 0.0
-    return (
-        {"mean": mean, "std": std, "n": n},
-        {"low": mean - margin, "high": mean + margin, "level": level},
-    )
-
-
 class EvalMatrixService:
-    def generate_eval(self, protocol: models.EvalProtocol, policy_snapshot_id: str) -> Dict[str, object]:
-        seeds = protocol.eval_seeds or [0]
-        episodes = protocol.episodes_per_match or 1
-        values: List[float] = []
-        for seed in seeds:
-            rng = random.Random(_stable_int(f"{protocol.id}:{policy_snapshot_id}:{seed}"))
-            base = 0.45 + (rng.random() * 0.1)
-            for _ in range(episodes):
-                noise = rng.uniform(-0.08, 0.08)
-                value = min(1.0, max(0.0, base + noise))
-                values.append(value)
-
-        summary, ci = _compute_stats(values)
-        return {
-            "values": values,
-            "summary": summary,
-            "ci": ci,
-            "metrics": {"winRate": summary["mean"]},
-        }
-
-    def generate_matrix(
-        self,
-        policy_snapshot_ids: List[str],
-        protocol: models.EvalProtocol,
-        games_per_pair: int,
-        metric: str,
-    ) -> Dict[str, object]:
-        labels = list(policy_snapshot_ids)
-        size = len(labels)
-        matrix = [[0.5 for _ in range(size)] for _ in range(size)]
-        cells: List[Dict[str, object]] = []
-        metric = metric or "winRate"
-
-        for i in range(size):
-            for j in range(i, size):
-                if i == j:
-                    if metric == "returnMean":
-                        value = 5.0
-                    elif metric == "survivalTime":
-                        value = 50.0
-                    else:
-                        value = 0.5
-                else:
-                    rng = random.Random(_stable_int(f"{protocol.id}:{labels[i]}:{labels[j]}"))
-                    if metric == "returnMean":
-                        value = 2.0 + rng.random() * 8.0
-                        matrix[j][i] = value
-                    elif metric == "survivalTime":
-                        value = 10.0 + rng.random() * 90.0
-                        matrix[j][i] = value
-                    else:
-                        value = 0.1 + rng.random() * 0.8
-                        matrix[j][i] = 1.0 - value
-                matrix[i][j] = value
-
-        for i in range(size):
-            for j in range(size):
-                cells.append({"row": labels[i], "col": labels[j], "value": matrix[i][j]})
-
-        ranking = []
-        for i, label in enumerate(labels):
-            row_values = [matrix[i][j] for j in range(size) if j != i]
-            summary, ci = _compute_stats(row_values)
-            ranking.append({"id": label, "score": summary["mean"], "ci": ci})
-
-        meta = {
-            "gamesPerPair": games_per_pair,
-            "seeds": protocol.eval_seeds or [],
-            "metric": metric,
-        }
-        return {
-            "labels": labels,
-            "matrix": matrix,
-            "cells": cells,
-            "ranking": ranking,
-            "meta": meta,
-        }
-
     def materialize_eval_result(self, db: Session, run: models.Run) -> None:
         eval_result_id = run.config.get("evalResultId") if isinstance(run.config, dict) else None
         eval_result = None
@@ -127,68 +24,33 @@ class EvalMatrixService:
         if not eval_result:
             return
 
-        protocol = db.query(models.EvalProtocol).filter(models.EvalProtocol.id == eval_result.protocol_id).first()
-        if not protocol:
-            return
-
-        policy_snapshot_id = ""
-        if isinstance(run.config, dict):
-            policy_snapshot_id = run.config.get("policySnapshotId", "")
-
         # Try to read real artifact
-        real_summary_artifact = (
+        summary_artifact = (
             db.query(models.Artifact)
             .filter(models.Artifact.run_id == run.id, models.Artifact.path == "/eval/summary.json")
             .first()
         )
         
-        payload = None
-        if real_summary_artifact:
-            try:
-                # We need to read the content. Assuming s3_client can fetch it.
-                # Since artifact service writes to s3 with object_key.
-                content_stream = s3_client.get_object(real_summary_artifact.object_key)
-                if content_stream:
-                    summary_data = json.load(content_stream)
-                    # We might also want results.json for values, but summary is enough for top level
-                    payload = {
-                        "metrics": {"winRate": summary_data.get("winRate", 0.0)},
-                        "summary": summary_data,
-                        "ci": {"mean": summary_data.get("mean", 0.0)}, # Simplified CI
-                        "values": [] # We could load results.json if needed
-                    }
-            except Exception:
-                pass
+        if not summary_artifact:
+            print(f"[EvalMatrix] No summary artifact found for run {run.id}")
+            return
 
-        if not payload:
-            payload = self.generate_eval(protocol, policy_snapshot_id)
-
-        eval_result.metrics = payload["metrics"]
-        eval_result.summary = payload["summary"]
-        eval_result.ci = payload["ci"]
-
-        if not real_summary_artifact:
-            artifact_payload = {
-                "protocolId": eval_result.protocol_id,
-                "policySnapshotId": policy_snapshot_id,
-                "summary": payload["summary"],
-                "ci": payload["ci"],
-                "values": payload.get("values", []),
-                "generatedAt": datetime.utcnow().isoformat(),
-            }
-            artifact_json = json.dumps(artifact_payload, indent=2)
-            artifact = artifact_service.write_artifact(
-                db,
-                run.id,
-                "/eval/eval_result.json",
-                artifact_json,
-                "application/json",
-            )
-            eval_result.artifact_url = s3_client.presigned_get_url(artifact.object_key)
-        else:
-            # If we have real artifact, we might want to consolidate or just point to it.
-            # For consistency, we can rely on the uploaded one.
-            eval_result.artifact_url = s3_client.presigned_get_url(real_summary_artifact.object_key)
+        try:
+            content_stream = s3_client.get_object(summary_artifact.object_key)
+            if content_stream:
+                summary_data = json.load(content_stream)
+                
+                eval_result.metrics = {"winRate": summary_data.get("winRate", 0.0)}
+                eval_result.summary = summary_data
+                # Assuming summary has std/count, we can approx ci if needed, or just use mean
+                eval_result.ci = {
+                    "mean": summary_data.get("mean", 0.0),
+                    "std": summary_data.get("std", 0.0)
+                }
+                eval_result.artifact_url = s3_client.presigned_get_url(summary_artifact.object_key)
+                print(f"[EvalMatrix] Materialized result for {run.id}")
+        except Exception as e:
+            print(f"[EvalMatrix] Failed to process artifact for run {run.id}: {e}")
 
     def materialize_matrix_result(self, db: Session, run: models.Run) -> None:
         matrix_id = run.config.get("matrixId") if isinstance(run.config, dict) else None
@@ -198,73 +60,58 @@ class EvalMatrixService:
         if not matrix_result:
             return
 
-        protocol = db.query(models.EvalProtocol).filter(models.EvalProtocol.id == matrix_result.protocol_id).first()
-        if not protocol:
+        # Try to read matrix artifacts
+        json_artifact = (
+            db.query(models.Artifact)
+            .filter(models.Artifact.run_id == run.id, models.Artifact.path == "/matrix/matrix.json")
+            .first()
+        )
+        
+        if not json_artifact:
+            print(f"[EvalMatrix] No matrix artifact found for run {run.id}")
             return
 
-        policy_snapshot_ids = []
-        if isinstance(run.config, dict):
-            policy_snapshot_ids = run.config.get("policySnapshotIds") or []
-        if not isinstance(policy_snapshot_ids, list):
-            policy_snapshot_ids = []
+        try:
+            content_stream = s3_client.get_object(json_artifact.object_key)
+            if content_stream:
+                payload = json.load(content_stream)
+                
+                matrix_result.labels = payload.get("labels", [])
+                matrix_result.matrix = payload.get("matrix", [])
+                # If cells/ranking not in json, we might need to recompute or expect them
+                matrix_result.cells = payload.get("cells", []) 
+                matrix_result.ranking = payload.get("ranking", [])
+                matrix_result.meta = payload.get("meta", {})
+                matrix_result.summary = {"generated": True}
+                
+                # Update URLs
+                matrix_result.artifacts = {
+                    "jsonUri": f"s3://runs/{run.id}/matrix/matrix.json",
+                }
+                
+                # Check for CSV
+                csv_artifact = (
+                    db.query(models.Artifact)
+                    .filter(models.Artifact.run_id == run.id, models.Artifact.path == "/matrix/matrix.csv")
+                    .first()
+                )
+                if csv_artifact:
+                    matrix_result.artifacts["csvUri"] = f"s3://runs/{run.id}/matrix/matrix.csv"
+                    matrix_result.export_url = s3_client.presigned_get_url(csv_artifact.object_key)
+                
+                # Check for Heatmap
+                heatmap_artifact = (
+                    db.query(models.Artifact)
+                    .filter(models.Artifact.run_id == run.id, models.Artifact.path == "/matrix/heatmap.json")
+                    .first()
+                )
+                if heatmap_artifact:
+                     matrix_result.artifacts["heatmapUri"] = f"s3://runs/{run.id}/matrix/heatmap.json"
 
-        games_per_pair = 10
-        if isinstance(run.config, dict):
-            games_per_pair = int(run.config.get("gamesPerPair") or games_per_pair)
+                print(f"[EvalMatrix] Materialized matrix for {run.id}")
 
-        metric = "winRate"
-        if isinstance(run.config, dict):
-            metric = str(run.config.get("metric") or metric)
-        payload = self.generate_matrix(policy_snapshot_ids, protocol, games_per_pair, metric)
-        matrix_result.labels = payload["labels"]
-        matrix_result.matrix = payload["matrix"]
-        matrix_result.cells = payload["cells"]
-        matrix_result.ranking = payload["ranking"]
-        matrix_result.meta = payload["meta"]
-        matrix_result.summary = {"generated": True}
-
-        csv_buffer = io.StringIO()
-        writer = csv.writer(csv_buffer)
-        writer.writerow([""] + payload["labels"])
-        for idx, label in enumerate(payload["labels"]):
-            writer.writerow([label] + payload["matrix"][idx])
-
-        matrix_payload = {
-            "labels": payload["labels"],
-            "matrix": payload["matrix"],
-            "meta": payload["meta"],
-            "ranking": payload["ranking"],
-        }
-        json_body = json.dumps(matrix_payload, indent=2)
-
-        csv_artifact = artifact_service.write_artifact(
-            db,
-            run.id,
-            "/matrix/matrix.csv",
-            csv_buffer.getvalue(),
-            "text/csv",
-        )
-        json_artifact = artifact_service.write_artifact(
-            db,
-            run.id,
-            "/matrix/matrix.json",
-            json_body,
-            "application/json",
-        )
-        heatmap_artifact = artifact_service.write_artifact(
-            db,
-            run.id,
-            "/matrix/heatmap.json",
-            json_body,
-            "application/json",
-        )
-
-        matrix_result.artifacts = {
-            "csvUri": f"s3://runs/{run.id}/matrix/matrix.csv",
-            "jsonUri": f"s3://runs/{run.id}/matrix/matrix.json",
-            "heatmapUri": f"s3://runs/{run.id}/matrix/heatmap.json",
-        }
-        matrix_result.export_url = s3_client.presigned_get_url(csv_artifact.object_key)
+        except Exception as e:
+            print(f"[EvalMatrix] Failed to process matrix artifact for run {run.id}: {e}")
 
 
 eval_matrix_service = EvalMatrixService()

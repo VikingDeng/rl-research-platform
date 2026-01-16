@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { Project, Run, JobStatus } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
-import { Play, Cpu, Activity, Clock, ArrowRight, Plus, FolderOpen, Trash2, Calendar, X } from 'lucide-react';
+import { Play, Cpu, Activity, Clock, ArrowRight, Plus, FolderOpen, Trash2, Calendar, X, GitFork } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
 
@@ -16,6 +16,8 @@ export const Dashboard: React.FC = () => {
   // New Project Form State
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDescription, setNewProjectDescription] = useState('');
+  const [newProjectGitRepo, setNewProjectGitRepo] = useState('');
+  const [newProjectGitBranch, setNewProjectGitBranch] = useState('main');
 
   useEffect(() => {
     api.getProjects().then(setProjects);
@@ -25,12 +27,19 @@ export const Dashboard: React.FC = () => {
   const handleCreateProject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjectName.trim()) return;
-    api.createProject({ name: newProjectName.trim(), description: newProjectDescription.trim() || undefined })
+    api.createProject({ 
+        name: newProjectName.trim(), 
+        description: newProjectDescription.trim() || undefined,
+        gitRepo: newProjectGitRepo.trim() || undefined,
+        gitBranch: newProjectGitBranch.trim() || undefined
+    })
       .then(project => {
         setProjects(prev => [project, ...prev]);
         setIsModalOpen(false);
         setNewProjectName('');
         setNewProjectDescription('');
+        setNewProjectGitRepo('');
+        setNewProjectGitBranch('main');
         navigate(`/projects/${project.id}`);
       })
       .catch((err) => {
@@ -271,6 +280,38 @@ export const Dashboard: React.FC = () => {
                             onChange={e => setNewProjectDescription(e.target.value)}
                         />
                     </div>
+                    
+                    <div className="pt-2 border-t border-gray-100">
+                        <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                            <GitFork className="w-4 h-4"/> Git Integration (Optional)
+                        </h3>
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className="col-span-2">
+                                <label className="block text-xs font-medium text-gray-500 mb-1">Repository URL</label>
+                                <input 
+                                    type="text" 
+                                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
+                                    placeholder="https://github.com/user/repo.git"
+                                    value={newProjectGitRepo}
+                                    onChange={e => setNewProjectGitRepo(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1">Default Branch</label>
+                                <input 
+                                    type="text" 
+                                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
+                                    placeholder="main"
+                                    value={newProjectGitBranch}
+                                    onChange={e => setNewProjectGitBranch(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-2">
+                            Linking a repo allows you to run code directly from Git branches/commits without rebuilding Docker images.
+                        </p>
+                    </div>
+
                     <div className="pt-4 flex justify-end gap-3">
                         <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
                         <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Create Project</button>

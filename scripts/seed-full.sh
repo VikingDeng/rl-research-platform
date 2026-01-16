@@ -60,6 +60,35 @@ ALGO_DEFS = [
         "entrypoint": "algorithms.simple_eval:evaluate",
         "default_config": {},
         "config_schema": {}
+    },
+    {
+        "algo_id": "sb3-ppo",
+        "name": "Stable-Baselines3 PPO",
+        "description": "Proximal Policy Optimization via SB3. Supports video recording.",
+        "version": "2.2.1",
+        "entrypoint": "algorithms.sb3_train:train",
+        "default_config": {
+            "train": {"totalEnvSteps": 20000, "learningRate": 0.0003},
+            "env": {"maps": ["CartPole-v1"]}
+        },
+        "config_schema": {
+            "type": "object",
+            "properties": {
+                "train": {"type": "object"},
+                "env": {"type": "object"}
+            }
+        }
+    },
+    {
+        "algo_id": "sb3-eval",
+        "name": "SB3 Evaluator",
+        "description": "Real evaluation using Stable-Baselines3 models.",
+        "version": "1.0.0",
+        "entrypoint": "algorithms.sb3_eval:evaluate",
+        "default_config": {
+            "episodesPerMatch": 10
+        },
+        "config_schema": {}
     }
 ]
 
@@ -75,6 +104,35 @@ TEMPLATE_DEFS = [
             "env": {"envId": "gym-classic", "mapSet": "classic", "maps": ["CartPole-v1"]},
             "train": {"totalEnvSteps": 5000}
         }
+    },
+    {
+        "name": "SB3 PPO CartPole (Video)",
+        "description": "PPO Training with Video Recording enabled.",
+        "type": "Single-Agent",
+        "version": "1.0.0",
+        "algo_id": "sb3-ppo",
+        "algo_version": "2.2.1",
+        "default_config": {
+            "env": {"envId": "gym-classic", "mapSet": "classic", "maps": ["CartPole-v1"]},
+            "train": {"totalEnvSteps": 20000}
+        }
+    }
+]
+
+DATASET_DEFS = [
+    {
+        "name": "D4RL HalfCheetah Expert",
+        "description": "Expert demonstration dataset for HalfCheetah-v2 from D4RL.",
+        "path": "s3://rl-platform/datasets/d4rl/halfcheetah_expert.hdf5",
+        "format": "hdf5",
+        "size_bytes": 104857600,
+    },
+    {
+        "name": "Offline CartPole Demo",
+        "description": "A small offline dataset for CartPole-v1 recorded with a random policy.",
+        "path": "s3://rl-platform/datasets/demo/cartpole_random.jsonl",
+        "format": "jsonl",
+        "size_bytes": 1048576,
     }
 ]
 
@@ -107,6 +165,21 @@ def seed():
                 db.add(env_ver)
                 db.commit()
                 print(f"Seeded Env: {env_def['env_id']}")
+
+        # 2. Datasets
+        for ds_def in DATASET_DEFS:
+            ds = db.query(models.Dataset).filter(models.Dataset.name == ds_def["name"]).first()
+            if not ds:
+                ds = models.Dataset(
+                    name=ds_def["name"],
+                    description=ds_def["description"],
+                    path=ds_def["path"],
+                    format=ds_def["format"],
+                    size_bytes=ds_def["size_bytes"]
+                )
+                db.add(ds)
+                db.commit()
+                print(f"Seeded Dataset: {ds_def['name']}")
 
         # 2. Algos
         for algo_def in ALGO_DEFS:

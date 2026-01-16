@@ -41,6 +41,14 @@ class S3Client:
             ContentType=content_type,
         )
 
+    def put_object(self, key: str, body: bytes, content_type: str) -> None:
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=key,
+            Body=body,
+            ContentType=content_type,
+        )
+
     def presigned_get_url(self, key: str, expires_in: int = 3600) -> str:
         return self._client.generate_presigned_url(
             "get_object",

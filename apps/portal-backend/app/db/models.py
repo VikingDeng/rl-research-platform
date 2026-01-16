@@ -21,6 +21,8 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    git_repo: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    git_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="main")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -156,11 +158,14 @@ class Run(Base):
     status: Mapped[str] = mapped_column(String, nullable=False)
     algo: Mapped[str] = mapped_column(String, nullable=False)
     env: Mapped[str] = mapped_column(String, nullable=False)
+    group_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     duration: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     gpu: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     git: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    git_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    git_commit: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
 
@@ -170,11 +175,24 @@ class Job(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=2)  # 1=Low, 2=Normal, 3=High
     backend_ref: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     executor: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class Dataset(Base):
+    __tablename__ = "datasets"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    path: Mapped[str] = mapped_column(String, nullable=False)  # S3 path or local path
+    format: Mapped[str] = mapped_column(String, nullable=False)  # e.g., 'jsonl', 'hdf5', 'd4rl'
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Checkpoint(Base):

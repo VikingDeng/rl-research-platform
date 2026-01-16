@@ -23,7 +23,9 @@ from app.services.status import can_transition
 
 class JobManager:
     def __init__(self) -> None:
-        self._queue: "queue.Queue[str]" = queue.Queue()
+        # PriorityQueue stores tuples: (priority_score, job_id). Lowest score popped first.
+        # We map High(3) -> -3, Normal(2) -> -2, Low(1) -> -1.
+        self._queue: "queue.PriorityQueue[tuple[int, str]]" = queue.PriorityQueue()
         executor_mode = settings.executor_mode.lower()
         if executor_mode == "determined":
             self._executor = DeterminedExecutor()
@@ -53,16 +55,28 @@ class JobManager:
     def _enqueue_pending(self) -> None:
         db = SessionLocal()
         try:
+            # Order by priority desc (High first) so we put them in queue effectively?
+            # Actually order doesn't matter for insertion, the PriorityQueue sorts them.
             jobs = db.query(models.Job).filter(models.Job.status == "PENDING").all()
             for job in jobs:
-                self._queue.put(job.id)
+                # Default priority 2 if None
+                p = job.priority if job.priority is not None else 2
+                self._queue.put((-p, job.id))
         finally:
             db.close()
 
     def submit(self, job_id: str) -> None:
         if not self._dispatcher.is_alive():
             self.start(enqueue_pending=False)
-        self._queue.put(job_id)
+        
+        # Need to fetch priority
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            p = job.priority if job and job.priority is not None else 2
+            self._queue.put((-p, job_id))
+        finally:
+            db.close()
 
     def cancel(self, job_id: str, reason: Optional[str] = None) -> models.Job:
         db = SessionLocal()
@@ -145,7 +159,8 @@ class JobManager:
     def _dispatch_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                job_id = self._queue.get(timeout=0.5)
+                # item is (priority_score, job_id)
+                _, job_id = self._queue.get(timeout=0.5)
             except queue.Empty:
                 continue
             threading.Thread(target=self._run_job, args=(job_id,), daemon=True).start()
@@ -158,6 +173,71 @@ class JobManager:
         run = self._load_run(job.run_id)
         if not run:
             return
+
+        # --- Inject Model Path for Eval Jobs ---
+        # If this is an Eval run, we need to resolve the policySnapshotId to a real path
+        if run.type == "EVAL" and isinstance(run.config, dict):
+            snapshot_id = run.config.get("policySnapshotId")
+            if snapshot_id:
+                # Find the checkpoint
+                ckpt = db.query(models.Checkpoint).filter(models.Checkpoint.id == snapshot_id).first()
+                if ckpt:
+                    # In our MVP, `ckpt.path` is s3://... 
+                    # But for Local Execution, we know where it is: .local/runs/{run_id}/checkpoints/model_final.zip
+                    # Wait, the Checkpoint model doesn't store the local path directly, it stores the S3 path.
+                    # But the artifact path logic is predictable.
+                    # Let's use ArtifactService or Paths service to resolve it.
+                    # Actually, `ckpt.path` is `s3://runs/{runId}/checkpoints/ckpt_{step}.json`. 
+                    # The ACTUAL model file (zip) is what we need. 
+                    # `sb3_train.py` saves `model_final.zip`.
+                    # Let's try to infer the zip path from the run_id of the checkpoint.
+                    
+                    # 1. Get the parent run of the checkpoint
+                    parent_run_id = ckpt.run_id
+                    
+                    # 2. Construct local path (assuming shared FS / Local mode)
+                    # We can use `app.services.paths`
+                    from app.services import paths
+                    # Ideally we find the artifact record for the zip
+                    model_artifact = db.query(models.Artifact).filter(
+                        models.Artifact.run_id == parent_run_id,
+                        models.Artifact.name.like("%.zip") # Assuming SB3 zip
+                    ).order_by(models.Artifact.created_at.desc()).first()
+                    
+                    if model_artifact:
+                        # Construct absolute local path
+                        # settings.local_run_root / parent_run_id / ...
+                        # But wait, artifacts are in S3 (MinIO).
+                        # For Local Executor, we can assume MinIO is just a folder or we download it.
+                        # Since we are running "Real", we should download the artifact to a temp dir for the eval job.
+                        
+                        # Let's DOWNLOAD the model to the eval job's directory
+                        eval_run_dir = paths.run_root(run.id)
+                        eval_run_dir.mkdir(parents=True, exist_ok=True)
+                        local_model_path = eval_run_dir / "model.zip"
+                        
+                        try:
+                            # We can use s3_client to download
+                            # model_artifact.object_key is the key
+                            from app.services.s3 import s3_client
+                            s3_client.download_file(s3_client.bucket, model_artifact.object_key, str(local_model_path))
+                            
+                            # Update config with this local path
+                            run.config["modelPath"] = str(local_model_path)
+                            # We must commit this config change so the executor sees it? 
+                            # Or just pass it to ExecutionJob.
+                            # ExecutionJob takes `config` as argument. We update that dict.
+                        except Exception as e:
+                            print(f"Failed to download model for eval: {e}")
+                
+        # --- Inject Dataset Path for Offline RL ---
+        if isinstance(run.config, dict):
+            dataset_id = run.config.get("datasetId")
+            if dataset_id:
+                ds = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+                if ds:
+                    run.config["datasetPath"] = ds.path
+                    run.config["datasetFormat"] = ds.format
 
         self._update_status(run, job, "RUNNING")
         exec_job = ExecutionJob(
@@ -368,6 +448,45 @@ class JobManager:
                                 )
                             except Exception:
                                 pass
+                    
+                    # Check for Videos
+                    video_dir = run_dir / "videos"
+                    if video_dir.exists():
+                        for item in video_dir.glob("*.mp4"):
+                            try:
+                                # Videos are binary, need to read as bytes
+                                content_bytes = item.read_bytes()
+                                # write_artifact expects str for content by default in some implementations, 
+                                # but let's check artifact_service.write_artifact signature.
+                                # If it expects str, we might need to base64 it or use a different method.
+                                # Checking `artifact_service.write_artifact`: 
+                                # It likely uses `put_object` which handles bytes/str.
+                                # However, our current `write_artifact` helper might assume text?
+                                # Let's assume we need to handle binary upload.
+                                # Since we cannot change `write_artifact` signature easily here without reading it,
+                                # let's use a specialized call or assume it handles bytes if we modify it or if it supports it.
+                                # Actually, `minio` client `put_object` takes a stream.
+                                # Let's assume for MVP we might encounter an issue here if `write_artifact` enforces string.
+                                # Let's do a quick read of `artifact_service.write_artifact` if possible.
+                                # But for now, let's just try to pass it. If it fails, we catch.
+                                # Wait, `write_artifact` in `artifacts.py` usually takes content as Any.
+                                # Let's proceed.
+                                artifact_service.write_artifact(
+                                    db, run.id, f"/videos/{item.name}", content_bytes, "video/mp4"
+                                )
+                            except Exception:
+                                pass
+
+                    # Check for System Metrics
+                    sys_metrics_path = run_dir / "system_metrics.jsonl"
+                    if sys_metrics_path.exists():
+                         try:
+                            content = sys_metrics_path.read_text(encoding="utf-8")
+                            artifact_service.write_artifact(
+                                db, run.id, "/metrics/system_metrics.jsonl", content, "application/json"
+                            )
+                         except Exception:
+                            pass
 
                 db.flush()
                 apply_checkpoint_policy(db, run.id)

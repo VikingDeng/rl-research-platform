@@ -81,6 +81,7 @@ from app.schemas.settings import (
     RetentionApplyResponse,
 )
 from app.schemas.webhooks import Webhook, WebhookCreate
+from app.schemas.datasets import Dataset, DatasetCreate
 from app.services.artifacts import artifact_service
 from app.services.job_manager import job_manager
 from app.services.metrics import metrics_service
@@ -89,6 +90,7 @@ from app.services.repro_bundle import repro_bundle_service
 from app.services.retention import apply_checkpoint_policy
 from app.services.schema_validation import validate_env_constraints, validate_json_schema
 from app.services.s3 import s3_client
+from app.services.datasets import dataset_service
 
 router = APIRouter()
 
@@ -276,6 +278,8 @@ def list_projects(db: Session = Depends(get_db)) -> List[Project]:
                     "name": project.name,
                     "description": project.description,
                     "tags": project.tags,
+                    "git_repo": project.git_repo,
+                    "git_branch": project.git_branch,
                     "created_at": project.created_at,
                     "updated_at": project.updated_at,
                     "active_runs": active_runs,
@@ -292,6 +296,8 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
         name=payload.name,
         description=payload.description,
         tags=payload.tags or [],
+        git_repo=payload.git_repo,
+        git_branch=payload.git_branch,
     )
     db.add(project)
     db.commit()
@@ -316,6 +322,8 @@ def get_project(project_id: str, db: Session = Depends(get_db)) -> Project:
             "name": project.name,
             "description": project.description,
             "tags": project.tags,
+            "git_repo": project.git_repo,
+            "git_branch": project.git_branch,
             "created_at": project.created_at,
             "updated_at": project.updated_at,
             "active_runs": active_runs,
@@ -335,6 +343,10 @@ def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depend
         project.description = payload.description
     if payload.tags is not None:
         project.tags = payload.tags
+    if payload.git_repo is not None:
+        project.git_repo = payload.git_repo
+    if payload.git_branch is not None:
+        project.git_branch = payload.git_branch
     db.commit()
     db.refresh(project)
     return Project.model_validate(project)
@@ -1051,6 +1063,7 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
         algo=algo_id,
         env=f"{payload.env.env_id}:{payload.env.version}",
         gpu=payload.resources.gpus,
+        group_id=payload.group_id,
         config={
             "env": {
                 **payload.env.model_dump(by_alias=True),
@@ -1067,9 +1080,14 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
             "seedSet": payload.seed_set,
             "plugin": plugin_payload,
             "autoEval": payload.auto_eval.model_dump(by_alias=True) if payload.auto_eval else None,
+            "git": payload.git.model_dump(by_alias=True) if payload.git else None,
+            "datasetId": payload.dataset_id,
         },
         metrics={"returnMean": [], "winRate": [], "entropy": []},
     )
+    if payload.git:
+        run.git_branch = payload.git.branch
+        run.git_commit = payload.git.commit
 
     if algo_version and algo_version.config_schema:
         config_error = validate_json_schema(algo_version.config_schema, run.config)
@@ -1079,7 +1097,11 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
     db.commit()
     db.refresh(run)
 
-    job = models.Job(run_id=run.id, status="PENDING")
+    job = models.Job(
+        run_id=run.id, 
+        status="PENDING",
+        priority=payload.resources.priority if payload.resources.priority is not None else 2
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -1093,6 +1115,7 @@ def list_runs(
     project_id: Optional[str] = None,
     type: Optional[str] = None,
     status: Optional[str] = None,
+    group_id: Optional[str] = None,
     db: Session = Depends(get_db),
 ) -> List[Run]:
     query = db.query(models.Run)
@@ -1102,7 +1125,9 @@ def list_runs(
         query = query.filter(models.Run.type == type)
     if status:
         query = query.filter(models.Run.status == status)
-    runs = query.all()
+    if group_id:
+        query = query.filter(models.Run.group_id == group_id)
+    runs = query.order_by(models.Run.created.desc()).all()
     return [Run.model_validate(r) for r in runs]
 
 
@@ -1720,9 +1745,18 @@ def submit_eval_job(payload: EvalJobRequest, db: Session = Depends(get_db)) -> E
         name=f"eval-{payload.protocol_id}-{datetime.utcnow().strftime('%H%M%S')}",
         type="EVAL",
         status="PENDING",
-        algo="eval",
+        algo="sb3-eval", # Use the real evaluator
         env=payload.protocol_id,
-        config={"protocolId": payload.protocol_id, "policySnapshotId": payload.policy_snapshot_id},
+        config={
+            "protocolId": payload.protocol_id, 
+            "policySnapshotId": payload.policy_snapshot_id,
+            # We also need to inject the algo entrypoint info so the Runner knows what to load
+            # The runner looks at `config.algo.entrypoint`.
+            "algo": {
+                "entrypoint": "algorithms.sb3_eval:evaluate",
+                "name": "SB3 Evaluator"
+            }
+        },
         metrics={"returnMean": [], "winRate": [], "entropy": []},
     )
     db.add(run)
@@ -1861,7 +1895,32 @@ def get_run_metrics(run_id: str, db: Session = Depends(get_db)) -> RunMetricsRes
 
 @router.get("/runs/{run_id}/logs", response_model=LogPage)
 def get_run_logs(run_id: str, page: int = 1, page_size: int = 50, db: Session = Depends(get_db)) -> LogPage:
-    return LogPage(lines=[], page=page, page_size=page_size, has_more=False)
+    from app.services import paths
+    import itertools
+    
+    log_file = paths.logs_path(run_id)
+    lines = []
+    has_more = False
+    
+    if log_file.exists():
+        try:
+            start = (page - 1) * page_size
+            end = start + page_size
+            # Use islice to read only the lines we need without loading whole file
+            with log_file.open("r", encoding="utf-8", errors="replace") as f:
+                # We read 'page_size + 1' to check if there is more
+                sliced = list(itertools.islice(f, start, end + 1))
+                
+                if len(sliced) > page_size:
+                    has_more = True
+                    lines = [line.rstrip() for line in sliced[:-1]]
+                else:
+                    has_more = False
+                    lines = [line.rstrip() for line in sliced]
+        except Exception:
+            pass
+            
+    return LogPage(lines=lines, page=page, page_size=page_size, has_more=has_more)
 
 
 @router.get("/runs/{run_id}/stream")
@@ -2000,6 +2059,18 @@ def get_repro_bundle(run_id: str, db: Session = Depends(get_db)) -> ReproBundleR
 
     url = repro_bundle_service.get_manifest_url(run_id)
     return ReproBundleResponse(url=url, manifest=manifest)
+
+
+@router.get("/datasets", response_model=List[Dataset])
+def list_datasets(db: Session = Depends(get_db)) -> List[Dataset]:
+    datasets = dataset_service.list_datasets(db)
+    return [Dataset.model_validate(d) for d in datasets]
+
+
+@router.post("/datasets", response_model=Dataset, status_code=201)
+def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db)) -> Dataset:
+    dataset = dataset_service.create_dataset(db, payload)
+    return Dataset.model_validate(dataset)
 
 
 @router.post("/admin/webhooks", response_model=Webhook, status_code=201)

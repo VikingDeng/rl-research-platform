@@ -31,6 +31,7 @@ class Run(APIModel):
     status: str
     algo: str
     env: str
+    group_id: Optional[str] = None
     duration: Optional[str] = None
     gpu: Optional[int] = None
     created: datetime
@@ -62,6 +63,7 @@ class Job(APIModel):
     id: str
     run_id: str
     status: str
+    priority: int = 2
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     message: Optional[str] = None
@@ -104,6 +106,7 @@ class ResourceSpec(APIModel):
     gpus: int
     cpus: Optional[int] = None
     mem_gb: Optional[int] = None
+    priority: Optional[int] = 2  # 1=Low, 2=Normal, 3=High
 
 
 class PluginRef(APIModel):
@@ -114,6 +117,12 @@ class PluginRef(APIModel):
 class AutoEvalConfig(APIModel):
     protocol_id: str
     trigger_on: str
+
+
+class GitConfig(APIModel):
+    repo: Optional[str] = None
+    branch: Optional[str] = None
+    commit: Optional[str] = None
 
 
 class TrainJobRequest(APIModel):
@@ -127,6 +136,9 @@ class TrainJobRequest(APIModel):
     seed_set: Optional[List[int]] = None
     plugin: Optional[PluginRef] = None
     auto_eval: Optional[AutoEvalConfig] = None
+    git: Optional[GitConfig] = None
+    group_id: Optional[str] = None
+    dataset_id: Optional[str] = None
 
 
 class TrainJobResponse(APIModel):

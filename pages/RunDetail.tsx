@@ -22,7 +22,7 @@ export const RunDetail: React.FC = () => {
   const [evalResult, setEvalResult] = useState<EvalResult | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [metricsSeries, setMetricsSeries] = useState<Record<string, { step: number; value: number }[]>>({});
-  const [activeTab, setActiveTab] = useState<'metrics' | 'logs' | 'config' | 'checkpoints' | 'matrix' | 'source'>('metrics');
+  const [activeTab, setActiveTab] = useState<'metrics' | 'logs' | 'config' | 'checkpoints' | 'matrix' | 'source' | 'tensorboard' | 'video'>('metrics');
   
   // Log Viewer State
   const [logSearch, setLogSearch] = useState('');
@@ -45,6 +45,8 @@ export const RunDetail: React.FC = () => {
   // Artifact Browser State
   const [showArtifacts, setShowArtifacts] = useState(false);
   const [artifacts, setArtifacts] = useState<ArtifactFile[]>([]);
+  const [videoFiles, setVideoFiles] = useState<ArtifactFile[]>([]);
+  const [systemMetrics, setSystemMetrics] = useState<{timestamp: number, cpu_percent: number, memory_percent: number}[]>([]);
 
   const loadLogs = (page: number, append: boolean) => {
       if (!id) return;
@@ -56,6 +58,28 @@ export const RunDetail: React.FC = () => {
             setLogPage(res.page);
         })
         .finally(() => setLogLoading(false));
+  }
+  
+  // Fetch System Metrics from Artifact
+  const loadSystemMetrics = async (files: ArtifactFile[]) => {
+      const sysMetricFile = files.find(f => f.name === 'system_metrics.jsonl');
+      if (sysMetricFile) {
+          try {
+              const res = await api.getArtifactDownloadUrl(sysMetricFile.id);
+              const contentRes = await fetch(res.url);
+              const text = await contentRes.text();
+              const lines = text.trim().split('\n');
+              const parsed = lines.map(line => JSON.parse(line));
+              // Downsample if too many
+              const sampled = parsed.length > 500 ? parsed.filter((_, i) => i % Math.ceil(parsed.length / 500) === 0) : parsed;
+              setSystemMetrics(sampled);
+          } catch (e) {
+              console.error("Failed to load system metrics", e);
+          }
+      }
+      
+      const vids = files.filter(f => f.name.endsWith('.mp4'));
+      setVideoFiles(vids);
   }
 
   const buildMatrixCells = (result: MatrixResult | null): MatrixCell[] => {
@@ -92,7 +116,10 @@ export const RunDetail: React.FC = () => {
     api.getRunJob(id).then(setJob).catch(() => setJob(null));
     api.getCheckpoints(id).then(setCheckpoints);
     api.getProtocols().then(setProtocols);
-    api.getArtifacts(id).then(setArtifacts);
+    api.getArtifacts(id).then(files => {
+        setArtifacts(files);
+        loadSystemMetrics(files);
+    });
     api.getRunMetrics(id).then(res => setMetricsSeries(res.series || {})).catch(() => setMetricsSeries({}));
     loadLogs(1, false);
     api.getReproBundle(id)
@@ -275,6 +302,22 @@ export const RunDetail: React.FC = () => {
       const variance = values.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / values.length;
       return { mean, max, std: Math.sqrt(variance) };
   }
+  
+  // Video Component
+  const VideoPlayer = ({ file }: { file: ArtifactFile }) => {
+      const [url, setUrl] = useState<string | null>(null);
+      useEffect(() => {
+          api.getArtifactDownloadUrl(file.id).then(res => setUrl(res.url));
+      }, [file.id]);
+      
+      if (!url) return <div className="w-full h-48 bg-gray-100 animate-pulse rounded-lg"></div>;
+      return (
+          <div className="bg-black/5 p-2 rounded-lg">
+             <div className="text-xs text-gray-500 mb-1 truncate font-mono">{file.name}</div>
+             <video controls className="w-full rounded shadow-sm border border-gray-200" src={url} preload="metadata" />
+          </div>
+      );
+  }
 
   // Log filtering logic
   const filteredLogs = logLines
@@ -405,6 +448,8 @@ export const RunDetail: React.FC = () => {
               ) : (
                   <>
                     <button onClick={() => setActiveTab('metrics')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Training Metrics</button>
+                    <button onClick={() => setActiveTab('tensorboard')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'tensorboard' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>TensorBoard</button>
+                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Video Gallery ({videoFiles.length})</button>}
                     <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>System Logs</button>
                     <button onClick={() => setActiveTab('checkpoints')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'checkpoints' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Checkpoints</button>
                     <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Configuration</button>
@@ -465,6 +510,24 @@ export const RunDetail: React.FC = () => {
                          </p>
                      </div>
                 </div>
+              </div>
+          )}
+          
+          {activeTab === 'video' && videoFiles.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {videoFiles.map(file => (
+                      <VideoPlayer key={file.id} file={file} />
+                  ))}
+              </div>
+          )}
+
+          {activeTab === 'tensorboard' && (
+              <div className="w-full h-[800px] bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <iframe 
+                    src={`http://${window.location.hostname}:6006/?darkMode=false#scalars&regexInput=${run.id}`} 
+                    className="w-full h-full border-0"
+                    title="TensorBoard"
+                  />
               </div>
           )}
 
@@ -579,6 +642,69 @@ export const RunDetail: React.FC = () => {
                         </div>
                     </div>
                 </div>
+                
+                {/* System Metrics Section */}
+                {systemMetrics.length > 0 && (
+                    <div className="pt-6 border-t border-gray-200">
+                        <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2"><HardDrive className="w-5 h-5 text-gray-500"/> System Resources</h3>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                                <h4 className="text-sm font-semibold text-gray-900 mb-4">CPU Usage (%)</h4>
+                                <div className="h-[200px]">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={systemMetrics}>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                            <XAxis dataKey="timestamp" hide />
+                                            <YAxis fontSize={12} domain={[0, 100]} />
+                                            <Tooltip contentStyle={{ borderRadius: '8px', border: 'none' }} labelFormatter={() => ''} />
+                                            <Line type="monotone" dataKey="cpu_percent" stroke="#dc2626" strokeWidth={1} dot={false} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                                <h4 className="text-sm font-semibold text-gray-900 mb-4">Memory Usage (%)</h4>
+                                <div className="h-[200px]">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={systemMetrics}>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                            <XAxis dataKey="timestamp" hide />
+                                            <YAxis fontSize={12} domain={[0, 100]} />
+                                            <Tooltip contentStyle={{ borderRadius: '8px', border: 'none' }} labelFormatter={() => ''} />
+                                            <Line type="monotone" dataKey="memory_percent" stroke="#7c3aed" strokeWidth={1} dot={false} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* GPU Metrics (Dynamic) */}
+                        {systemMetrics.length > 0 && (systemMetrics[0] as any).gpus && (systemMetrics[0] as any).gpus.length > 0 && (
+                            <div className="mt-6">
+                                <h4 className="text-sm font-semibold text-gray-900 mb-4">GPU Utilization (%)</h4>
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {(systemMetrics[0] as any).gpus.map((gpu: any, idx: number) => (
+                                        <div key={idx} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                                            <div className="text-xs text-gray-500 mb-2">GPU {gpu.index}</div>
+                                            <div className="h-[200px]">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <LineChart data={systemMetrics}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                        <XAxis dataKey="timestamp" hide />
+                                                        <YAxis fontSize={12} domain={[0, 100]} />
+                                                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none' }} labelFormatter={() => ''} />
+                                                        <Line type="monotone" dataKey={`gpus[${idx}].util_gpu`} stroke="#059669" strokeWidth={1} dot={false} name="Compute" />
+                                                        <Line type="monotone" dataKey={`gpus[${idx}].util_mem`} stroke="#d97706" strokeWidth={1} dot={false} name="Mem Controller" />
+                                                    </LineChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
           )}
 

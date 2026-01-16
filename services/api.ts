@@ -43,7 +43,7 @@ export const apiBaseUrl = resolvedBaseUrl;
 export const api = {
   getProjects: async (): Promise<Project[]> => apiClient.listProjects(),
   getProjectById: async (id: string): Promise<Project> => apiClient.getProject(id),
-  createProject: async (payload: { name: string; description?: string; tags?: string[] }): Promise<Project> =>
+  createProject: async (payload: { name: string; description?: string; tags?: string[]; gitRepo?: string; gitBranch?: string }): Promise<Project> =>
     apiClient.createProject(payload),
   deleteProject: async (id: string): Promise<void> => apiClient.deleteProject(id),
   getRuns: async (): Promise<Run[]> => apiClient.listRuns(),
@@ -197,11 +197,14 @@ export const api = {
     projectId: string;
     templateVersionId: string;
     env: { envId: string; version: string; mapSet: string };
-    algo: { algoId: string; algoVersionId: string; preset?: string };
-    train: { totalEnvSteps: number; rolloutLen: number; batchSize: number; lr: number };
-    resources: { gpus: number };
+    algo: { algoId: string; algoVersionId: string; preset?: string } & Record<string, unknown>;
+    train: { totalEnvSteps: number; rolloutLen: number; batchSize: number; lr: number } & Record<string, unknown>;
+    resources: { gpus: number; priority?: number };
     seedSet?: number[];
     plugin?: { pluginId: string; version: string };
+    git?: { repo?: string; branch?: string; commit?: string };
+    groupId?: string;
+    datasetId?: string;
   }) => apiClient.submitTrainJob(payload),
   submitMatrixJob: async (payload: {
     poolId?: string;

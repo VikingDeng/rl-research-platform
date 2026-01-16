@@ -359,7 +359,8 @@ export interface CheckpointTagRequest {
 export interface Job {
   id: string;
   runId: string;
-  status: JobStatus;
+  status: string;
+  priority?: number;
   createdAt?: string;
   updatedAt?: string;
   message?: string;
@@ -402,6 +403,7 @@ export interface ResourceSpec {
   gpus: number;
   cpus?: number;
   memGb?: number;
+  priority?: number;
 }
 
 export interface PluginRef {
