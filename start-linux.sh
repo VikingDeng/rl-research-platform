@@ -7,7 +7,7 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
-FRONTEND_DIST="$ROOT_DIR/apps/portal-frontend/dist"
+FRONTEND_DIST="$ROOT_DIR/dist"
 RUNS_DIR="$ROOT_DIR/.local/runs"
 
 # Colors

@@ -22,8 +22,8 @@ RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
 # Install python dependencies
 COPY apps/portal-backend/requirements.txt .
 COPY apps/portal-backend/runner/requirements.txt ./runner-requirements.txt
-# Install tensorboard explicitly
-RUN pip install --no-cache-dir -r requirements.txt -r runner-requirements.txt tensorboard
+# Install tensorboard and psycopg2 (needed for Postgres in Docker) explicitly
+RUN pip install --no-cache-dir -r requirements.txt -r runner-requirements.txt tensorboard psycopg2-binary
 
 # Copy Backend Code
 COPY apps/portal-backend/app /app/app
