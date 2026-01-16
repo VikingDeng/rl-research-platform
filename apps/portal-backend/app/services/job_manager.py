@@ -342,6 +342,33 @@ class JobManager:
                         db.add(checkpoint)
                         checkpoint_added = True
 
+                # --- Capture Eval/Matrix Artifacts ---
+                run_dir = Path(metrics_path).parent if metrics_path else None
+                if run_dir and run_dir.exists():
+                    # Check for Eval outputs
+                    eval_dir = run_dir / "eval"
+                    if eval_dir.exists():
+                        for item in eval_dir.glob("*.json"):
+                            try:
+                                content = item.read_text(encoding="utf-8")
+                                artifact_service.write_artifact(
+                                    db, run.id, f"/eval/{item.name}", content, "application/json"
+                                )
+                            except Exception:
+                                pass
+                    # Check for Matrix outputs
+                    matrix_dir = run_dir / "matrix"
+                    if matrix_dir.exists():
+                        for item in matrix_dir.glob("*"):
+                            try:
+                                content = item.read_text(encoding="utf-8")
+                                mime = "application/json" if item.suffix == ".json" else "text/csv" if item.suffix == ".csv" else "application/octet-stream"
+                                artifact_service.write_artifact(
+                                    db, run.id, f"/matrix/{item.name}", content, mime
+                                )
+                            except Exception:
+                                pass
+
                 db.flush()
                 apply_checkpoint_policy(db, run.id)
             except ValueError as exc:
@@ -376,6 +403,18 @@ class JobManager:
                     self._trigger_auto_eval(db, run)
                 except Exception:
                     pass
+            
+            # Dispatch Webhook
+            try:
+                dispatch_webhooks(db, "job.finished", {
+                    "job_id": job.id,
+                    "run_id": run.id,
+                    "status": final_status,
+                    "exit_code": exit_code,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+            except Exception:
+                pass
 
             db.commit()
         finally:

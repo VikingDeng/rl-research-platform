@@ -1,0 +1,6 @@
+plugin_id: custom_wrapper
+version: 0.1.0
+entrypoints:
+  env_wrappers:
+    - name: "MyWrapper"
+      path: "custom_wrapper.wrapper:MyCustomWrapper"

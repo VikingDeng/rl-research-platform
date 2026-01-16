@@ -135,28 +135,60 @@ class EvalMatrixService:
         if isinstance(run.config, dict):
             policy_snapshot_id = run.config.get("policySnapshotId", "")
 
-        payload = self.generate_eval(protocol, policy_snapshot_id)
+        # Try to read real artifact
+        real_summary_artifact = (
+            db.query(models.Artifact)
+            .filter(models.Artifact.run_id == run.id, models.Artifact.path == "/eval/summary.json")
+            .first()
+        )
+        
+        payload = None
+        if real_summary_artifact:
+            try:
+                # We need to read the content. Assuming s3_client can fetch it.
+                # Since artifact service writes to s3 with object_key.
+                content_stream = s3_client.get_object(real_summary_artifact.object_key)
+                if content_stream:
+                    summary_data = json.load(content_stream)
+                    # We might also want results.json for values, but summary is enough for top level
+                    payload = {
+                        "metrics": {"winRate": summary_data.get("winRate", 0.0)},
+                        "summary": summary_data,
+                        "ci": {"mean": summary_data.get("mean", 0.0)}, # Simplified CI
+                        "values": [] # We could load results.json if needed
+                    }
+            except Exception:
+                pass
+
+        if not payload:
+            payload = self.generate_eval(protocol, policy_snapshot_id)
+
         eval_result.metrics = payload["metrics"]
         eval_result.summary = payload["summary"]
         eval_result.ci = payload["ci"]
 
-        artifact_payload = {
-            "protocolId": eval_result.protocol_id,
-            "policySnapshotId": policy_snapshot_id,
-            "summary": payload["summary"],
-            "ci": payload["ci"],
-            "values": payload["values"],
-            "generatedAt": datetime.utcnow().isoformat(),
-        }
-        artifact_json = json.dumps(artifact_payload, indent=2)
-        artifact = artifact_service.write_artifact(
-            db,
-            run.id,
-            "/eval/eval_result.json",
-            artifact_json,
-            "application/json",
-        )
-        eval_result.artifact_url = s3_client.presigned_get_url(artifact.object_key)
+        if not real_summary_artifact:
+            artifact_payload = {
+                "protocolId": eval_result.protocol_id,
+                "policySnapshotId": policy_snapshot_id,
+                "summary": payload["summary"],
+                "ci": payload["ci"],
+                "values": payload.get("values", []),
+                "generatedAt": datetime.utcnow().isoformat(),
+            }
+            artifact_json = json.dumps(artifact_payload, indent=2)
+            artifact = artifact_service.write_artifact(
+                db,
+                run.id,
+                "/eval/eval_result.json",
+                artifact_json,
+                "application/json",
+            )
+            eval_result.artifact_url = s3_client.presigned_get_url(artifact.object_key)
+        else:
+            # If we have real artifact, we might want to consolidate or just point to it.
+            # For consistency, we can rely on the uploaded one.
+            eval_result.artifact_url = s3_client.presigned_get_url(real_summary_artifact.object_key)
 
     def materialize_matrix_result(self, db: Session, run: models.Run) -> None:
         matrix_id = run.config.get("matrixId") if isinstance(run.config, dict) else None

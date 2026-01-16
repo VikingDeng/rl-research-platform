@@ -64,37 +64,48 @@ class LocalExecutor:
         gpu_ids = ",".join(str(lock.gpu_id) for lock in locks)
 
         runner_mode = settings.local_executor_mode.lower()
-        runner_script = "runner_main.py" if runner_mode == "real" else "fake_runner.py"
-        cmd = [
-            sys.executable,
-            str(Path(__file__).resolve().with_name(runner_script)),
-            "--run-id",
-            job.run_id,
-            "--metrics-path",
-            str(metrics_path),
-        ]
+        # Resolve runner script from the 'runner' directory
+        backend_root = Path(__file__).resolve().parents[2]
+        runner_dir = backend_root / "runner"
+        runner_script_path = runner_dir / "runner_main.py"
+        
+        # Fallback if using fake runner (which might still be in executors for now, or we move it?)
+        # For this refactor, we assume real mode primarily or we point to the one in runner
+        # If runner_mode is NOT real, we might want to keep using the fake runner in executors? 
+        # Let's keep fake_runner.py in executors for now as it is a testing stub.
         if runner_mode == "real":
-            cmd.extend(
-                [
-                    "--config-path",
-                    str(config_path),
-                    "--checkpoint-dir",
-                    str(checkpoint_dir),
-                ]
-            )
+            script_to_run = str(runner_script_path)
+            cmd = [
+                sys.executable,
+                script_to_run,
+                "--run-id",
+                job.run_id,
+                "--metrics-path",
+                str(metrics_path),
+                "--config-path",
+                str(config_path),
+                "--checkpoint-dir",
+                str(checkpoint_dir),
+            ]
         else:
-            cmd.extend(
-                [
-                    "--checkpoint-path",
-                    str(ckpt_path),
-                    "--steps",
-                    str(steps),
-                    "--step-size",
-                    str(step_size),
-                    "--interval",
-                    str(settings.local_executor_step_interval),
-                ]
-            )
+            # Keep using the fake runner located in this directory
+            script_to_run = str(Path(__file__).resolve().with_name("fake_runner.py"))
+            cmd = [
+                sys.executable,
+                script_to_run,
+                "--run-id",
+                job.run_id,
+                "--metrics-path",
+                str(metrics_path),
+                "--checkpoint-path",
+                str(ckpt_path),
+                "--steps",
+                str(steps),
+                "--step-size",
+                str(step_size),
+                "--interval",
+                str(settings.local_executor_step_interval),
+            ]
 
         seed = None
         if isinstance(job.config, dict):
@@ -119,8 +130,10 @@ class LocalExecutor:
             env["RUN_SEED"] = str(seed)
 
         python_paths = []
-        backend_root = Path(__file__).resolve().parents[2]
+        # Add backend root
         python_paths.append(str(backend_root))
+        # Add runner dir so 'import algorithms' works
+        python_paths.append(str(runner_dir))
 
         if runtime_spec:
             python_paths.insert(0, str(runtime_spec.python_path))

@@ -1,0 +1,9 @@
+ray[rllib]==2.9.0
+torch==2.1.2
+gymnasium==0.29.1
+pettingzoo==1.24.3
+numpy<2.0.0
+pandas
+pyyaml
+requests
+pydantic
