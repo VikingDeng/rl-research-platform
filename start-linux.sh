@@ -24,17 +24,23 @@ if [ ! -d "$FRONTEND_DIST" ]; then
 fi
 
 # 1. Setup Python Environment
-echo -e "${GREEN}[1/4] Setting up Python Virtual Environment...${NC}"
+echo -e "${GREEN}[1/4] Setting up Python Environment...${NC}"
 mkdir -p "$RUNS_DIR"
 cd "$BACKEND_DIR"
 
-if [ ! -d ".venv" ]; then
-    echo "Creating .venv..."
-    python3 -m venv .venv
+# Check if we are already in a Conda environment
+if [ ! -z "$CONDA_DEFAULT_ENV" ]; then
+    echo "Using existing Conda environment: $CONDA_DEFAULT_ENV"
+else
+    if [ ! -d ".venv" ]; then
+        echo "Creating .venv..."
+        python3 -m venv .venv
+    fi
+    source .venv/bin/activate
 fi
 
-# Always activate and ensure dependencies are installed
-source .venv/bin/activate
+echo "Checking/Installing build tools..."
+pip install cmake
 echo "Checking/Installing dependencies..."
 pip install -r requirements.txt
 pip install -r runner/requirements.txt tensorboard
