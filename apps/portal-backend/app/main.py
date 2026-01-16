@@ -22,8 +22,17 @@ app.add_middleware(
 @app.middleware("http")
 async def add_csp_header(request: Request, call_next):
     response = await call_next(request)
-    # Allow unsafe-eval and unsafe-inline to fix frontend loading issues
-    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: http: https: ws: wss:;"
+    # Explicitly set script-src and style-src to be permissive for this research platform
+    # This fixes the "blocked" errors by allowing eval and inline scripts/styles
+    response.headers["Content-Security-Policy"] = (
+        "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
+        "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
+        "style-src * 'unsafe-inline' data: blob:; "
+        "img-src * data: blob:; "
+        "font-src * data: blob:; "
+        "connect-src * ws: wss:; "
+        "frame-src *;"
+    )
     return response
 
 app.include_router(router, prefix="/api/v1")
