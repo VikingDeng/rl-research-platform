@@ -4,9 +4,20 @@
 
 ## 1. 添加新环境
 
-平台支持 **Gymnasium** (单智能体) 和 **PettingZoo** (多智能体)。
+### 方法一：Web UI 注册 (推荐)
+最快的方式，无需重启服务。
 
-### 步骤
+1.  进入 **Registries -> Environments** 页面。
+2.  点击右上角 **"Register Environment"**。
+3.  填写表单：
+    *   **ID**: 环境唯一标识（如 `my-custom-env`）。
+    *   **Entrypoint**: 指向你的 Python 函数（如 `my_package.env:make_env`）。确保该包在 Runner 环境中可导入（通过 pip 安装或 Git 挂载）。
+    *   **Version**: 版本号（如 `1.0.0`）。
+    *   **API Mode**: 选择 `gym` (单智能体) 或 `pettingzoo` (多智能体)。
+
+### 方法二：后端代码注册 (初始化用)
+用于系统预设环境。
+
 1.  **编写适配器**:
     在 `apps/portal-backend/app/envs/` 下创建一个新的 Python 文件。例如 `my_env.py`。
     
@@ -40,35 +51,36 @@
 
 平台采用“入口函数 (Entrypoint)”系统。一个算法本质上就是一个接收 `config` 字典的 Python 函数。
 
-### 步骤
-1.  **编写训练脚本**:
-    在 `apps/portal-backend/runner/algorithms/` 下创建文件。例如 `dreamer_v3.py`。
+### 步骤 A：编写训练脚本
+无论用哪种注册方式，你首先需要一个训练入口。
+在 `apps/portal-backend/runner/algorithms/` 下创建文件，或者在你自己的 Git 仓库中创建。
 
-    ```python
-    import json
+```python
+# my_algo.py
+import json
+
+def train(config, metrics_path, checkpoint_dir, **kwargs):
+    # 1. 解析超参数
+    lr = config['train']['learning_rate']
     
-    def train(config, metrics_path, checkpoint_dir, **kwargs):
-        # 1. 解析超参数
-        lr = config['train']['learning_rate']
-        
-        # 2. 初始化你的模型 (PyTorch/JAX/等)
-        model = DreamerV3(lr=lr)
-        
-        # 3. 训练循环
-        for step in range(10000):
-            metrics = model.train_step()
-            
-            # 4. 记录指标 (这对 UI 展示至关重要)
-            with open(metrics_path, "a") as f:
-                f.write(json.dumps({"step": step, "values": metrics}) + "\n")
-                
-            # 5. 定期保存 Checkpoint
-            if step % 1000 == 0:
-                model.save(f"{checkpoint_dir}/step_{step}.pt")
-    ```
+    # 2. 初始化你的模型 (PyTorch/JAX/等)
+    # ...
+    
+    # 3. 训练循环与 Metrics 记录
+    # ...
+```
 
-2.  **注册算法**:
-    在 `scripts/seed-full.sh` 的 `ALGO_DEFS` 中添加配置。
+### 步骤 B：注册算法
+
+#### 方法一：Web UI 注册 (推荐)
+1.  进入 **Registries -> Algorithms** 页面。
+2.  点击 **"Register Algorithm"**。
+3.  填写信息：
+    *   **Entrypoint**: 指向你的函数（如 `my_algo:train` 或 Git 仓库中的 `src.train:main`）。
+    *   **Default Config**: 填写默认的 JSON 超参数。
+
+#### 方法二：后端代码注册 (初始化用)
+在 `scripts/seed-full.sh` 的 `ALGO_DEFS` 中添加配置。
 
 ---
 

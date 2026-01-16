@@ -4,9 +4,20 @@ This guide covers how to extend the platform with new environments, algorithms, 
 
 ## 1. Adding a New Environment
 
-The platform supports both **Gymnasium** (Single-Agent) and **PettingZoo** (Multi-Agent).
+### Method 1: Web UI Registry (Recommended)
+Fastest way, no restart required.
 
-### Steps
+1.  Navigate to **Registries -> Environments**.
+2.  Click **"Register Environment"**.
+3.  Fill in the form:
+    *   **ID**: Unique identifier (e.g., `my-custom-env`).
+    *   **Entrypoint**: Python function path (e.g., `my_package.env:make_env`).
+    *   **Version**: e.g., `1.0.0`.
+    *   **API Mode**: `gym` or `pettingzoo`.
+
+### Method 2: Backend Seeding (Initialization)
+For system defaults.
+
 1.  **Create the Adapter**:
     Create a new python file in `apps/portal-backend/app/envs/`. For example, `my_env.py`.
     
@@ -33,7 +44,7 @@ The platform supports both **Gymnasium** (Single-Agent) and **PettingZoo** (Mult
     ```
 
 3.  **Reseed**:
-    Run `python apps/portal-backend/runner/scripts/patch_db.py` (if available) or just modify the seeder to run again. For development, running `./scripts/seed-full.sh` is the easiest way to update definitions.
+    Run `./scripts/seed-full.sh` to update definitions.
 
 ---
 
@@ -41,45 +52,27 @@ The platform supports both **Gymnasium** (Single-Agent) and **PettingZoo** (Mult
 
 The platform uses an "Entrypoint" system. An algorithm is just a Python function that accepts a `config` dict.
 
-### Steps
-1.  **Create the Script**:
-    Create a file in `apps/portal-backend/runner/algorithms/`. E.g., `dreamer_v3.py`.
+### Step A: Create the Script
+Create a file in `apps/portal-backend/runner/algorithms/` or in your Git repo.
 
-    ```python
-    # apps/portal-backend/runner/algorithms/dreamer_v3.py
-    import json
-    
-    def train(config, metrics_path, checkpoint_dir, **kwargs):
-        # 1. Parse Config
-        lr = config['train']['learning_rate']
-        
-        # 2. Setup your model (PyTorch/JAX/etc)
-        model = DreamerV3(lr=lr)
-        
-        # 3. Training Loop
-        for step in range(10000):
-            metrics = model.train_step()
-            
-            # 4. Log Metrics (Critical for UI)
-            with open(metrics_path, "a") as f:
-                f.write(json.dumps({"step": step, "values": metrics}) + "\n")
-                
-            # 5. Save Checkpoint periodically
-            if step % 1000 == 0:
-                model.save(f"{checkpoint_dir}/step_{step}.pt")
-    ```
+```python
+# my_algo.py
+import json
 
-2.  **Register in Database**:
-    Add to `ALGO_DEFS` in `scripts/seed-full.sh`.
+def train(config, metrics_path, checkpoint_dir, **kwargs):
+    # ... implementation ...
+    pass
+```
 
-    ```python
-    {
-        "algo_id": "dreamer-v3",
-        "name": "DreamerV3 (Custom)",
-        "entrypoint": "algorithms.dreamer_v3:train",
-        "default_config": { ... }
-    }
-    ```
+### Step B: Register Algorithm
+
+#### Method 1: Web UI Registry (Recommended)
+1.  Navigate to **Registries -> Algorithms**.
+2.  Click **"Register Algorithm"**.
+3.  Provide the `Entrypoint` (e.g., `my_algo:train`) and `Default Config`.
+
+#### Method 2: Backend Seeding
+Add to `ALGO_DEFS` in `scripts/seed-full.sh`.
 
 ---
 

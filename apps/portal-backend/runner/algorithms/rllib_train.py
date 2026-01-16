@@ -52,7 +52,10 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     # 1. Initialize Ray
     if ray.is_initialized():
         ray.shutdown()
-    ray.init(local_mode=True) # Use local mode for simplicity in this runner
+    
+    # Check for debug mode in config to enable local_mode (easier debugging, no multiprocessing)
+    is_debug = config.get("debug", False)
+    ray.init(local_mode=is_debug)
 
     # 2. Register Env
     register_env("mpe_simple_spread", env_creator)
