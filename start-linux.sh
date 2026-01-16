@@ -31,13 +31,13 @@ cd "$BACKEND_DIR"
 if [ ! -d ".venv" ]; then
     echo "Creating .venv..."
     python3 -m venv .venv
-    source .venv/bin/activate
-    echo "Installing dependencies (this may take a while)..."
-    pip install -r requirements.txt
-    pip install -r runner/requirements.txt tensorboard
-else
-    source .venv/bin/activate
 fi
+
+# Always activate and ensure dependencies are installed
+source .venv/bin/activate
+echo "Checking/Installing dependencies..."
+pip install -r requirements.txt
+pip install -r runner/requirements.txt tensorboard
 
 # 2. Database & Seeding (Using SQLite for User Mode)
 echo -e "${GREEN}[2/4] Initializing Database...${NC}"
