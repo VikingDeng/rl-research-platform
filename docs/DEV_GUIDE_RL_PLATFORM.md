@@ -1,126 +1,124 @@
-1. 代码仓库结构（建议）
-repo/
-  apps/
-    portal-backend/
-    portal-frontend/
-    runner/
-  packages/
-    sdk/                # runner 上报 metrics、写 artifacts 的轻量 SDK
-    adapters/           # rllib/marllib adapters
-  infra/
-    compose/
-    grafana/
-    prometheus/
-  docs/
-    PRD_RL_PLATFORM.md
-    API_SPEC_RL_PLATFORM.md
-    TECH_DESIGN_RL_PLATFORM.md
-    DEV_GUIDE_RL_PLATFORM.md
+# 🛠️ Developer Guide: RL Research Platform
 
-2. 服务清单（docker compose）
+This guide covers how to extend the platform with new environments, algorithms, and how to use the Git-based research workflow.
 
-最小可用（MVP）：
+## 1. Adding a New Environment
 
-portal-backend
+The platform supports both **Gymnasium** (Single-Agent) and **PettingZoo** (Multi-Agent).
 
-portal-frontend
+### Steps
+1.  **Create the Adapter**:
+    Create a new python file in `apps/portal-backend/app/envs/`. For example, `my_env.py`.
+    
+    ```python
+    # apps/portal-backend/app/envs/my_env.py
+    import gymnasium as gym
 
-postgres
+    def make_env(env_id: str = "my-custom-env-v0", **kwargs):
+        # You can import your custom logic here
+        return gym.make(env_id, render_mode="rgb_array")
+    ```
 
-minio
+2.  **Register in Database**:
+    Update `scripts/seed-full.sh`. Add an entry to `ENV_DEFS`.
 
-determined-master
+    ```python
+    {
+        "env_id": "my-custom-env",
+        "version": "1.0.0",
+        "api_mode": "gym",  # or 'pettingzoo'
+        "entrypoint": "app.envs.my_env:make_env",  # Points to your function
+        "map_sets": [{"id": "default", "maps": ["my-custom-env-v0"]}]
+    }
+    ```
 
-determined-agent
+3.  **Reseed**:
+    Run `python apps/portal-backend/runner/scripts/patch_db.py` (if available) or just modify the seeder to run again. For development, running `./scripts/seed-full.sh` is the easiest way to update definitions.
 
-prometheus
+---
 
-grafana
+## 2. Adding a New Algorithm
 
-runner-image（作为 job 运行镜像，不必常驻）
+The platform uses an "Entrypoint" system. An algorithm is just a Python function that accepts a `config` dict.
 
-可选：
+### Steps
+1.  **Create the Script**:
+    Create a file in `apps/portal-backend/runner/algorithms/`. E.g., `dreamer_v3.py`.
 
-mlflow-server
+    ```python
+    # apps/portal-backend/runner/algorithms/dreamer_v3.py
+    import json
+    
+    def train(config, metrics_path, checkpoint_dir, **kwargs):
+        # 1. Parse Config
+        lr = config['train']['learning_rate']
+        
+        # 2. Setup your model (PyTorch/JAX/etc)
+        model = DreamerV3(lr=lr)
+        
+        # 3. Training Loop
+        for step in range(10000):
+            metrics = model.train_step()
+            
+            # 4. Log Metrics (Critical for UI)
+            with open(metrics_path, "a") as f:
+                f.write(json.dumps({"step": step, "values": metrics}) + "\n")
+                
+            # 5. Save Checkpoint periodically
+            if step % 1000 == 0:
+                model.save(f"{checkpoint_dir}/step_{step}.pt")
+    ```
 
-3. 开发流程（强约束，减少返工）
+2.  **Register in Database**:
+    Add to `ALGO_DEFS` in `scripts/seed-full.sh`.
 
-先实现 数据模型 + API（OpenAPI）
+    ```python
+    {
+        "algo_id": "dreamer-v3",
+        "name": "DreamerV3 (Custom)",
+        "entrypoint": "algorithms.dreamer_v3:train",
+        "default_config": { ... }
+    }
+    ```
 
-前端按 API 拉数据做页面（Gemini 设计）
+---
 
-runner 能跑通 一个单体模板（PPO） + 一个 MARL 模板（MAPPO）
+## 3. The Git Research Workflow (Recommended)
 
-再加 EvalProtocol + MatrixJob
+Instead of modifying the platform code, you should keep your research code in your own Git repository.
 
-最后补 sweep/ablation 与报告导出
+### How it works
+1.  **Your Repo**: `github.com/my-lab/new-idea`. Contains your custom models, wrappers, and training loop.
+2.  **Config**: When creating a Job in the UI, enable "Git Config".
+    *   **Repo**: `https://github.com/my-lab/new-idea.git`
+    *   **Branch**: `main`
+3.  **Entrypoint Override**:
+    In the "Configuration" step (JSON editor), override the entrypoint to point to your Git code.
+    
+    ```json
+    {
+      "algo": {
+        "entrypoint": "my_package.train:main"
+      }
+    }
+    ```
+4.  **Execution**: The Runner will clone your repo, add it to `PYTHONPATH`, and execute `my_package.train:main`.
 
-4. MVP 里程碑（建议）
-M0（能提交训练、看曲线、产物落盘）
+**Benefit**: Total reproducibility. The platform records the exact Commit Hash used for every run.
 
-Project/Template/Run/Job CRUD
+---
 
-TrainJob → Determined → Runner 启动 → 产生 ckpt → UI 可见
+## 4. Evaluation Matrix
 
-Run Detail：曲线+日志+ckpt
+To benchmark multiple models:
+1.  Go to **Eval Protocols** and define a protocol (e.g., "CartPole 100 Episodes").
+2.  Run **Matrix Job**. Select 3-5 different Runs/Checkpoints.
+3.  The system will launch evaluation jobs for each pair/agent.
+4.  View the results in the **Matrix View** heatmap.
 
-M1（科研闭环：协议化评测 + 矩阵）
+---
 
-EvalProtocol（冻结）
+## 5. Artifacts & Export
 
-EvalJob
-
-OpponentPool（冻结）
-
-MatrixJob + 热力图
-
-M2（科研效率：sweep/ablation + 报告）
-
-SweepJob 批量提交
-
-自动汇总 best + CI
-
-导出论文图表/表格
-
-5. 测试（必须做，不然平台不可信）
-
-单元测试：API schema 校验、manifest 校验、权限（token）
-
-集成测试：TrainJob→ckpt→EvalJob→MatrixJob 全链路
-
-可复现测试：repro_bundle 在新容器里复跑得到同级别统计结果（CI 内）
-
-6. 运维（单机 4 卡）
-
-MinIO：定期清理策略（保留策略：best ckpt + paper tag + 最近 N 天）
-
-Postgres：每日备份
-
-Grafana：GPU/CPU/磁盘告警阈值
-
-Determined：限制同时运行的 GPU slots、失败重试策
-
-7. 执行后端与运行时（本地/Determined）
-
-本地（mac，无 Docker）：
-
-- `EXECUTOR_MODE=local`
-- `LOCAL_EXECUTOR_MODE=real`（使用 `runner_main.py`）
-- `LOCAL_RUN_ROOT=.local/runs`
-- 环境/算法 `package` 为空或本地已安装
-
-Determined（linux，有 Docker）：
-
-- `EXECUTOR_MODE=determined`
-- `DETERMINED_MASTER_URL=http://<master>:8080`
-- `DETERMINED_TOKEN=<token>`（如开启认证）
-- `DETERMINED_IMAGE=<image>`（包含本仓库代码或通过镜像挂载）
-- `DETERMINED_ENTRYPOINT=python -m app.executors.determined_runner`（容器内调用 runner）
-- `DETERMINED_SHARED_FS_ROOT=/mnt/rl_runs`（需与 backend 共享）
-- `LOCAL_RUN_ROOT=/mnt/rl_runs`（与 Determined 共享路径保持一致）
-
-运行时包自动安装（可选）：
-
-- `RUNTIME_AUTO_INSTALL=true`
-- `RUNTIME_CACHE_ROOT=.local/runtimes`
-- `RUNTIME_PIP_INDEX_URL=<custom index>`（可选）
+*   **Videos**: Ensure your training script saves `.mp4` files to the `video` folder (or simply enables `RecordVideo` wrapper). The platform auto-discovers them.
+*   **Repro Bundle**: On the Run Detail page, download the bundle. It contains a `reproduce.sh` script that auto-clones the specific commit and runs the config.

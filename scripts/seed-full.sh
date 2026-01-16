@@ -31,6 +31,14 @@ ENV_DEFS = [
         "map_sets": [{"id": "classic", "maps": ["CartPole-v1", "MountainCar-v0"]}],
         "scenario_schema": {"type": "object", "properties": {}},
     },
+    {
+        "env_id": "pettingzoo-mpe",
+        "version": "1.0.0",
+        "api_mode": "pettingzoo",
+        "entrypoint": "app.envs.mpe:make_env",
+        "map_sets": [{"id": "coop", "maps": ["simple_spread_v3"]}],
+        "scenario_schema": {"type": "object", "properties": {}},
+    }
 ]
 
 ALGO_DEFS = [
@@ -89,6 +97,23 @@ ALGO_DEFS = [
             "episodesPerMatch": 10
         },
         "config_schema": {}
+    },
+    {
+        "algo_id": "rllib-ppo-marl",
+        "name": "Ray RLLib PPO (MARL)",
+        "description": "Multi-Agent PPO using Ray RLLib. Optimized for PettingZoo.",
+        "version": "2.9.0",
+        "entrypoint": "algorithms.rllib_train:train",
+        "default_config": {
+            "train": {"totalEnvSteps": 50000, "learningRate": 0.0001},
+            "env": {"maps": ["simple_spread_v3"]}
+        },
+        "config_schema": {
+            "type": "object",
+            "properties": {
+                "train": {"type": "object"}
+            }
+        }
     }
 ]
 
@@ -115,6 +140,18 @@ TEMPLATE_DEFS = [
         "default_config": {
             "env": {"envId": "gym-classic", "mapSet": "classic", "maps": ["CartPole-v1"]},
             "train": {"totalEnvSteps": 20000}
+        }
+    },
+    {
+        "name": "MARL PPO Simple Spread",
+        "description": "Multi-Agent PPO on MPE Simple Spread.",
+        "type": "Multi-Agent",
+        "version": "1.0.0",
+        "algo_id": "rllib-ppo-marl",
+        "algo_version": "2.9.0",
+        "default_config": {
+            "env": {"envId": "pettingzoo-mpe", "mapSet": "coop", "maps": ["simple_spread_v3"]},
+            "train": {"totalEnvSteps": 50000}
         }
     }
 ]
