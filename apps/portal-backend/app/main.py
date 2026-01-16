@@ -33,6 +33,10 @@ else:
 
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/")
+    async def serve_spa_root():
+        return FileResponse(FRONTEND_DIST / "index.html")
     
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):
