@@ -56,7 +56,10 @@ echo "Running direct DB initialization..."
 python3 scripts/init_db_direct.py
 
 # Run Seed
-python3 runner/scripts/patch_db.py || python3 -c "from scripts.seed_full import seed; seed()" || echo "Seed skipped or failed."
+echo -e "${GREEN}[2/4] Seeding default data...${NC}"
+chmod +x "$ROOT_DIR/scripts/seed-full.sh"
+# Run it! It handles its own PYTHONPATH and venv.
+bash "$ROOT_DIR/scripts/seed-full.sh" || echo "Seed skipped or failed."
 
 # Run Seed
 export PYTHONPATH=$BACKEND_DIR
