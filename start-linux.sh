@@ -6,11 +6,45 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
 export FRONTEND_DIST="$ROOT_DIR/dist"
 RUNS_DIR="$ROOT_DIR/.local/runs"
+NODE_DIR="$ROOT_DIR/.local/node"
+# Using Node v18 (LTS)
+NODE_VER="v18.19.0"
+NODE_DIST="node-$NODE_VER-linux-x64"
 
 GREEN='\033[0;32m'
 NC='\033[0m'
 
 echo -e "${GREEN}=== Starting RL Research Platform ===${NC}"
+
+# 0. Ensure Frontend Build (User-Space Node)
+if [ ! -f "$FRONTEND_DIST/index.html" ]; then
+    echo -e "${GREEN}[0/4] Frontend build not found. Setting up User-Space Node.js...${NC}"
+    
+    # Check/Install Node
+    if [ ! -d "$NODE_DIR/bin" ]; then
+        echo "Downloading Node.js $NODE_VER..."
+        mkdir -p "$NODE_DIR"
+        curl -L "https://nodejs.org/dist/$NODE_VER/$NODE_DIST.tar.xz" | tar -xJ -C "$NODE_DIR" --strip-components=1
+    fi
+    
+    # Temporarily add to PATH
+    export PATH="$NODE_DIR/bin:$PATH"
+    echo "Node version: $(node -v)"
+    echo "NPM version: $(npm -v)"
+
+    echo "Building Frontend..."
+    cd "$ROOT_DIR/apps/portal-frontend"
+    npm install
+    npm run build
+    
+    # Move artifacts to expected location
+    echo "Deploying to $FRONTEND_DIST..."
+    rm -rf "$FRONTEND_DIST"
+    mv dist "$FRONTEND_DIST"
+    cd "$ROOT_DIR"
+else
+    echo -e "${GREEN}[0/4] Frontend build found at $FRONTEND_DIST. Skipping build.${NC}"
+fi
 
 # 1. Environment Setup
 mkdir -p "$RUNS_DIR"
