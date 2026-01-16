@@ -51,6 +51,14 @@ export DATABASE_URL="sqlite:///$ROOT_DIR/rl_platform.db"
 
 # Check if migrations exist, if not, generate them
 VERSIONS_DIR="$BACKEND_DIR/app/db/migrations/versions"
+
+# FORCE CLEANUP for SQLite: Remove old migrations to avoid Postgres/SQLite mismatch (ARRAY types)
+# This is a destructive operation but necessary for the "User Mode" deployment to work out-of-the-box.
+if [[ "$DATABASE_URL" == sqlite* ]]; then
+    echo "SQLite mode detected. Cleaning up old migration versions to ensure compatibility..."
+    rm -f "$VERSIONS_DIR"/*.py
+fi
+
 if [ -z "$(ls -A $VERSIONS_DIR 2>/dev/null)" ]; then
    echo "No migration versions found. Generating initial revision..."
    python3 -m alembic revision --autogenerate -m "init_sqlite_compatible"
