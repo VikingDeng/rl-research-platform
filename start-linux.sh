@@ -1,92 +1,56 @@
 #!/bin/bash
 set -e
 
-# === RL Platform: User-Space Launcher (No Docker/Sudo) ===
-# Prerequisite: You MUST build the frontend locally and upload the 'dist' folder!
-# Run 'npm run build' in 'apps/portal-frontend' on your local machine first.
-
+# === RL Platform: User-Space Launcher ===
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
-FRONTEND_DIST="$ROOT_DIR/dist"
+FRONTEND_DIST="$ROOT_DIR/apps/portal-frontend/dist"
 RUNS_DIR="$ROOT_DIR/.local/runs"
 
-# Colors
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== Starting RL Research Platform (User Mode) ===${NC}"
+echo -e "${GREEN}=== Starting RL Research Platform ===${NC}"
 
-# 0. Check for Frontend Build
-if [ ! -d "$FRONTEND_DIST" ]; then
-    echo "Error: Frontend build not found at $FRONTEND_DIST"
-    echo "Please run 'npm run build' locally and upload the 'dist' folder."
-    exit 1
-fi
-
-# 1. Setup Python Environment
-echo -e "${GREEN}[1/4] Setting up Python Environment...${NC}"
+# 1. Environment Setup
 mkdir -p "$RUNS_DIR"
 cd "$BACKEND_DIR"
 
-# Check if we are already in a Conda environment
 if [ ! -z "$CONDA_DEFAULT_ENV" ]; then
     echo "Using existing Conda environment: $CONDA_DEFAULT_ENV"
 else
     if [ ! -d ".venv" ]; then
-        echo "Creating .venv..."
         python3 -m venv .venv
     fi
     source .venv/bin/activate
 fi
 
-echo "Checking/Installing build tools..."
-pip install cmake
-echo "Checking/Installing dependencies..."
-pip install -r requirements.txt
-pip install -r runner/requirements.txt tensorboard
+echo "Ensuring dependencies..."
+pip install -r requirements.txt > /dev/null
+pip install -r runner/requirements.txt tensorboard > /dev/null
 
-# 2. Database & Seeding (Using SQLite for User Mode)
-echo -e "${GREEN}[2/4] Initializing Database...${NC}"
-# Use relative path to avoid path parsing issues (3 vs 4 slashes)
+# 2. Database Initialization & Seeding (Direct Python Logic)
+echo -e "${GREEN}[2/4] Initializing Database & Seeding...${NC}"
 export DATABASE_URL="sqlite:///rl_platform.db"
-
-# Initialize DB directly (Force Create Tables)
 export PYTHONPATH=$BACKEND_DIR
-echo "Running direct DB initialization..."
+# This one script now does EVERYTHING: Create tables + Seed data
 python3 scripts/init_db_direct.py
-
-# Run Seed
-echo -e "${GREEN}[2/4] Seeding default data...${NC}"
-chmod +x "$ROOT_DIR/scripts/seed-full.sh"
-# Run it! It handles its own PYTHONPATH and venv.
-bash "$ROOT_DIR/scripts/seed-full.sh" || echo "Seed skipped or failed."
-
-# Run Seed
-export PYTHONPATH=$BACKEND_DIR
-python3 runner/scripts/patch_db.py || python3 -c "from scripts.seed_full import seed; seed()" || echo "Seed skipped or failed."
 
 # 3. Start TensorBoard
 echo -e "${GREEN}[3/4] Starting TensorBoard...${NC}"
 python3 -m tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
 TB_PID=$!
-echo "TensorBoard running on port 6006 (PID: $TB_PID)"
 
-# 4. Start Backend (Hosting Frontend)
+# 4. Start Backend
 echo -e "${GREEN}[4/4] Starting Backend & Frontend...${NC}"
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
-echo -e "${GREEN}>>> Platform is Ready! <<<${NC}"
-echo "Web UI: http://<your-ip>:8000"
-echo "TensorBoard: http://<your-ip>:6006"
-echo "Press Ctrl+C to stop."
+echo -e "${GREEN}>>> Platform is Ready! http://localhost:8000 <<<${NC}"
 
 cleanup() {
-    echo "Stopping services..."
-    kill $TB_PID
-    kill $BACKEND_PID
+    kill $TB_PID $BACKEND_PID 2>/dev/null || true
     exit 0
 }
 trap cleanup SIGINT SIGTERM
-
 wait
