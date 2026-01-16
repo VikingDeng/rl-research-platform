@@ -21,10 +21,15 @@ app.add_middleware(
 app.include_router(router, prefix="/api/v1")
 
 # --- Frontend Static Serving ---
-# Adjust path relative to this file: apps/portal-backend/app/main.py
-# Frontend dist is at: apps/portal-frontend/dist
-BACKEND_ROOT = Path(__file__).resolve().parent.parent
-FRONTEND_DIST = BACKEND_ROOT.parent / "portal-frontend" / "dist"
+# Allow override via environment variable, otherwise use default path
+env_frontend_dist = os.getenv("FRONTEND_DIST")
+if env_frontend_dist:
+    FRONTEND_DIST = Path(env_frontend_dist)
+else:
+    # Adjust path relative to this file: apps/portal-backend/app/main.py
+    # Frontend dist is at: apps/portal-frontend/dist
+    BACKEND_ROOT = Path(__file__).resolve().parent.parent
+    FRONTEND_DIST = BACKEND_ROOT.parent / "portal-frontend" / "dist"
 
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
