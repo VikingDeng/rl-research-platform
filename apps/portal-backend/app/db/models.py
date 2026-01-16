@@ -2,8 +2,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, JSON
+# from sqlalchemy.dialects.postgresql import ARRAY, JSONB  <-- Removed
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -20,7 +20,7 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     git_repo: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     git_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="main")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -45,11 +45,11 @@ class AlgoVersion(Base):
     entrypoint: Mapped[str] = mapped_column(String, nullable=False)
     package: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     artifact_uri: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    config_schema: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    default_config: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    resource_profile: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    env_constraints: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
+    config_schema: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    default_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    resource_profile: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    env_constraints: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -63,7 +63,7 @@ class Template(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     type: Mapped[str] = mapped_column(String, nullable=False)
-    default_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    default_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     versions: Mapped[list["TemplateVersion"]] = relationship(back_populates="template", cascade="all, delete-orphan")
@@ -76,10 +76,10 @@ class TemplateVersion(Base):
     template_id: Mapped[str] = mapped_column(ForeignKey("templates.id"), nullable=False, index=True)
     algo_version_id: Mapped[Optional[str]] = mapped_column(ForeignKey("algo_versions.id"), nullable=True, index=True)
     version: Mapped[str] = mapped_column(String, nullable=False)
-    default_config: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    network_template: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    env_constraints: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    wrappers: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True)
+    default_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    network_template: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    env_constraints: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    wrappers: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -90,8 +90,8 @@ class EnvSpec(Base):
     __tablename__ = "envs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    versions: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
-    maps: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    versions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    maps: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
@@ -106,8 +106,8 @@ class EnvVersion(Base):
     package: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     default_image_digest: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    map_sets: Mapped[Optional[list[dict]]] = mapped_column(JSONB, nullable=True)
-    scenario_schema: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    map_sets: Mapped[Optional[list[dict]]] = mapped_column(JSON, nullable=True)
+    scenario_schema: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
@@ -132,7 +132,7 @@ class PluginVersion(Base):
     version: Mapped[str] = mapped_column(String, nullable=False)
     wheel_uri: Mapped[str] = mapped_column(String, nullable=False)
     sha256: Mapped[str] = mapped_column(String, nullable=False)
-    manifest: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    manifest: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
@@ -140,7 +140,7 @@ class SystemSetting(Base):
     __tablename__ = "system_settings"
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
-    value: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -162,11 +162,11 @@ class Run(Base):
     duration: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     gpu: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    git: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    git: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     git_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     git_commit: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class Job(Base):
@@ -201,9 +201,9 @@ class Checkpoint(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
     step: Mapped[int] = mapped_column(Integer, nullable=False)
-    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     path: Mapped[str] = mapped_column(String, nullable=False)
-    tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -217,10 +217,10 @@ class EvalProtocol(Base):
     env_id: Mapped[str] = mapped_column(String, nullable=False)
     env_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     map_set: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    eval_seeds: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False, default=list)
+    eval_seeds: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
     episodes_per_match: Mapped[int] = mapped_column(Integer, nullable=False)
     timeout_sec: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    metrics: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True)
+    metrics: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     opponent_pool_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     opponent_pool_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -277,9 +277,9 @@ class EvalResult(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("runs.id"), nullable=True)
     protocol_id: Mapped[str] = mapped_column(String, nullable=False)
-    metrics: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    ci: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    metrics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    ci: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     artifact_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
@@ -291,13 +291,13 @@ class MatrixResult(Base):
     protocol_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pool_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    cells: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
-    labels: Mapped[Optional[list[str]]] = mapped_column(ARRAY(String), nullable=True)
-    matrix: Mapped[Optional[list[list[float]]]] = mapped_column(JSONB, nullable=True)
-    ranking: Mapped[Optional[list[dict]]] = mapped_column(JSONB, nullable=True)
-    meta: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    artifacts: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    cells: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    labels: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    matrix: Mapped[Optional[list[list[float]]]] = mapped_column(JSON, nullable=True)
+    ranking: Mapped[Optional[list[dict]]] = mapped_column(JSON, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    artifacts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     export_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
@@ -306,7 +306,7 @@ class Webhook(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     url: Mapped[str] = mapped_column(String, nullable=False)
-    events: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    events: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     secret: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -49,6 +49,13 @@ pip install -r runner/requirements.txt tensorboard
 echo -e "${GREEN}[2/4] Initializing Database...${NC}"
 export DATABASE_URL="sqlite:///$ROOT_DIR/rl_platform.db"
 
+# Check if migrations exist, if not, generate them
+VERSIONS_DIR="$BACKEND_DIR/app/db/migrations/versions"
+if [ -z "$(ls -A $VERSIONS_DIR 2>/dev/null)" ]; then
+   echo "No migration versions found. Generating initial revision..."
+   python3 -m alembic revision --autogenerate -m "init_sqlite_compatible"
+fi
+
 # Run Migrations using python3 -m to ensure it finds the venv's alembic
 python3 -m alembic upgrade head
 
