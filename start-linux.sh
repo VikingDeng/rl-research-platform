@@ -41,14 +41,10 @@ fi
 
 # 2. Database & Seeding (Using SQLite for User Mode)
 echo -e "${GREEN}[2/4] Initializing Database...${NC}"
-# For user-mode, we might not have Postgres.
-# Switch to SQLite if DATABASE_URL is not set?
-# Currently code defaults to Postgres. 
-# You might need to set DATABASE_URL=sqlite:///./rl_platform.db env var here.
 export DATABASE_URL="sqlite:///$ROOT_DIR/rl_platform.db"
 
-# Run Migrations
-alembic upgrade head
+# Run Migrations using python3 -m to ensure it finds the venv's alembic
+python3 -m alembic upgrade head
 
 # Run Seed
 export PYTHONPATH=$BACKEND_DIR
@@ -56,19 +52,13 @@ python3 runner/scripts/patch_db.py || python3 -c "from scripts.seed_full import 
 
 # 3. Start TensorBoard
 echo -e "${GREEN}[3/4] Starting TensorBoard...${NC}"
-tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
+python3 -m tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
 TB_PID=$!
 echo "TensorBoard running on port 6006 (PID: $TB_PID)"
 
 # 4. Start Backend (Hosting Frontend)
 echo -e "${GREEN}[4/4] Starting Backend & Frontend...${NC}"
-# We assume main.py is configured to serve static files from ../portal-frontend/dist
-# We need to make sure the paths match what main.py expects.
-# main.py expects: BACKEND_ROOT/../portal-frontend/dist
-# In this script, BACKEND_ROOT is apps/portal-backend/app/.. -> apps/portal-backend.
-# So apps/portal-backend/../portal-frontend/dist -> apps/portal-frontend/dist. Matches!
-
-uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
 echo -e "${GREEN}>>> Platform is Ready! <<<${NC}"
