@@ -8,8 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
-dist-ssr
+# dist
+apps/portal-frontend/distdist-ssr
 *.local
 
 # Editor directories and files
