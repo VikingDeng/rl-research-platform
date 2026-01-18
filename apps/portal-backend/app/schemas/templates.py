@@ -48,6 +48,7 @@ class AlgoVersionCreate(APIModel):
     metadata_: Optional[Dict[str, Any]] = Field(default=None, validation_alias="metadata", serialization_alias="metadata")
     active: Optional[bool] = None
     frozen: Optional[bool] = None
+    code: Optional[str] = None
 
 
 class AlgoVersionUpdate(APIModel):
@@ -61,6 +62,7 @@ class AlgoVersionUpdate(APIModel):
     metadata_: Optional[Dict[str, Any]] = Field(default=None, validation_alias="metadata", serialization_alias="metadata")
     active: Optional[bool] = None
     frozen: Optional[bool] = None
+    code: Optional[str] = None
 
 
 class Template(APIModel):

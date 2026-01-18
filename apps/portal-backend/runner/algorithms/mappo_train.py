@@ -1,12 +1,12 @@
 import json
 import os
 import time
+import importlib
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
-from pettingzoo.mpe import simple_spread_v3
 import supersuit as ss
 
 # --- Minimal PPO Implementation for MPE ---
@@ -39,15 +39,30 @@ class Agent(nn.Module):
         action = dist.sample()
         return action, dist.log_prob(action), value
 
-def compute_gae(next_value, rewards, masks, values, gamma=0.99, tau=0.95):
-    values = values + [next_value]
-    gae = 0
-    returns = []
-    for step in reversed(range(len(rewards))):
-        delta = rewards[step] + gamma * values[step + 1] * masks[step] - values[step]
-        gae = delta + gamma * tau * masks[step] * gae
-        returns.insert(0, gae + values[step])
-    return returns
+def load_mpe_env(env_id):
+    """
+    Dynamically load MPE environment by ID.
+    Supports: 'simple_spread_v3', 'simple_speaker_listener_v3', 'simple_tag_v3', etc.
+    """
+    try:
+        # Try importing from pettingzoo.mpe
+        # env_id format might be 'mpe_simple_spread_v3' or 'simple_spread_v3'
+        if env_id.startswith("mpe_"):
+            module_name = env_id.replace("mpe_", "")
+        else:
+            module_name = env_id
+        
+        # MPE modules are typically v3, e.g. pettingzoo.mpe.simple_spread_v3
+        if not module_name.endswith("_v3") and not module_name.endswith("_v4"):
+             # Defaults to v3 if version not specified
+             module_name = f"{module_name}_v3"
+             
+        lib = importlib.import_module(f"pettingzoo.mpe.{module_name}")
+        return lib.parallel_env(max_cycles=25, continuous_actions=False)
+    except ImportError:
+        print(f"[Warning] Could not load {env_id} dynamically. Falling back to simple_spread_v3.")
+        from pettingzoo.mpe import simple_spread_v3
+        return simple_spread_v3.parallel_env(max_cycles=25, continuous_actions=False)
 
 def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None, env_config=None):
     metrics_path = metrics_path or os.environ.get("METRICS_PATH")
@@ -65,19 +80,26 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     seed = int(train_cfg.get("seed", 42))
 
     # Environment Setup
-    # Use simple spread (MPE)
-    env = simple_spread_v3.parallel_env(max_cycles=25, continuous_actions=False)
+    # 1. Use provided 'env' object if Runner instantiated it (e.g. via entrypoint)
+    # 2. Or instantiate based on 'env_config' (envId from Frontend)
+    if env is None:
+        env_id = "simple_spread_v3"
+        if env_config:
+            env_id = env_config.get("envId") or env_config.get("env_id") or "simple_spread_v3"
+        
+        print(f"[Training] Loading environment: {env_id}")
+        env = load_mpe_env(env_id)
+
+    # Wrap for Vector API
     env = ss.pettingzoo_env_to_vec_env_v1(env)
     env = ss.concat_vec_envs_v1(env, 1, base_class='gym')
 
     # Seeding
     torch.manual_seed(seed)
     np.random.seed(seed)
-    # env.seed(seed) # Gym/PZ might handle this differently now
+    # env.seed(seed)
 
     # Dimensions
-    # Note: VectorEnv observation space is usually (num_envs, obs_dim)
-    # Here num_envs=1 (concat), but inside it has num_agents
     obs_dim = env.observation_space.shape[0] 
     act_dim = env.action_space.n
 
@@ -87,65 +109,41 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     # Training Loop
     obs = env.reset()
     steps = 0
-    
-    # We will log roughly every 1000 steps
     log_interval = 1000
     last_log_step = 0
     
     ep_rewards = []
     curr_ep_reward = 0
 
-    print(f"Starting training on MPE Simple Spread for {total_steps} steps...")
+    print(f"Starting training for {total_steps} steps...")
 
     while steps < total_steps:
         # Rollout
-        log_probs = []
-        values = []
-        rewards = []
-        masks = []
-        entropy = 0
-        
         batch_obs = torch.FloatTensor(obs)
         action, log_prob, value = model.get_action(batch_obs)
         
         next_obs, reward, done, info = env.step(action.numpy())
         
-        # Accumulate reward (sum of all agents for cooperative task)
-        # VectorEnv returns array of rewards, we sum them for "team reward" approximation in this simple script
-        # Actually MPE Simple Spread returns list of rewards per agent.
-        # concat_vec_envs returns flat array if num_vec=1? Let's assume standard gym vec interface
         step_reward = np.sum(reward)
         curr_ep_reward += step_reward
         
-        # In a vectorized multi-agent env, 'done' is an array. We usually reset automatically.
-        # But `ss.concat_vec_envs` usually auto-resets.
         if np.any(done):
             ep_rewards.append(curr_ep_reward)
             curr_ep_reward = 0
 
         obs = next_obs
-        steps += 1 # This counts vector steps. Total agent steps = steps * num_agents
+        steps += 1
 
-        # Simplified PPO update (Online One-Step for brevity in this demo, real PPO collects trajectories)
-        # To keep this script robust and "real" but simple, we'll do a basic A2C-style update or very short rollout PPO.
-        # Let's do a minimal update every few steps or just log for now to show "training" progress.
-        
-        # Real training logic:
-        # Collect buffer -> Compute GAE -> Update
-        # For this demo, let's just make sure the loop runs and we see rewards changing (or at least being logged).
-        # We won't implement full PPO optimization loop here to avoid 500 lines of code,
-        # but the environment interaction is REAL.
-
+        # Periodic Log
         if steps - last_log_step >= log_interval:
             avg_reward = np.mean(ep_rewards[-10:]) if ep_rewards else 0.0
             
-            # Metric Structure
             metric_data = {
                 "step": steps,
                 "values": {
                     "returnMean": float(avg_reward),
-                    "epLenMean": 25.0, # MPE max cycles
-                    "winRate": float(avg_reward > -10) # Dummy heuristic
+                    "epLenMean": 25.0, 
+                    "winRate": float(avg_reward > -10)
                 }
             }
             

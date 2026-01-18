@@ -635,9 +635,38 @@ def create_algo_version(algo_id: str, payload: AlgoVersionCreate, db: Session = 
     algo = db.query(models.Algo).filter(models.Algo.id == algo_id).first()
     if not algo:
         raise HTTPException(status_code=404, detail="algo_not_found")
+    
+    # Handle Code Upload
+    if payload.code:
+        # Determine filename from entrypoint (e.g. "my_script.py:train" -> "my_script.py")
+        # If entrypoint is just "train", default to "custom_{algo_id}_{version}.py"
+        entrypoint_str = payload.entrypoint
+        if ":" in entrypoint_str:
+            module_name = entrypoint_str.split(":")[0]
+            filename = f"{module_name}.py" if not module_name.endswith(".py") else module_name
+        else:
+            filename = f"custom_{algo_id}_{payload.version}.py"
+            # Auto-fix entrypoint to include module name
+            payload.entrypoint = f"{filename.replace('.py', '')}:{payload.entrypoint}"
+
+        # Save to runner/algorithms/
+        # Assumes backend is running in apps/portal-backend/
+        # Runner path: apps/portal-backend/runner/algorithms/
+        import os
+        runner_algo_dir = Path("runner/algorithms")
+        if not runner_algo_dir.exists():
+             # Fallback if running from root
+             runner_algo_dir = Path("apps/portal-backend/runner/algorithms")
+        
+        runner_algo_dir.mkdir(parents=True, exist_ok=True)
+        code_path = runner_algo_dir / filename
+        code_path.write_text(payload.code, encoding="utf-8")
+        print(f"[AlgoRegistry] Saved custom code to {code_path}")
+
     if not payload.entrypoint:
         raise HTTPException(status_code=400, detail="algo_entrypoint_missing")
     _validate_entrypoint(payload.entrypoint, settings.algo_entrypoint_validate)
+    
     existing = (
         db.query(models.AlgoVersion)
         .filter(models.AlgoVersion.algo_id == algo_id, models.AlgoVersion.version == payload.version)

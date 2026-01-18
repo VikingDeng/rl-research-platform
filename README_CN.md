@@ -101,6 +101,8 @@ rl-research-platform/
 *   如何注册新算法。
 *   如何使用插件系统。
 
+🔥 **新特性**: [LLM 集成指南 (中文)](docs/LLM_INTEGRATION_GUIDE_CN.md) - 如何利用 GPT-4/Claude 为本平台自动生成算法代码。
+
 ---
 
 *为强化学习社区打造。*

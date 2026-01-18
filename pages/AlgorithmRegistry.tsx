@@ -29,6 +29,7 @@ export const AlgorithmRegistry: React.FC = () => {
 
   const [newVersion, setNewVersion] = useState('');
   const [newEntrypoint, setNewEntrypoint] = useState('');
+  const [newCode, setNewCode] = useState('');
   const [newPackage, setNewPackage] = useState('');
   const [newArtifactUri, setNewArtifactUri] = useState('');
   const [newConfigSchema, setNewConfigSchema] = useState('{}');
@@ -83,6 +84,7 @@ export const AlgorithmRegistry: React.FC = () => {
   const resetVersionFields = () => {
     setNewVersion('');
     setNewEntrypoint('');
+    setNewCode('');
     setNewPackage('');
     setNewArtifactUri('');
     setNewConfigSchema('{}');
@@ -182,6 +184,7 @@ export const AlgorithmRegistry: React.FC = () => {
       .createAlgoVersion(versionTarget.id, {
         version: newVersion.trim(),
         entrypoint: newEntrypoint.trim(),
+        code: newCode.trim() || undefined,
         package: newPackage.trim() || undefined,
         artifactUri: newArtifactUri.trim() || undefined,
         configSchema,
@@ -504,6 +507,15 @@ export const AlgorithmRegistry: React.FC = () => {
                   value={newEntrypoint}
                   onChange={e => setNewEntrypoint(e.target.value)}
                   placeholder="e.g., myalgo.train:main"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Code Upload (Optional)</label>
+                <textarea
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-32 font-mono text-xs"
+                  value={newCode}
+                  onChange={e => setNewCode(e.target.value)}
+                  placeholder="Paste your Python code here. If used, Entrypoint should match the filename (e.g. 'main.py:train')."
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">

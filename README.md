@@ -103,6 +103,8 @@ See [Developer Guide](docs/DEV_GUIDE_RL_PLATFORM.md) for details on:
 *   Registering new Algorithms.
 *   Plugin system for custom rewards/loggers.
 
+🔥 **New**: [LLM Integration Guide](docs/LLM_INTEGRATION_GUIDE.md) - How to use GPT-4/Claude to auto-generate code for this platform.
+
 ---
 
 *Built for the RL Community.*
