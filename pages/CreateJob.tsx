@@ -53,6 +53,11 @@ export const CreateJob: React.FC = () => {
   const [sweepCombinations, setSweepCombinations] = useState(1);
   const [forkSource, setForkSource] = useState<string | null>(null);
   const [templatePrefill, setTemplatePrefill] = useState<string | null>(null);
+  
+  // Git State
+  const [useGit, setUseGit] = useState(false);
+  const [gitBranch, setGitBranch] = useState('main');
+  const [gitCommit, setGitCommit] = useState('');
 
   const resolveMapOptions = (version?: EnvVersion, env?: EnvSpec) => {
     if (version?.mapSets && version.mapSets.length > 0) {
