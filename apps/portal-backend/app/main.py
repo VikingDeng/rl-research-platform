@@ -10,6 +10,20 @@ from app.core.config import settings
 from app.services.job_manager import job_manager
 
 app = FastAPI(title=settings.app_name)
+
+@app.middleware("http")
+async def add_csp_header(request: Request, call_next):
+    response = await call_next(request)
+    # 允许 'unsafe-eval' 和 'unsafe-inline'，这能解决白屏问题
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-eval' 'unsafe-inline' blob:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' ws: wss: http: https:;"
+    )
+    return response
+
 cors_origins = [origin.strip() for origin in settings.cors_allow_origins.split(",") if origin.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +42,8 @@ async def add_csp_header(request: Request, call_next):
         "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
         "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
         "style-src * 'unsafe-inline' data: blob:; "
-        "img-src * data: blob:; "
+        "img-src * data: blob:; "gemini
+        
         "font-src * data: blob:; "
         "connect-src * ws: wss:; "
         "frame-src *;"
