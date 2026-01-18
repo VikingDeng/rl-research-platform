@@ -37,9 +37,8 @@ if [ ! -f "$FRONTEND_DIST/index.html" ]; then
     # Clean install to avoid version conflicts
     rm -rf node_modules package-lock.json
     
-    # Install dependencies, forcing Tailwind v3 for stability
+    # Install dependencies from package.json (Tailwind v4)
     npm install
-    npm install -D tailwindcss@3.4.1 postcss autoprefixer
     
     npm run build
     
