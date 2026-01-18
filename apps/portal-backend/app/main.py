@@ -11,30 +11,13 @@ from app.services.job_manager import job_manager
 
 app = FastAPI(title=settings.app_name)
 
-cors_origins = [origin.strip() for origin in settings.cors_allow_origins.split(",") if origin.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.middleware("http")
-async def add_csp_header(request: Request, call_next):
-    response = await call_next(request)
-    # Explicitly set script-src and style-src to be permissive for this research platform
-    # This fixes the "blocked" errors by allowing eval and inline scripts/styles
-    response.headers["Content-Security-Policy"] = (
-        "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
-        "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
-        "style-src * 'unsafe-inline' data: blob:; "
-        "img-src * data: blob:; "
-        "font-src * data: blob:; "
-        "connect-src * ws: wss:; "
-        "frame-src *;"
-    )
-    return response
 
 app.include_router(router, prefix="/api/v1")
 
