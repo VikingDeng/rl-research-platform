@@ -32,6 +32,9 @@ else:
     BACKEND_ROOT = Path(__file__).resolve().parent.parent
     FRONTEND_DIST = BACKEND_ROOT.parent.parent / "dist"
 
+print(f"[System] Frontend Dist Path: {FRONTEND_DIST}")
+print(f"[System] Assets Path: {FRONTEND_DIST / 'assets'}")
+
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
