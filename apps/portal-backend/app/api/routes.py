@@ -5,6 +5,7 @@ import json
 import uuid
 import zipfile
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect
@@ -114,7 +115,7 @@ def _algo_version_response(model: models.AlgoVersion) -> AlgoVersion:
             "default_config": model.default_config,
             "resource_profile": model.resource_profile,
             "env_constraints": model.env_constraints,
-            "metadata_": model.metadata_,
+            "metadata": model.metadata_,
             "active": model.active,
             "frozen": model.frozen,
             "created_at": model.created_at,
@@ -685,7 +686,7 @@ def create_algo_version(algo_id: str, payload: AlgoVersionCreate, db: Session = 
         default_config=payload.default_config,
         resource_profile=payload.resource_profile,
         env_constraints=payload.env_constraints,
-        metadata_=payload.metadata_,
+        metadata_=payload.metadata,
         active=payload.active if payload.active is not None else True,
         frozen=payload.frozen if payload.frozen is not None else False,
     )
@@ -728,8 +729,8 @@ def update_algo_version(
         algo_version.resource_profile = payload.resource_profile
     if payload.env_constraints is not None:
         algo_version.env_constraints = payload.env_constraints
-    if payload.metadata_ is not None:
-        algo_version.metadata_ = payload.metadata_
+    if payload.metadata is not None:
+        algo_version.metadata_ = payload.metadata
     if payload.active is not None:
         algo_version.active = payload.active
     if payload.frozen is not None:

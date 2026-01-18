@@ -30,7 +30,7 @@ class AlgoVersion(APIModel):
     default_config: Optional[Dict[str, Any]] = None
     resource_profile: Optional[Dict[str, Any]] = None
     env_constraints: Optional[Dict[str, Any]] = None
-    metadata_: Optional[Dict[str, Any]] = Field(default=None, validation_alias="metadata", serialization_alias="metadata")
+    metadata: Optional[Dict[str, Any]] = None
     active: bool
     frozen: Optional[bool] = None
     created_at: Optional[datetime] = None
@@ -45,7 +45,7 @@ class AlgoVersionCreate(APIModel):
     default_config: Optional[Dict[str, Any]] = None
     resource_profile: Optional[Dict[str, Any]] = None
     env_constraints: Optional[Dict[str, Any]] = None
-    metadata_: Optional[Dict[str, Any]] = Field(default=None, validation_alias="metadata", serialization_alias="metadata")
+    metadata: Optional[Dict[str, Any]] = None
     active: Optional[bool] = None
     frozen: Optional[bool] = None
     code: Optional[str] = None
@@ -59,7 +59,7 @@ class AlgoVersionUpdate(APIModel):
     default_config: Optional[Dict[str, Any]] = None
     resource_profile: Optional[Dict[str, Any]] = None
     env_constraints: Optional[Dict[str, Any]] = None
-    metadata_: Optional[Dict[str, Any]] = Field(default=None, validation_alias="metadata", serialization_alias="metadata")
+    metadata: Optional[Dict[str, Any]] = None
     active: Optional[bool] = None
     frozen: Optional[bool] = None
     code: Optional[str] = None
