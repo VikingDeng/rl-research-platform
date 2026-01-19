@@ -7,8 +7,9 @@ BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
 export FRONTEND_DIST="$ROOT_DIR/dist"
 RUNS_DIR="$ROOT_DIR/.local/runs"
 NODE_DIR="$ROOT_DIR/.local/node"
-# Using Node v20 (LTS) for compatibility with modern libs
-NODE_VER="v20.10.0"
+# Using Node v20.19.0 (LTS) to satisfy Vite/React plugin engine requirements
+NODE_VER="v20.19.0"
+NODE_ROOT="$NODE_DIR/$NODE_VER"
 NODE_DIST="node-$NODE_VER-linux-x64"
 
 GREEN='\033[0;32m'
@@ -21,24 +22,28 @@ if [ ! -f "$FRONTEND_DIST/index.html" ]; then
     echo -e "${GREEN}[0/4] Frontend build not found. Setting up User-Space Node.js...${NC}"
     
     # Check/Install Node
-    if [ ! -d "$NODE_DIR/bin" ]; then
+    if [ ! -d "$NODE_ROOT/bin" ]; then
         echo "Downloading Node.js $NODE_VER..."
-        mkdir -p "$NODE_DIR"
-        curl -L "https://nodejs.org/dist/$NODE_VER/$NODE_DIST.tar.xz" | tar -xJ -C "$NODE_DIR" --strip-components=1
+        mkdir -p "$NODE_ROOT"
+        curl -L "https://nodejs.org/dist/$NODE_VER/$NODE_DIST.tar.xz" | tar -xJ -C "$NODE_ROOT" --strip-components=1
     fi
     
     # Temporarily add to PATH
-    export PATH="$NODE_DIR/bin:$PATH"
+    export PATH="$NODE_ROOT/bin:$PATH"
     echo "Node version: $(node -v)"
     echo "NPM version: $(npm -v)"
 
     echo "Building Frontend..."
     cd "$ROOT_DIR"
     # Clean install to avoid version conflicts
-    rm -rf node_modules package-lock.json
+    rm -rf node_modules
     
-    # Install dependencies from package.json (Tailwind v4)
-    npm install
+    # Prefer lockfile for reproducible builds
+    if [ -f package-lock.json ]; then
+        npm ci
+    else
+        npm install
+    fi
     
     npm run build
     
