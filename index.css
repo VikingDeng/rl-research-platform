@@ -1,6 +1,12 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Explicit sources for Tailwind v4 content scanning */
+@source "./index.html";
+@source "./App.tsx";
+@source "./index.tsx";
+@source "./pages/**/*.{js,ts,jsx,tsx}";
+@source "./components/**/*.{js,ts,jsx,tsx}";
+@source "./services/**/*.{js,ts,jsx,tsx}";
 
 /* Custom scrollbar for logs */
 .scrollbar-hide::-webkit-scrollbar {
