@@ -12,6 +12,21 @@ from app.services.job_manager import job_manager
 
 app = FastAPI(title=settings.app_name)
 
+@app.middleware("http")
+async def disable_csp_for_intranet(request: Request, call_next):
+    response = await call_next(request)
+    # Permissive CSP for intranet use to avoid eval/inline restrictions
+    response.headers["Content-Security-Policy"] = (
+        "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; "
+        "script-src * data: blob: 'unsafe-inline' 'unsafe-eval'; "
+        "style-src * data: blob: 'unsafe-inline'; "
+        "img-src * data: blob:; "
+        "font-src * data: blob:; "
+        "connect-src * data: blob:; "
+        "frame-src * data: blob:;"
+    )
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
