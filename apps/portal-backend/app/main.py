@@ -17,8 +17,10 @@ async def csp_middleware(request: Request, call_next):
     response = await call_next(request)
     # Allow disabling CSP entirely for intranet use
     if os.getenv("DISABLE_CSP", "0") == "1":
-        response.headers.pop("Content-Security-Policy", None)
-        response.headers.pop("Content-Security-Policy-Report-Only", None)
+        if "Content-Security-Policy" in response.headers:
+            del response.headers["Content-Security-Policy"]
+        if "Content-Security-Policy-Report-Only" in response.headers:
+            del response.headers["Content-Security-Policy-Report-Only"]
         return response
     # Permissive CSP (still allows eval/inline) if not disabled
     response.headers["Content-Security-Policy"] = (
