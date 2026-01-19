@@ -1,4 +1,5 @@
 import os
+import mimetypes
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,11 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+
+# Ensure correct MIME types for JS/CSS on minimal Linux images
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("application/javascript", ".mjs")
+mimetypes.add_type("text/css", ".css")
 
 # --- Frontend Static Serving ---
 # Allow override via environment variable, otherwise use default path
