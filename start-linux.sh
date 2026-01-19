@@ -5,6 +5,7 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
 export FRONTEND_DIST="$ROOT_DIR/dist"
+export DISABLE_CSP="1"
 RUNS_DIR="$ROOT_DIR/.local/runs"
 NODE_DIR="$ROOT_DIR/.local/node"
 # Using Node v20.19.0 (LTS) to satisfy Vite/React plugin engine requirements
