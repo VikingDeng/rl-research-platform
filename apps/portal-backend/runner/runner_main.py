@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 import importlib
+import os
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,6 +19,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_entrypoint(entrypoint: str) -> Callable[..., Any]:
+    algo_store = os.getenv("ALGO_STORE_DIR")
+    if algo_store and algo_store not in sys.path:
+        sys.path.insert(0, algo_store)
     module_name, func_name = entrypoint.split(":", 1)
     module = importlib.import_module(module_name)
     return getattr(module, func_name)
@@ -99,6 +103,12 @@ def run_with_config(
             print(f"[Runner] Added {repo_path} to sys.path")
 
         algo = config.get("algo") if isinstance(config, dict) else None
+        if isinstance(algo, dict):
+            algo_meta = algo.get("metadata")
+            if isinstance(algo_meta, dict):
+                python_path = algo_meta.get("pythonPath")
+                if python_path and python_path not in sys.path:
+                    sys.path.insert(0, python_path)
         entrypoint = algo.get("entrypoint") if isinstance(algo, dict) else None
         if not entrypoint:
             print("runner_main: missing algo entrypoint", file=sys.stderr)

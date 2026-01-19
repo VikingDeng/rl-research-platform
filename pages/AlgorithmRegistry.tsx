@@ -29,6 +29,12 @@ export const AlgorithmRegistry: React.FC = () => {
 
   const [newVersion, setNewVersion] = useState('');
   const [newEntrypoint, setNewEntrypoint] = useState('');
+  const [newSourceType, setNewSourceType] = useState<'code' | 'path' | 'git' | 'package'>('code');
+  const [newSourcePath, setNewSourcePath] = useState('');
+  const [newGitRepo, setNewGitRepo] = useState('');
+  const [newGitBranch, setNewGitBranch] = useState('');
+  const [newGitCommit, setNewGitCommit] = useState('');
+  const [newGitSubdir, setNewGitSubdir] = useState('');
   const [newCode, setNewCode] = useState('');
   const [newPackage, setNewPackage] = useState('');
   const [newArtifactUri, setNewArtifactUri] = useState('');
@@ -41,6 +47,13 @@ export const AlgorithmRegistry: React.FC = () => {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [editEntrypoint, setEditEntrypoint] = useState('');
+  const [editSourceType, setEditSourceType] = useState<'none' | 'code' | 'path' | 'git'>('none');
+  const [editSourcePath, setEditSourcePath] = useState('');
+  const [editGitRepo, setEditGitRepo] = useState('');
+  const [editGitBranch, setEditGitBranch] = useState('');
+  const [editGitCommit, setEditGitCommit] = useState('');
+  const [editGitSubdir, setEditGitSubdir] = useState('');
+  const [editCode, setEditCode] = useState('');
   const [editPackage, setEditPackage] = useState('');
   const [editArtifactUri, setEditArtifactUri] = useState('');
   const [editConfigSchema, setEditConfigSchema] = useState('{}');
@@ -84,6 +97,12 @@ export const AlgorithmRegistry: React.FC = () => {
   const resetVersionFields = () => {
     setNewVersion('');
     setNewEntrypoint('');
+    setNewSourceType('code');
+    setNewSourcePath('');
+    setNewGitRepo('');
+    setNewGitBranch('');
+    setNewGitCommit('');
+    setNewGitSubdir('');
     setNewCode('');
     setNewPackage('');
     setNewArtifactUri('');
@@ -98,6 +117,13 @@ export const AlgorithmRegistry: React.FC = () => {
 
   const resetEditFields = () => {
     setEditEntrypoint('');
+    setEditSourceType('none');
+    setEditSourcePath('');
+    setEditGitRepo('');
+    setEditGitBranch('');
+    setEditGitCommit('');
+    setEditGitSubdir('');
+    setEditCode('');
     setEditPackage('');
     setEditArtifactUri('');
     setEditConfigSchema('{}');
@@ -169,6 +195,14 @@ export const AlgorithmRegistry: React.FC = () => {
       showToast('Version and entrypoint are required.', 'error');
       return;
     }
+    if (newSourceType === 'path' && !newSourcePath.trim()) {
+      showToast('Local path is required for Path source.', 'error');
+      return;
+    }
+    if (newSourceType === 'git' && !newGitRepo.trim()) {
+      showToast('Git repo is required for Git source.', 'error');
+      return;
+    }
     const configSchema = parseJsonField(newConfigSchema, 'Config schema');
     if (configSchema === null) return;
     const defaultConfig = parseJsonField(newDefaultConfig, 'Default config');
@@ -179,19 +213,33 @@ export const AlgorithmRegistry: React.FC = () => {
     if (envConstraints === null) return;
     const metadata = parseJsonField(newMetadata, 'Metadata');
     if (metadata === null) return;
+    const finalMetadata: Record<string, unknown> = metadata ? { ...metadata } : {};
+    if (newSourceType === 'path') {
+      finalMetadata.path = newSourcePath.trim();
+      delete (finalMetadata as any).git;
+    }
+    if (newSourceType === 'git') {
+      finalMetadata.git = {
+        repo: newGitRepo.trim(),
+        branch: newGitBranch.trim() || undefined,
+        commit: newGitCommit.trim() || undefined,
+        subdir: newGitSubdir.trim() || undefined,
+      };
+      delete (finalMetadata as any).path;
+    }
 
     api
       .createAlgoVersion(versionTarget.id, {
         version: newVersion.trim(),
         entrypoint: newEntrypoint.trim(),
-        code: newCode.trim() || undefined,
+        code: newSourceType === 'code' ? newCode.trim() || undefined : undefined,
         package: newPackage.trim() || undefined,
         artifactUri: newArtifactUri.trim() || undefined,
         configSchema,
         defaultConfig,
         resourceProfile,
         envConstraints,
-        metadata,
+        metadata: Object.keys(finalMetadata).length > 0 ? finalMetadata : undefined,
         active: newActive,
       })
       .then(() => api.getAlgos({ includeArchived }))
@@ -221,6 +269,30 @@ export const AlgorithmRegistry: React.FC = () => {
     setEditResourceProfile(JSON.stringify(version.resourceProfile || {}, null, 2));
     setEditEnvConstraints(JSON.stringify(version.envConstraints || {}, null, 2));
     setEditMetadata(JSON.stringify(version.metadata || {}, null, 2));
+    const meta = (version.metadata || {}) as Record<string, any>;
+    if (meta?.git && typeof meta.git === 'object') {
+      setEditSourceType('git');
+      setEditGitRepo(meta.git.repo || '');
+      setEditGitBranch(meta.git.branch || '');
+      setEditGitCommit(meta.git.commit || '');
+      setEditGitSubdir(meta.git.subdir || '');
+      setEditSourcePath('');
+    } else if (meta?.path) {
+      setEditSourceType('path');
+      setEditSourcePath(String(meta.path));
+      setEditGitRepo('');
+      setEditGitBranch('');
+      setEditGitCommit('');
+      setEditGitSubdir('');
+    } else {
+      setEditSourceType('none');
+      setEditSourcePath('');
+      setEditGitRepo('');
+      setEditGitBranch('');
+      setEditGitCommit('');
+      setEditGitSubdir('');
+    }
+    setEditCode('');
     setEditActive(version.active ?? true);
     setEditShowAdvanced(false);
     setIsEditOpen(true);
@@ -237,6 +309,14 @@ export const AlgorithmRegistry: React.FC = () => {
       showToast('Entrypoint is required.', 'error');
       return;
     }
+    if (editSourceType === 'path' && !editSourcePath.trim()) {
+      showToast('Local path is required for Path source.', 'error');
+      return;
+    }
+    if (editSourceType === 'git' && !editGitRepo.trim()) {
+      showToast('Git repo is required for Git source.', 'error');
+      return;
+    }
     const configSchema = parseJsonField(editConfigSchema, 'Config schema');
     if (configSchema === null) return;
     const defaultConfig = parseJsonField(editDefaultConfig, 'Default config');
@@ -247,17 +327,34 @@ export const AlgorithmRegistry: React.FC = () => {
     if (envConstraints === null) return;
     const metadata = parseJsonField(editMetadata, 'Metadata');
     if (metadata === null) return;
+    const finalMetadata: Record<string, unknown> = metadata ? { ...metadata } : {};
+    if (editSourceType === 'path') {
+      finalMetadata.path = editSourcePath.trim();
+      delete (finalMetadata as any).git;
+    } else if (editSourceType === 'git') {
+      finalMetadata.git = {
+        repo: editGitRepo.trim(),
+        branch: editGitBranch.trim() || undefined,
+        commit: editGitCommit.trim() || undefined,
+        subdir: editGitSubdir.trim() || undefined,
+      };
+      delete (finalMetadata as any).path;
+    } else if (editSourceType === 'none') {
+      delete (finalMetadata as any).path;
+      delete (finalMetadata as any).git;
+    }
 
     api
       .updateAlgoVersion(editTarget.algoId, editTarget.version, {
         entrypoint: editEntrypoint.trim(),
+        code: editSourceType === 'code' ? editCode.trim() || undefined : undefined,
         package: editPackage.trim() || undefined,
         artifactUri: editArtifactUri.trim() || undefined,
         configSchema,
         defaultConfig,
         resourceProfile,
         envConstraints,
-        metadata,
+        metadata: Object.keys(finalMetadata).length > 0 ? finalMetadata : undefined,
         active: editActive,
       })
       .then(() => api.getAlgos({ includeArchived }))
@@ -508,16 +605,99 @@ export const AlgorithmRegistry: React.FC = () => {
                   onChange={e => setNewEntrypoint(e.target.value)}
                   placeholder="e.g., myalgo.train:main"
                 />
+                <p className="text-xs text-gray-500 mt-1">Format: module:function (e.g. algorithms.mappo_train:train)</p>
+                {newSourceType === 'git' && (
+                  <p className="text-xs text-amber-600 mt-1">For Git sources, module must be importable from the repo/subdir.</p>
+                )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Code Upload (Optional)</label>
-                <textarea
-                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-32 font-mono text-xs"
-                  value={newCode}
-                  onChange={e => setNewCode(e.target.value)}
-                  placeholder="Paste your Python code here. If used, Entrypoint should match the filename (e.g. 'main.py:train')."
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
+                <select
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  value={newSourceType}
+                  onChange={e => setNewSourceType(e.target.value as 'code' | 'path' | 'git' | 'package')}
+                >
+                  <option value="code">Inline code</option>
+                  <option value="path">Server file path</option>
+                  <option value="git">Git repository</option>
+                  <option value="package">Package/Artifact only</option>
+                </select>
               </div>
+              {newSourceType === 'code' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Inline Code</label>
+                  <textarea
+                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-40 font-mono text-xs"
+                    value={newCode}
+                    onChange={e => setNewCode(e.target.value)}
+                    placeholder="Paste your Python code here. The entrypoint should match the module:function in this file."
+                  />
+                </div>
+              )}
+              {newSourceType === 'path' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Server File Path</label>
+                  <input
+                    type="text"
+                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    value={newSourcePath}
+                    onChange={e => setNewSourcePath(e.target.value)}
+                    placeholder="/home/dwj/algos/mappo_train.py"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">The backend will copy this file into the algorithm store.</p>
+                </div>
+              )}
+              {newSourceType === 'git' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Repo URL</label>
+                    <input
+                      type="text"
+                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      value={newGitRepo}
+                      onChange={e => setNewGitRepo(e.target.value)}
+                      placeholder="https://github.com/org/repo.git"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Branch (optional)</label>
+                      <input
+                        type="text"
+                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        value={newGitBranch}
+                        onChange={e => setNewGitBranch(e.target.value)}
+                        placeholder="main"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Commit (optional)</label>
+                      <input
+                        type="text"
+                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        value={newGitCommit}
+                        onChange={e => setNewGitCommit(e.target.value)}
+                        placeholder="abc123"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Subdirectory (optional)</label>
+                    <input
+                      type="text"
+                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      value={newGitSubdir}
+                      onChange={e => setNewGitSubdir(e.target.value)}
+                      placeholder="src/algos"
+                    />
+                  </div>
+                </div>
+              )}
+              {newSourceType === 'package' && (
+                <p className="text-xs text-gray-500">
+                  No source will be stored. Use Package/Artifact fields below for reproducible installs.
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Package (optional)</label>
@@ -593,6 +773,7 @@ export const AlgorithmRegistry: React.FC = () => {
                       value={newMetadata}
                       onChange={e => setNewMetadata(e.target.value)}
                     />
+                    <p className="text-xs text-gray-500 mt-1">Reserved keys: path, git (auto-filled by Source).</p>
                   </div>
                 </>
               ) : (
@@ -767,6 +948,88 @@ export const AlgorithmRegistry: React.FC = () => {
                   />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Source Override</label>
+                <select
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  value={editSourceType}
+                  onChange={e => setEditSourceType(e.target.value as 'none' | 'code' | 'path' | 'git')}
+                >
+                  <option value="none">Keep existing source</option>
+                  <option value="code">Inline code</option>
+                  <option value="path">Server file path</option>
+                  <option value="git">Git repository</option>
+                </select>
+              </div>
+              {editSourceType === 'code' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Inline Code</label>
+                  <textarea
+                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-40 font-mono text-xs"
+                    value={editCode}
+                    onChange={e => setEditCode(e.target.value)}
+                    placeholder="Paste updated Python code here."
+                  />
+                </div>
+              )}
+              {editSourceType === 'path' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Server File Path</label>
+                  <input
+                    type="text"
+                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    value={editSourcePath}
+                    onChange={e => setEditSourcePath(e.target.value)}
+                    placeholder="/home/dwj/algos/mappo_train.py"
+                  />
+                </div>
+              )}
+              {editSourceType === 'git' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Repo URL</label>
+                    <input
+                      type="text"
+                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      value={editGitRepo}
+                      onChange={e => setEditGitRepo(e.target.value)}
+                      placeholder="https://github.com/org/repo.git"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Branch (optional)</label>
+                      <input
+                        type="text"
+                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        value={editGitBranch}
+                        onChange={e => setEditGitBranch(e.target.value)}
+                        placeholder="main"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Commit (optional)</label>
+                      <input
+                        type="text"
+                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        value={editGitCommit}
+                        onChange={e => setEditGitCommit(e.target.value)}
+                        placeholder="abc123"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Subdirectory (optional)</label>
+                    <input
+                      type="text"
+                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      value={editGitSubdir}
+                      onChange={e => setEditGitSubdir(e.target.value)}
+                      placeholder="src/algos"
+                    />
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between border-t border-gray-100 pt-4">
                 <div className="text-sm font-medium text-gray-700">Advanced fields</div>
                 <button
@@ -820,6 +1083,7 @@ export const AlgorithmRegistry: React.FC = () => {
                       value={editMetadata}
                       onChange={e => setEditMetadata(e.target.value)}
                     />
+                    <p className="text-xs text-gray-500 mt-1">Reserved keys: path, git (auto-filled by Source).</p>
                   </div>
                 </>
               ) : (

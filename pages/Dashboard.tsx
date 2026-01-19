@@ -3,11 +3,12 @@ import { api } from '../services/api';
 import { Project, Run, JobStatus } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { Play, Cpu, Activity, Clock, ArrowRight, Plus, FolderOpen, Trash2, Calendar, X, GitFork } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -22,7 +23,11 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     api.getProjects().then(setProjects);
     api.getRuns().then(setRuns);
-  }, []);
+    const state = location.state as { openCreateProject?: boolean } | null;
+    if (state?.openCreateProject) {
+      setIsModalOpen(true);
+    }
+  }, [location.state]);
 
   const handleCreateProject = (e: React.FormEvent) => {
     e.preventDefault();

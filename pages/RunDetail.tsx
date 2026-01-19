@@ -1,14 +1,107 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api, apiBaseUrl } from '../services/api';
 import { Run, Job, JobStatus, RunType, Checkpoint, EvalProtocol, ArtifactFile, MatrixCell, EvalResult, MatrixResult } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { Heatmap } from '../components/Heatmap';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Terminal, Download, RefreshCw, FileText, Tag, PlayCircle, Folder, ChevronRight, GitFork, Grid3X3, Search, ArrowDownCircle, Calculator, Copy, X, HardDrive } from 'lucide-react';
+import { Terminal, Download, RefreshCw, FileText, Tag, PlayCircle, Folder, ChevronRight, GitFork, Grid3X3, Search, ArrowDownCircle, Calculator, Copy, X, HardDrive, AlertTriangle } from 'lucide-react';
 import { useToast } from '../components/Toast.tsx';
 
 const LOG_PAGE_SIZE = 200;
+const LOG_HINT_WINDOW = 400;
+
+type LogHint = {
+  id: string;
+  title: string;
+  detail: string;
+  action?: string;
+};
+
+const deriveLogHints = (lines: string[]): LogHint[] => {
+  const recent = lines.slice(-LOG_HINT_WINDOW);
+  const hints: LogHint[] = [];
+  const missingModules = new Set<string>();
+  const missingFiles = new Set<string>();
+  let entrypointError = false;
+  let cudaOom = false;
+  let killed = false;
+
+  const addHint = (hint: LogHint) => {
+    if (!hints.some(existing => existing.id === hint.id)) {
+      hints.push(hint);
+    }
+  };
+
+  recent.forEach(line => {
+    const moduleMatch = line.match(/ModuleNotFoundError: No module named ['"]([^'"]+)['"]/);
+    if (moduleMatch?.[1]) {
+      missingModules.add(moduleMatch[1]);
+    }
+    const fileMatch = line.match(/FileNotFoundError: \[Errno 2\] No such file or directory: ['"]([^'"]+)['"]/);
+    if (fileMatch?.[1]) {
+      missingFiles.add(fileMatch[1]);
+    }
+    if (/env entrypoint error/i.test(line)) {
+      entrypointError = true;
+    }
+    if (/CUDA out of memory|CUDNN_STATUS|out of memory/i.test(line)) {
+      cudaOom = true;
+    }
+    if (/Killed|SIGKILL|Exit code 137|OOM killer/i.test(line)) {
+      killed = true;
+    }
+  });
+
+  if (missingModules.size > 0) {
+    const list = Array.from(missingModules).slice(0, 4).join(', ');
+    addHint({
+      id: 'missing-modules',
+      title: 'Missing Python dependency',
+      detail: `Python failed to import: ${list}${missingModules.size > 4 ? '…' : ''}.`,
+      action: 'Install the package in the runner env or add it to your algo requirements.',
+    });
+  }
+
+  if (entrypointError) {
+    addHint({
+      id: 'entrypoint-error',
+      title: 'Algorithm entrypoint not loading',
+      detail: 'The runner could not import the entrypoint module/function.',
+      action: 'Check that entrypoint is `module:function` and that the module is inside your algo source path.',
+    });
+  }
+
+  if (missingFiles.size > 0) {
+    const list = Array.from(missingFiles).slice(0, 3).join(', ');
+    addHint({
+      id: 'missing-files',
+      title: 'Missing file or dataset path',
+      detail: `File not found: ${list}${missingFiles.size > 3 ? '…' : ''}.`,
+      action: 'Verify dataset paths, mounts, and working directory.',
+    });
+  }
+
+  if (cudaOom) {
+    addHint({
+      id: 'cuda-oom',
+      title: 'CUDA out of memory',
+      detail: 'GPU memory exhausted during training.',
+      action: 'Reduce batch size, model size, or request more GPUs.',
+    });
+  }
+
+  if (killed) {
+    addHint({
+      id: 'killed',
+      title: 'Process terminated (SIGKILL)',
+      detail: 'The process was killed by the OS or scheduler.',
+      action: 'Check memory limits, preemption, or long-running watchdogs.',
+    });
+  }
+
+  return hints;
+};
 
 export const RunDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -41,6 +134,12 @@ export const RunDetail: React.FC = () => {
   const [showEvalModal, setShowEvalModal] = useState(false);
   const [selectedCkpt, setSelectedCkpt] = useState<Checkpoint | null>(null);
   const [selectedProtocol, setSelectedProtocol] = useState('');
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [saveTemplateName, setSaveTemplateName] = useState('');
+  const [saveTemplateDescription, setSaveTemplateDescription] = useState('');
+  const [saveTemplateType, setSaveTemplateType] = useState<'Single-Agent' | 'Multi-Agent'>('Multi-Agent');
+  const [saveTemplateConfig, setSaveTemplateConfig] = useState('');
+  const [saveTemplateSubmitting, setSaveTemplateSubmitting] = useState(false);
 
   // Artifact Browser State
   const [showArtifacts, setShowArtifacts] = useState(false);
@@ -241,9 +340,61 @@ export const RunDetail: React.FC = () => {
               algoId: run.algo,
               envId: run.env,
               config: JSON.stringify({ lr: 5e-4, notes: `Forked from ${run.name}` }, null, 2)
-          } 
+          }
       });
   }
+
+  const openSaveTemplateModal = () => {
+      if (!run) return;
+      const suggested = buildTemplateConfigFromRun(run);
+      setSaveTemplateName(`Template from ${run.name}`);
+      setSaveTemplateDescription(`Saved from run ${run.id}`);
+      setSaveTemplateType('Multi-Agent');
+      setSaveTemplateConfig(JSON.stringify(suggested || {}, null, 2));
+      setShowSaveTemplateModal(true);
+  };
+
+  const handleSaveTemplate = async () => {
+      if (!run) return;
+      const algoVersionId = (run.config as any)?.algo?.algoVersionId as string | undefined;
+      if (!algoVersionId) {
+          showToast('Cannot infer algorithm version for this run.', 'error');
+          return;
+      }
+      let parsedConfig: Record<string, unknown> | undefined = undefined;
+      try {
+          parsedConfig = saveTemplateConfig.trim() ? JSON.parse(saveTemplateConfig) : {};
+      } catch {
+          showToast('Default config is not valid JSON.', 'error');
+          return;
+      }
+      if (!saveTemplateName.trim()) {
+          showToast('Template name is required.', 'error');
+          return;
+      }
+      setSaveTemplateSubmitting(true);
+      try {
+          const tmpl = await api.createTemplate(run.projectId, {
+              name: saveTemplateName.trim(),
+              description: saveTemplateDescription.trim() || undefined,
+              type: saveTemplateType,
+              defaultConfig: parsedConfig,
+          });
+          const versionLabel = `run-${run.id.slice(0, 8)}`;
+          await api.createTemplateVersion(tmpl.id, {
+              version: versionLabel,
+              algoVersionId,
+              defaultConfig: parsedConfig,
+          });
+          showToast('Template saved successfully.', 'success');
+          setShowSaveTemplateModal(false);
+      } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          showToast(`Failed to save template: ${detail}`, 'error');
+      } finally {
+          setSaveTemplateSubmitting(false);
+      }
+  };
 
   const handleCopyId = () => {
       if(run) {
@@ -320,9 +471,20 @@ export const RunDetail: React.FC = () => {
   }
 
   // Log filtering logic
+  const logHints = useMemo(() => deriveLogHints(logLines), [logLines]);
   const filteredLogs = logLines
     .filter(line => line.toLowerCase().includes(logSearch.toLowerCase()))
     .join('\n');
+
+  const buildTemplateConfigFromRun = (run: Run) => {
+    const cfg = run.config || {};
+    const result: Record<string, unknown> = {};
+    const train = (cfg as any).train;
+    if (train) result.train = train;
+    const datasetId = (cfg as any).datasetId;
+    if (datasetId) result.datasetId = datasetId;
+    return result;
+  };
 
   if (!run) return <div className="p-10 flex justify-center"><RefreshCw className="animate-spin text-blue-600" /></div>;
 
@@ -360,6 +522,7 @@ export const RunDetail: React.FC = () => {
   const matrixTotalMatches = matrixLabels.length ? matrixLabels.length * matrixLabels.length : 0;
   const selectedProtocolDetail = protocols.find(p => p.id === selectedProtocol);
   const isPaused = !!job?.message && job.message.toLowerCase().startsWith('paused');
+  const canSaveTemplate = !!(run.config as any)?.algo?.algoVersionId;
 
   return (
     <div className="space-y-6 relative">
@@ -387,12 +550,24 @@ export const RunDetail: React.FC = () => {
                 </div>
             </div>
             <div className="flex gap-2">
-                 <button 
+                <button 
                   onClick={handleFork}
                   className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center shadow-sm"
                   title="Clone this experiment configuration"
                 >
                     <GitFork className="w-4 h-4 mr-2" /> Fork / Clone
+                </button>
+                <button 
+                  onClick={openSaveTemplateModal}
+                  disabled={!canSaveTemplate}
+                  className={`px-3 py-1.5 bg-white border rounded-md text-sm font-medium flex items-center shadow-sm ${
+                    canSaveTemplate
+                      ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      : 'border-gray-200 text-gray-400 cursor-not-allowed'
+                  }`}
+                  title={canSaveTemplate ? 'Save run configuration as a template' : 'Template saving unavailable for this run'}
+                >
+                    <FileText className="w-4 h-4 mr-2" /> Save as Template
                 </button>
                 <button 
                   onClick={() => setShowArtifacts(true)}
@@ -709,49 +884,74 @@ export const RunDetail: React.FC = () => {
           )}
 
           {activeTab === 'logs' && (
-              <div className="bg-gray-900 rounded-xl overflow-hidden shadow-inner border border-gray-800 flex flex-col h-[600px]">
-                  {/* Log Toolbar */}
-                  <div className="bg-gray-800 p-2 flex items-center justify-between border-b border-gray-700">
-                      <div className="flex items-center gap-2 text-gray-400 text-sm">
-                          <Terminal className="w-4 h-4" />
-                          <span>stdout.log</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                          <div className="relative">
-                              <Search className="w-3 h-3 text-gray-500 absolute left-2 top-1.5" />
-                              <input 
-                                type="text" 
-                                placeholder="Filter logs..."
-                                value={logSearch}
-                                onChange={(e) => setLogSearch(e.target.value)}
-                                className="bg-gray-900 text-gray-300 text-xs rounded-md pl-7 pr-3 py-1 border border-gray-700 focus:ring-1 focus:ring-blue-500 focus:outline-none w-48"
-                              />
+              <div className="space-y-4">
+                  {logHints.length > 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                          <div className="flex items-center gap-2 text-amber-900 font-semibold mb-3">
+                              <AlertTriangle className="w-4 h-4" />
+                              Detected issues in logs
                           </div>
-                          <button 
-                            onClick={() => setAutoScroll(!autoScroll)}
-                            className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${autoScroll ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400'}`}
-                            title="Auto-scroll to bottom"
-                          >
-                              <ArrowDownCircle className="w-3 h-3" /> Tail
-                          </button>
-                          <button
-                            onClick={() => loadLogs(logPage + 1, true)}
-                            disabled={!logHasMore || logLoading}
-                            className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-gray-700 text-gray-200 disabled:opacity-50"
-                            title="Load more logs"
-                          >
-                              {logLoading ? 'Loading...' : 'Load More'}
-                          </button>
+                          <div className="space-y-3">
+                              {logHints.map(hint => (
+                                  <div key={hint.id} className="flex gap-3">
+                                      <div className="mt-1 w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                                      <div className="text-sm text-amber-900">
+                                          <div className="font-medium">{hint.title}</div>
+                                          <div className="text-amber-800">{hint.detail}</div>
+                                          {hint.action && (
+                                              <div className="text-amber-700">Fix: {hint.action}</div>
+                                          )}
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
                       </div>
-                  </div>
-                  
-                  {/* Log Content */}
-                  <div ref={logContainerRef} className="p-4 font-mono text-sm text-gray-300 overflow-auto flex-1 whitespace-pre-wrap">
-                      {filteredLogs || (
-                        <span className="text-gray-500 italic">
-                          {logLines.length === 0 ? 'No logs available yet.' : 'No logs match your filter.'}
-                        </span>
-                      )}
+                  )}
+
+                  <div className="bg-gray-900 rounded-xl overflow-hidden shadow-inner border border-gray-800 flex flex-col h-[600px]">
+                      {/* Log Toolbar */}
+                      <div className="bg-gray-800 p-2 flex items-center justify-between border-b border-gray-700">
+                          <div className="flex items-center gap-2 text-gray-400 text-sm">
+                              <Terminal className="w-4 h-4" />
+                              <span>stdout.log</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                              <div className="relative">
+                                  <Search className="w-3 h-3 text-gray-500 absolute left-2 top-1.5" />
+                                  <input 
+                                    type="text" 
+                                    placeholder="Filter logs..."
+                                    value={logSearch}
+                                    onChange={(e) => setLogSearch(e.target.value)}
+                                    className="bg-gray-900 text-gray-300 text-xs rounded-md pl-7 pr-3 py-1 border border-gray-700 focus:ring-1 focus:ring-blue-500 focus:outline-none w-48"
+                                  />
+                              </div>
+                              <button 
+                                onClick={() => setAutoScroll(!autoScroll)}
+                                className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${autoScroll ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400'}`}
+                                title="Auto-scroll to bottom"
+                              >
+                                  <ArrowDownCircle className="w-3 h-3" /> Tail
+                              </button>
+                              <button
+                                onClick={() => loadLogs(logPage + 1, true)}
+                                disabled={!logHasMore || logLoading}
+                                className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-gray-700 text-gray-200 disabled:opacity-50"
+                                title="Load more logs"
+                              >
+                                  {logLoading ? 'Loading...' : 'Load More'}
+                              </button>
+                          </div>
+                      </div>
+                      
+                      {/* Log Content */}
+                      <div ref={logContainerRef} className="p-4 font-mono text-sm text-gray-300 overflow-auto flex-1 whitespace-pre-wrap">
+                          {filteredLogs || (
+                            <span className="text-gray-500 italic">
+                              {logLines.length === 0 ? 'No logs available yet.' : 'No logs match your filter.'}
+                            </span>
+                          )}
+                      </div>
                   </div>
               </div>
           )}
@@ -864,6 +1064,67 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
               </div>
           )}
       </div>
+
+      {/* Save Template Modal */}
+      {showSaveTemplateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg animate-in fade-in zoom-in duration-200">
+                <div className="p-6 border-b border-gray-100">
+                    <h2 className="text-lg font-bold text-gray-900">Save as Template</h2>
+                    <p className="text-sm text-gray-500 mt-1">Create a reusable template from this run.</p>
+                </div>
+                <div className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Template Name</label>
+                        <input
+                          className="w-full p-2 border border-gray-300 rounded-lg"
+                          value={saveTemplateName}
+                          onChange={(e) => setSaveTemplateName(e.target.value)}
+                          placeholder="e.g. MAPPO baseline"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                        <input
+                          className="w-full p-2 border border-gray-300 rounded-lg"
+                          value={saveTemplateDescription}
+                          onChange={(e) => setSaveTemplateDescription(e.target.value)}
+                          placeholder="Optional description"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                        <select
+                          className="w-full p-2 border border-gray-300 rounded-lg"
+                          value={saveTemplateType}
+                          onChange={(e) => setSaveTemplateType(e.target.value as 'Single-Agent' | 'Multi-Agent')}
+                        >
+                          <option value="Single-Agent">Single-Agent</option>
+                          <option value="Multi-Agent">Multi-Agent</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Default Config</label>
+                        <textarea
+                          className="w-full h-40 p-3 border border-gray-300 rounded-lg font-mono text-xs"
+                          value={saveTemplateConfig}
+                          onChange={(e) => setSaveTemplateConfig(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex justify-end gap-3 pt-2">
+                        <button onClick={() => setShowSaveTemplateModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">Cancel</button>
+                        <button
+                          onClick={handleSaveTemplate}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                          disabled={saveTemplateSubmitting}
+                        >
+                          {saveTemplateSubmitting ? 'Saving...' : 'Save Template'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Eval Modal */}
       {showEvalModal && (

@@ -2,11 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { Algo, AlgoVersion, Project, Template, TemplateDetail, TemplateVersion } from '../types';
 import { Archive, Code, Terminal, FileJson, PlayCircle, BookOpen, Plus, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
+
+const isSystemTemplate = (tmpl: Template) => tmpl.name === 'Quick Run';
 
 export const TemplateLibrary: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -32,14 +35,24 @@ export const TemplateLibrary: React.FC = () => {
   const [editDescription, setEditDescription] = useState('');
   const [editDefaultConfig, setEditDefaultConfig] = useState('{}');
 
+  const visibleTemplates = templates.filter(t => !isSystemTemplate(t));
+
   useEffect(() => {
     api.getProjects().then(items => {
       setProjects(items);
+      const state = location.state as { projectId?: string; openCreate?: boolean } | null;
       const saved = localStorage.getItem('last_project_id');
-      const fallback = saved && items.some(p => p.id === saved) ? saved : items[0]?.id || '';
+      const preferred =
+        state?.projectId && items.some(p => p.id === state.projectId)
+          ? state.projectId
+          : undefined;
+      const fallback = preferred || (saved && items.some(p => p.id === saved) ? saved : items[0]?.id || '');
       setSelectedProjectId(fallback);
+      if (state?.openCreate) {
+        setIsCreateOpen(true);
+      }
     });
-  }, []);
+  }, [location.state]);
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -98,6 +111,13 @@ export const TemplateLibrary: React.FC = () => {
       setSelectedTemplate(updated);
     }
   }, [templates, selectedTemplate]);
+
+  useEffect(() => {
+    if (selectedTemplate && isSystemTemplate(selectedTemplate)) {
+      setSelectedTemplate(null);
+      setSelectedTemplateDetail(null);
+    }
+  }, [selectedTemplate]);
 
   const handleUseTemplate = () => {
     if (selectedTemplate) {
@@ -309,7 +329,7 @@ export const TemplateLibrary: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* List */}
           <div className="space-y-4 overflow-y-auto pr-2">
-              {templates.map(tmpl => (
+              {visibleTemplates.map(tmpl => (
                   <div 
                     key={tmpl.id} 
                     onClick={() => setSelectedTemplate(tmpl)}
@@ -338,6 +358,11 @@ export const TemplateLibrary: React.FC = () => {
                       </div>
                   </div>
               ))}
+              {visibleTemplates.length === 0 && (
+                <div className="p-5 rounded-xl border border-dashed border-gray-200 text-sm text-gray-500">
+                  No templates yet. Create one to start from a reusable configuration.
+                </div>
+              )}
           </div>
 
           {/* Detail View */}

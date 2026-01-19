@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List
 
 from app.executors.runner_main import run_with_config
+from app.services import paths
 from app.services import runtime_packages
 
 
@@ -51,6 +52,14 @@ def main() -> None:
         os.environ["PYTHONPATH"] = os.pathsep.join(paths)
         os.environ["RUNTIME_PACKAGES"] = ",".join(runtime_spec.packages)
         os.environ["RUNTIME_CACHE_KEY"] = runtime_spec.cache_key
+
+    algo_store = paths.algo_store_dir()
+    python_path = os.environ.get("PYTHONPATH")
+    paths_list = [str(algo_store)]
+    if python_path:
+        paths_list.append(python_path)
+    os.environ["PYTHONPATH"] = os.pathsep.join(paths_list)
+    os.environ["ALGO_STORE_DIR"] = str(algo_store)
 
     run_with_config(
         config=config,

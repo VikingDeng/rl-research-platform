@@ -1,17 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
-import { Project, EnvSpec, Algo, Template, TemplateDetail } from '../types';
+import { Project, EnvSpec, Algo, AlgoVersion, Template, TemplateVersion, EnvVersion, Plugin, EvalProtocol } from '../types';
 import { Play, Settings, Cpu, ChevronRight, GitFork, Info, Layers, Code, Box, Check, GitBranch, Zap, PlayCircle, Copy, Plus } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '../components/Toast';
 
-const STEPS = [
+const BASE_STEPS = [
   { id: 'project', title: 'Project', icon: Layers },
   { id: 'template', title: 'Template', icon: Code },
   { id: 'env', title: 'Environment', icon: Box },
   { id: 'config', title: 'Configuration', icon: Settings },
   { id: 'resources', title: 'Resources', icon: Cpu },
-];
+] as const;
+
+const isSystemTemplate = (tmpl: Template) => tmpl.name === 'Quick Run';
 
 export const CreateJob: React.FC = () => {
   const navigate = useNavigate();
@@ -26,6 +28,8 @@ export const CreateJob: React.FC = () => {
   const [envVersionsEnvId, setEnvVersionsEnvId] = useState('');
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [evalProtocols, setEvalProtocols] = useState<EvalProtocol[]>([]);
+  const [algos, setAlgos] = useState<Algo[]>([]);
+  const [algoVersions, setAlgoVersions] = useState<Record<string, AlgoVersion[]>>({});
   const [algoVersionIndex, setAlgoVersionIndex] = useState<
     Record<string, { algoId: string; algoName: string; version: string }>
   >({});
@@ -37,6 +41,9 @@ export const CreateJob: React.FC = () => {
   const [selectedMap, setSelectedMap] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [selectedTemplateVersionId, setSelectedTemplateVersionId] = useState('');
+  const [launchMode, setLaunchMode] = useState<'template' | 'quick'>('template');
+  const [selectedAlgoId, setSelectedAlgoId] = useState('');
+  const [selectedAlgoVersionId, setSelectedAlgoVersionId] = useState('');
   const [configOverride, setConfigOverride] = useState('');
   const [configTouched, setConfigTouched] = useState(false);
   const [selectedPlugins, setSelectedPlugins] = useState<string[]>([]);
@@ -58,6 +65,15 @@ export const CreateJob: React.FC = () => {
   const [useGit, setUseGit] = useState(false);
   const [gitBranch, setGitBranch] = useState('main');
   const [gitCommit, setGitCommit] = useState('');
+  const visibleTemplates = templates.filter(t => !isSystemTemplate(t));
+
+  const steps = useMemo(() => {
+    const next = [...BASE_STEPS];
+    if (launchMode === 'quick') {
+      next[1] = { ...next[1], title: 'Algorithm', icon: Play };
+    }
+    return next;
+  }, [launchMode]);
 
   const resolveMapOptions = (version?: EnvVersion, env?: EnvSpec) => {
     if (version?.mapSets && version.mapSets.length > 0) {
@@ -74,11 +90,17 @@ export const CreateJob: React.FC = () => {
     return options[0] ?? 'default';
   };
 
-  const resolveDefaultConfig = (templateId: string, versionId: string) => {
+  const resolveTemplateDefaultConfig = (templateId: string, versionId: string) => {
     const version = templateVersions.find(v => v.id === versionId);
     if (version?.defaultConfig) return version.defaultConfig;
     const template = templates.find(t => t.id === templateId);
     return template?.defaultConfig ?? {};
+  };
+
+  const resolveAlgoDefaultConfig = (algoId: string, algoVersionId: string) => {
+    const versions = algoVersions[algoId] || [];
+    const version = versions.find(v => v.id === algoVersionId);
+    return version?.defaultConfig ?? {};
   };
 
   useEffect(() => {
@@ -94,8 +116,12 @@ export const CreateJob: React.FC = () => {
         state.projectId || (savedProject && ps.some(p => p.id === savedProject) ? savedProject : ps[0]?.id) || '';
       setSelectedProject(defaultProject);
 
-      if (state.templateId || state.algoId) {
-        setTemplatePrefill(state.templateId || state.algoId);
+      if (state.templateId) {
+        setTemplatePrefill(state.templateId);
+      }
+      if (state.algoId) {
+        setLaunchMode('quick');
+        setSelectedAlgoId(state.algoId);
       }
 
       if (state.envId) {
@@ -109,23 +135,28 @@ export const CreateJob: React.FC = () => {
   }, [location.state]);
 
   useEffect(() => {
-    api.getAlgos({ includeArchived: true }).then((algos: Algo[]) => {
-      if (algos.length === 0) {
+    api.getAlgos({ includeArchived: true }).then((items: Algo[]) => {
+      setAlgos(items);
+      if (items.length === 0) {
         setAlgoVersionIndex({});
+        setAlgoVersions({});
         return;
       }
       Promise.all(
-        algos.map(algo =>
+        items.map(algo =>
           api.getAlgoVersions(algo.id).then((versions: AlgoVersion[]) => ({ algo, versions })),
         ),
       ).then(entries => {
-        const next: Record<string, { algoId: string; algoName: string; version: string }> = {};
+        const nextIndex: Record<string, { algoId: string; algoName: string; version: string }> = {};
+        const nextVersions: Record<string, AlgoVersion[]> = {};
         entries.forEach(({ algo, versions }) => {
+          nextVersions[algo.id] = versions;
           versions.forEach(version => {
-            next[version.id] = { algoId: algo.id, algoName: algo.name, version: version.version };
+            nextIndex[version.id] = { algoId: algo.id, algoName: algo.name, version: version.version };
           });
         });
-        setAlgoVersionIndex(next);
+        setAlgoVersionIndex(nextIndex);
+        setAlgoVersions(nextVersions);
       });
     });
   }, []);
@@ -179,18 +210,63 @@ export const CreateJob: React.FC = () => {
   }, [selectedTemplate]);
 
   useEffect(() => {
-    if (!selectedTemplate) return;
-    if (forkSource) return;
-    if (configTouched) return;
-    const defaultConfig = resolveDefaultConfig(selectedTemplate, selectedTemplateVersionId);
-    setConfigOverride(JSON.stringify(defaultConfig || {}, null, 2));
-  }, [selectedTemplate, selectedTemplateVersionId, templates, templateVersions, forkSource, configTouched]);
+    if (!selectedAlgoId) {
+      setSelectedAlgoVersionId('');
+      return;
+    }
+    const versions = algoVersions[selectedAlgoId] || [];
+    const sorted = [...versions].sort((a, b) => {
+      const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+      const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return (b.version || '').localeCompare(a.version || '');
+    });
+    setSelectedAlgoVersionId(sorted[0]?.id || '');
+  }, [selectedAlgoId, algoVersions]);
 
   useEffect(() => {
-    if (selectedTemplate) {
+    if (forkSource) return;
+    if (configTouched) return;
+    if (launchMode === 'template') {
+      if (!selectedTemplate) return;
+      const defaultConfig = resolveTemplateDefaultConfig(selectedTemplate, selectedTemplateVersionId);
+      setConfigOverride(JSON.stringify(defaultConfig || {}, null, 2));
+      return;
+    }
+    if (!selectedAlgoId || !selectedAlgoVersionId) return;
+    const defaultConfig = resolveAlgoDefaultConfig(selectedAlgoId, selectedAlgoVersionId);
+    setConfigOverride(JSON.stringify(defaultConfig || {}, null, 2));
+  }, [
+    launchMode,
+    selectedTemplate,
+    selectedTemplateVersionId,
+    selectedAlgoId,
+    selectedAlgoVersionId,
+    templates,
+    templateVersions,
+    algoVersions,
+    forkSource,
+    configTouched,
+  ]);
+
+  useEffect(() => {
+    if (launchMode === 'template' && selectedTemplate) {
       setConfigTouched(false);
     }
-  }, [selectedTemplate, selectedTemplateVersionId]);
+    if (launchMode === 'quick' && selectedAlgoVersionId) {
+      setConfigTouched(false);
+    }
+  }, [launchMode, selectedTemplate, selectedTemplateVersionId, selectedAlgoVersionId]);
+
+  useEffect(() => {
+    if (launchMode !== 'template') return;
+    if (!selectedTemplate) return;
+    const tmpl = templates.find(t => t.id === selectedTemplate);
+    if (tmpl && isSystemTemplate(tmpl)) {
+      setSelectedTemplate('');
+      setSelectedTemplateVersionId('');
+    }
+  }, [launchMode, selectedTemplate, templates]);
 
   useEffect(() => {
     if (!selectedEnv) {
@@ -302,24 +378,77 @@ export const CreateJob: React.FC = () => {
     }));
   };
 
+  const ensureQuickRunTemplateVersion = async (algoVersion: AlgoVersion) => {
+    if (!selectedProject) {
+      throw new Error('Select a project first.');
+    }
+    let quickTemplate = templates.find(t => t.name === 'Quick Run');
+    if (!quickTemplate) {
+      quickTemplate = await api.createTemplate(selectedProject, {
+        name: 'Quick Run',
+        description: 'Auto-generated template for quick runs.',
+        type: 'Multi-Agent',
+        defaultConfig: algoVersion.defaultConfig || {},
+      });
+      setTemplates(prev => [quickTemplate!, ...prev]);
+    }
+    const detail = await api.getTemplateById(quickTemplate.id);
+    const existing = (detail.versions || []).find(v => v.algoVersionId === algoVersion.id);
+    if (existing) return existing.id;
+    const versionLabel = `quick-${algoVersion.version}`;
+    const created = await api.createTemplateVersion(quickTemplate.id, {
+      version: versionLabel,
+      algoVersionId: algoVersion.id,
+      defaultConfig: algoVersion.defaultConfig || {},
+    });
+    return created.id;
+  };
+
   const handleNext = async () => {
-    if (currentStep < STEPS.length - 1) {
+    if (currentStep < steps.length - 1) {
       setCurrentStep(c => c + 1);
       return;
     }
-    if (!selectedTemplateVersionId) {
-      showToast('Template version not found. Create a version first.', 'error');
-      return;
-    }
-    const templateVersion = templateVersions.find(v => v.id === selectedTemplateVersionId);
-    if (!templateVersion?.algoVersionId) {
-      showToast('Template version must be linked to an algorithm version.', 'error');
-      return;
-    }
-    const algoInfo = algoVersionIndex[templateVersion.algoVersionId];
-    if (!algoInfo) {
-      showToast('Algorithm not found for this template version. Check registry.', 'error');
-      return;
+    let templateVersionId = selectedTemplateVersionId;
+    let algoVersionId: string | undefined;
+    let algoInfo = null as null | { algoId: string; algoName: string; version: string };
+    let templateVersion: TemplateVersion | null = null;
+    if (launchMode === 'template') {
+      if (!selectedTemplateVersionId) {
+        showToast('Template version not found. Create a version first.', 'error');
+        return;
+      }
+      templateVersion = templateVersions.find(v => v.id === selectedTemplateVersionId) || null;
+      if (!templateVersion?.algoVersionId) {
+        showToast('Template version must be linked to an algorithm version.', 'error');
+        return;
+      }
+      algoVersionId = templateVersion.algoVersionId;
+      algoInfo = algoVersionIndex[templateVersion.algoVersionId];
+      if (!algoInfo) {
+        showToast('Algorithm not found for this template version. Check registry.', 'error');
+        return;
+      }
+    } else {
+      if (!selectedAlgoId || !selectedAlgoVersionId) {
+        showToast('Select an algorithm and version to continue.', 'error');
+        return;
+      }
+      const versions = algoVersions[selectedAlgoId] || [];
+      const algoVersion = versions.find(v => v.id === selectedAlgoVersionId);
+      if (!algoVersion) {
+        showToast('Algorithm version not found. Check registry.', 'error');
+        return;
+      }
+      try {
+        templateVersionId = await ensureQuickRunTemplateVersion(algoVersion);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        showToast(`Failed to prepare quick run template: ${detail}`, 'error');
+        return;
+      }
+      algoVersionId = algoVersion.id;
+      algoInfo = { algoId: algoVersion.algoId, algoName: algos.find(a => a.id === algoVersion.algoId)?.name || algoVersion.algoId, version: algoVersion.version };
     }
     if (autoEvalEnabled && !autoEvalProtocolId) {
       showToast('Select an evaluation protocol for auto-eval.', 'error');
@@ -371,11 +500,11 @@ export const CreateJob: React.FC = () => {
         for (const seed of seeds) {
           const res = await api.submitTrainJob({
             projectId: selectedProject,
-            templateVersionId: selectedTemplateVersionId,
+            templateVersionId: templateVersionId!,
             env: { envId: selectedEnv, version: envVersion, mapSet: selectedMap },
             algo: { 
-                algoId: algoInfo.algoId, 
-                algoVersionId: templateVersion.algoVersionId,
+                algoId: algoInfo!.algoId, 
+                algoVersionId: algoVersionId!,
                 ...algoOverride 
             },
             train: config,
@@ -405,6 +534,46 @@ export const CreateJob: React.FC = () => {
   };
   const handleBack = () => setCurrentStep(c => Math.max(0, c - 1));
 
+  const setupChecklist = useMemo(() => {
+    const visibleTemplateCount = templates.filter(t => !isSystemTemplate(t)).length;
+    const base = [
+      {
+        id: 'project',
+        label: 'Project',
+        ready: projects.length > 0,
+        actionLabel: 'Create project',
+        onAction: () => navigate('/', { state: { openCreateProject: true } }),
+      },
+      {
+        id: 'template',
+        label: 'Template',
+        ready: visibleTemplateCount > 0,
+        actionLabel: 'Open templates',
+        onAction: () => navigate('/registries/templates', { state: { projectId: selectedProject, openCreate: true } }),
+      },
+      {
+        id: 'environment',
+        label: 'Environment',
+        ready: envs.length > 0,
+        actionLabel: 'Open environments',
+        onAction: () => navigate('/registries/environments', { state: { openCreate: true } }),
+      },
+      {
+        id: 'algorithm',
+        label: 'Algorithm',
+        ready: algos.length > 0,
+        actionLabel: 'Open algorithms',
+        onAction: () => navigate('/registries/algorithms'),
+      },
+    ];
+    if (launchMode === 'quick') {
+      return base.filter(item => item.id !== 'template');
+    }
+    return base.filter(item => item.id !== 'algorithm');
+  }, [projects.length, templates, envs.length, algos.length, launchMode, navigate, selectedProject]);
+
+  const missingSetup = setupChecklist.filter(item => !item.ready);
+
   const togglePlugin = (id: string) => {
       if (selectedPlugins.includes(id)) {
           setSelectedPlugins(selectedPlugins.filter(p => p !== id));
@@ -415,7 +584,12 @@ export const CreateJob: React.FC = () => {
 
   const isStepValid = () => {
     if (currentStep === 0) return !!selectedProject;
-    if (currentStep === 1) return !!selectedTemplate && !!selectedTemplateVersionId;
+    if (currentStep === 1) {
+      if (launchMode === 'quick') {
+        return !!selectedAlgoId && !!selectedAlgoVersionId;
+      }
+      return !!selectedTemplate && !!selectedTemplateVersionId;
+    }
     if (currentStep === 2) return !!selectedEnv && !!selectedEnvVersion && !!selectedMap;
     return true;
   };
@@ -435,10 +609,45 @@ export const CreateJob: React.FC = () => {
         )}
       </div>
 
+      {/* Setup checklist */}
+      <div className="mb-6 bg-white border border-gray-200 rounded-xl p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
+          <Info className="w-4 h-4 text-blue-500" />
+          Setup checklist
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {setupChecklist.map(item => (
+            <div
+              key={item.id}
+              className={`flex items-center justify-between px-3 py-2 rounded-lg border ${
+                item.ready ? 'bg-green-50 border-green-200 text-green-800' : 'bg-gray-50 border-gray-200 text-gray-700'
+              }`}
+            >
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span className={`inline-flex w-2 h-2 rounded-full ${item.ready ? 'bg-green-500' : 'bg-gray-400'}`} />
+                {item.label}
+              </div>
+              {!item.ready && (
+                <button
+                  type="button"
+                  onClick={item.onAction}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                >
+                  {item.actionLabel}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        {missingSetup.length === 0 && (
+          <div className="mt-3 text-xs text-green-700">All prerequisites are ready. Continue the wizard below.</div>
+        )}
+      </div>
+
       {/* Stepper */}
       <div className="flex items-center justify-between mb-8 relative px-4">
         <div className="absolute left-0 top-1/2 transform -translate-y-1/2 w-full h-1 bg-gray-200 -z-10 rounded"></div>
-        {STEPS.map((step, idx) => {
+        {steps.map((step, idx) => {
           const isActive = idx === currentStep;
           const isCompleted = idx < currentStep;
           const Icon = step.icon;
@@ -464,6 +673,18 @@ export const CreateJob: React.FC = () => {
         {currentStep === 0 && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">Select Project</h2>
+            {projects.length === 0 && (
+              <div className="p-4 rounded-lg border border-dashed border-blue-200 bg-blue-50 text-sm text-blue-700 flex items-center justify-between">
+                <div>No projects yet. Create one to organize runs and templates.</div>
+                <button
+                  type="button"
+                  onClick={() => navigate('/', { state: { openCreateProject: true } })}
+                  className="text-xs font-semibold text-blue-700 hover:underline"
+                >
+                  Create project
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {projects.map(p => (
                 <div 
@@ -482,7 +703,11 @@ export const CreateJob: React.FC = () => {
                   </div>
                 </div>
               ))}
-              <div className="p-4 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer hover:border-blue-400 hover:text-blue-500">
+              <div
+                className="p-4 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer hover:border-blue-400 hover:text-blue-500"
+                onClick={() => navigate('/', { state: { openCreateProject: true } })}
+                role="button"
+              >
                 <div className="text-center">
                     <Plus className="w-6 h-6 mx-auto mb-1"/>
                     <span className="text-sm font-medium">Create New Project</span>
@@ -494,62 +719,149 @@ export const CreateJob: React.FC = () => {
 
         {currentStep === 1 && (
             <div className="space-y-4">
-                <h2 className="text-lg font-semibold">Select Template</h2>
-                <div className="grid grid-cols-1 gap-3">
-                    {templates.map(t => (
-                        <div 
-                            key={t.id}
-                            onClick={() => setSelectedTemplate(t.id)}
-                            className={`p-4 rounded-lg border cursor-pointer hover:shadow-sm flex items-center justify-between transition-all ${
-                                selectedTemplate === t.id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200'
-                            }`}
+                <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">{launchMode === 'quick' ? 'Select Algorithm' : 'Select Template'}</h2>
+                    <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg p-1">
+                        <button
+                          type="button"
+                          onClick={() => setLaunchMode('template')}
+                          className={`px-3 py-1 text-xs font-semibold rounded ${launchMode === 'template' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
                         >
-                            <div>
-                                <h3 className="font-medium text-gray-900">{t.name}</h3>
-                                <p className="text-sm text-gray-500 mt-1">{t.description}</p>
+                          Template
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLaunchMode('quick')}
+                          className={`px-3 py-1 text-xs font-semibold rounded ${launchMode === 'quick' ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                        >
+                          Quick Run
+                        </button>
+                    </div>
+                </div>
+                {launchMode === 'template' && (
+                  <>
+                    <div className="grid grid-cols-1 gap-3">
+                    {visibleTemplates.map(t => (
+                            <div 
+                                key={t.id}
+                                onClick={() => setSelectedTemplate(t.id)}
+                                className={`p-4 rounded-lg border cursor-pointer hover:shadow-sm flex items-center justify-between transition-all ${
+                                    selectedTemplate === t.id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200'
+                                }`}
+                            >
+                                <div>
+                                    <h3 className="font-medium text-gray-900">{t.name}</h3>
+                                    <p className="text-sm text-gray-500 mt-1">{t.description}</p>
+                                </div>
+                                <span className={`px-2 py-1 rounded text-xs font-bold ${t.type === 'Multi-Agent' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
+                                    {t.type}
+                                </span>
                             </div>
-                            <span className={`px-2 py-1 rounded text-xs font-bold ${t.type === 'Multi-Agent' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
-                                {t.type}
-                            </span>
+                        ))}
+                        {visibleTemplates.length === 0 && (
+                          <div className="p-4 rounded-lg border border-dashed border-gray-200 text-sm text-gray-500 flex items-center justify-between">
+                            <span>No templates found for this project.</span>
+                            <button
+                              type="button"
+                              onClick={() => navigate('/registries/templates', { state: { projectId: selectedProject, openCreate: true } })}
+                              className="text-xs font-semibold text-blue-600 hover:underline"
+                            >
+                              Create template
+                            </button>
+                          </div>
+                        )}
+                    </div>
+                    {selectedTemplate && (
+                      <div className="space-y-3 pt-4 border-t border-gray-100">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Template Version</label>
+                          <select
+                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            value={selectedTemplateVersionId}
+                            onChange={(e) => setSelectedTemplateVersionId(e.target.value)}
+                          >
+                            <option value="">-- Select Version --</option>
+                            {templateVersions.map(v => (
+                              <option key={v.id} value={v.id}>
+                                v{v.version} ({v.id.slice(0, 8)})
+                              </option>
+                            ))}
+                          </select>
                         </div>
-                    ))}
-                    {templates.length === 0 && (
-                      <div className="p-4 rounded-lg border border-dashed border-gray-200 text-sm text-gray-500">
-                        No templates found for this project. Create one in the Template Library.
+                        <div className="text-xs text-gray-500">
+                          {(() => {
+                            const version = templateVersions.find(v => v.id === selectedTemplateVersionId);
+                            if (!version?.algoVersionId) {
+                              return 'No algorithm linked to this template version.';
+                            }
+                            const algoInfo = algoVersionIndex[version.algoVersionId];
+                            if (!algoInfo) {
+                              return `Algo version ${version.algoVersionId.slice(0, 8)} not found in registry.`;
+                            }
+                            return `Linked algorithm: ${algoInfo.algoName} (v${algoInfo.version})`;
+                          })()}
+                        </div>
                       </div>
                     )}
-                </div>
-                {selectedTemplate && (
-                  <div className="space-y-3 pt-4 border-t border-gray-100">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Template Version</label>
-                      <select
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                        value={selectedTemplateVersionId}
-                        onChange={(e) => setSelectedTemplateVersionId(e.target.value)}
-                      >
-                        <option value="">-- Select Version --</option>
-                        {templateVersions.map(v => (
-                          <option key={v.id} value={v.id}>
-                            v{v.version} ({v.id.slice(0, 8)})
-                          </option>
-                        ))}
-                      </select>
+                  </>
+                )}
+
+                {launchMode === 'quick' && (
+                  <>
+                    <div className="grid grid-cols-1 gap-3">
+                      {algos.map(a => (
+                        <div
+                          key={a.id}
+                          onClick={() => setSelectedAlgoId(a.id)}
+                          className={`p-4 rounded-lg border cursor-pointer hover:shadow-sm transition-all ${
+                            selectedAlgoId === a.id ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500' : 'border-gray-200'
+                          }`}
+                        >
+                          <h3 className="font-medium text-gray-900">{a.name}</h3>
+                          <p className="text-sm text-gray-500 mt-1">{a.description}</p>
+                        </div>
+                      ))}
+                      {algos.length === 0 && (
+                        <div className="p-4 rounded-lg border border-dashed border-gray-200 text-sm text-gray-500 flex items-center justify-between">
+                          <span>No algorithms registered yet.</span>
+                          <button
+                            type="button"
+                            onClick={() => navigate('/registries/algorithms')}
+                            className="text-xs font-semibold text-blue-600 hover:underline"
+                          >
+                            Open registry
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {(() => {
-                        const version = templateVersions.find(v => v.id === selectedTemplateVersionId);
-                        if (!version?.algoVersionId) {
-                          return 'No algorithm linked to this template version.';
-                        }
-                        const algoInfo = algoVersionIndex[version.algoVersionId];
-                        if (!algoInfo) {
-                          return `Algo version ${version.algoVersionId.slice(0, 8)} not found in registry.`;
-                        }
-                        return `Linked algorithm: ${algoInfo.algoName} (v${algoInfo.version})`;
-                      })()}
-                    </div>
-                  </div>
+                    {selectedAlgoId && (
+                      <div className="space-y-3 pt-4 border-t border-gray-100">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm Version</label>
+                          <select
+                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                            value={selectedAlgoVersionId}
+                            onChange={(e) => setSelectedAlgoVersionId(e.target.value)}
+                          >
+                            <option value="">-- Select Version --</option>
+                            {([...((algoVersions[selectedAlgoId] || []))].sort((a, b) => {
+                              const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+                              const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+                              if (aTime !== bTime) return bTime - aTime;
+                              return (b.version || '').localeCompare(a.version || '');
+                            })).map(v => (
+                              <option key={v.id} value={v.id}>
+                                v{v.version} ({v.id.slice(0, 8)})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Quick Run will auto-create a template version for this algorithm so you can reproduce the run later.
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
             </div>
         )}
@@ -558,6 +870,18 @@ export const CreateJob: React.FC = () => {
           <div className="space-y-6">
             <div className="space-y-2">
                 <h2 className="text-lg font-semibold">Select Environment</h2>
+                {envs.length === 0 && (
+                  <div className="p-4 rounded-lg border border-dashed border-gray-200 text-sm text-gray-500 flex items-center justify-between">
+                    <span>No environments registered yet.</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/registries/environments', { state: { openCreate: true } })}
+                      className="text-xs font-semibold text-blue-600 hover:underline"
+                    >
+                      Register environment
+                    </button>
+                  </div>
+                )}
                 <select 
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={selectedEnv}
@@ -822,17 +1146,34 @@ export const CreateJob: React.FC = () => {
                     <ul className="text-sm text-gray-600 space-y-1">
                         <li>Project: <span className="font-mono text-gray-900">{projects.find(p => p.id === selectedProject)?.name}</span></li>
                         <li>Environment: <span className="font-mono text-gray-900">{selectedEnv} / {selectedEnvVersion} / {selectedMap}</span></li>
-                        <li>Template: <span className="font-mono text-gray-900">{templates.find(t => t.id === selectedTemplate)?.name}</span></li>
-                        <li>Template Version: <span className="font-mono text-gray-900">{templateVersions.find(v => v.id === selectedTemplateVersionId)?.version || '-'}</span></li>
-                        <li>Algorithm: <span className="font-mono text-gray-900">
-                          {(() => {
-                            const version = templateVersions.find(v => v.id === selectedTemplateVersionId);
-                            if (!version?.algoVersionId) return '-';
-                            const info = algoVersionIndex[version.algoVersionId];
-                            if (!info) return version.algoVersionId;
-                            return `${info.algoName} (v${info.version})`;
-                          })()}
-                        </span></li>
+                        <li>Launch Mode: <span className="font-mono text-gray-900">{launchMode === 'quick' ? 'Quick Run' : 'Template'}</span></li>
+                        {launchMode === 'template' ? (
+                          <>
+                            <li>Template: <span className="font-mono text-gray-900">{templates.find(t => t.id === selectedTemplate)?.name}</span></li>
+                            <li>Template Version: <span className="font-mono text-gray-900">{templateVersions.find(v => v.id === selectedTemplateVersionId)?.version || '-'}</span></li>
+                            <li>Algorithm: <span className="font-mono text-gray-900">
+                              {(() => {
+                                const version = templateVersions.find(v => v.id === selectedTemplateVersionId);
+                                if (!version?.algoVersionId) return '-';
+                                const info = algoVersionIndex[version.algoVersionId];
+                                if (!info) return version.algoVersionId;
+                                return `${info.algoName} (v${info.version})`;
+                              })()}
+                            </span></li>
+                          </>
+                        ) : (
+                          <>
+                            <li>Template: <span className="font-mono text-gray-900">Quick Run (auto)</span></li>
+                            <li>Algorithm: <span className="font-mono text-gray-900">
+                              {(() => {
+                                const algo = algos.find(a => a.id === selectedAlgoId);
+                                const version = (algoVersions[selectedAlgoId] || []).find(v => v.id === selectedAlgoVersionId);
+                                if (!algo || !version) return '-';
+                                return `${algo.name} (v${version.version})`;
+                              })()}
+                            </span></li>
+                          </>
+                        )}
                         <li>Auto Eval: <span className="font-mono text-gray-900">
                           {autoEvalEnabled
                             ? evalProtocols.find(p => p.id === autoEvalProtocolId)?.name || autoEvalProtocolId || 'Enabled'
@@ -863,7 +1204,7 @@ export const CreateJob: React.FC = () => {
             disabled={!isStepValid() || isSubmitting}
             className="px-6 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
-            {currentStep === STEPS.length - 1 ? (
+            {currentStep === steps.length - 1 ? (
                 <>
                     <PlayCircle className="w-5 h-5 mr-2" />
                     {isSubmitting ? 'Submitting...' : 'Launch Job'}

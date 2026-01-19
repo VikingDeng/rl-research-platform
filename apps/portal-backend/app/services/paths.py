@@ -43,3 +43,12 @@ def plugin_dir(run_id: str) -> Path:
     path = run_root(run_id) / "plugins"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def algo_store_dir() -> Path:
+    root = Path(settings.algo_store_dir).expanduser()
+    if not root.is_absolute():
+        backend_root = Path(__file__).resolve().parents[2]
+        root = (backend_root / root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root

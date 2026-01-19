@@ -130,10 +130,13 @@ class LocalExecutor:
             env["RUN_SEED"] = str(seed)
 
         python_paths = []
+        algo_store = paths.algo_store_dir()
         # Add backend root
         python_paths.append(str(backend_root))
         # Add runner dir so 'import algorithms' works
         python_paths.append(str(runner_dir))
+        # Add algo store for custom code materialized by the registry
+        python_paths.append(str(algo_store))
 
         if runtime_spec:
             python_paths.insert(0, str(runtime_spec.python_path))
@@ -151,6 +154,7 @@ class LocalExecutor:
         if existing:
             python_paths.append(existing)
         env["PYTHONPATH"] = os.pathsep.join(p for p in python_paths if p)
+        env["ALGO_STORE_DIR"] = str(algo_store)
 
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_handle = open(log_path, "a", encoding="utf-8")

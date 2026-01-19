@@ -92,6 +92,7 @@ export const api = {
     payload: {
       version: string;
       entrypoint: string;
+      code?: string;
       package?: string;
       artifactUri?: string;
       configSchema?: Record<string, unknown>;
@@ -107,6 +108,7 @@ export const api = {
     version: string,
     payload: {
       entrypoint?: string;
+      code?: string;
       package?: string;
       artifactUri?: string;
       configSchema?: Record<string, unknown>;

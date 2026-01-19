@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     algo_entrypoint_validate: bool = False
     runtime_auto_install: bool = False
     runtime_cache_root: str = ".local/runtimes"
+    algo_store_dir: str = ".local/algos"
     runtime_pip_index_url: Optional[str] = None
     runtime_pip_extra_args: Optional[str] = None
 

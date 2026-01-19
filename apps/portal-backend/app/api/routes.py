@@ -2,6 +2,8 @@ import asyncio
 import importlib
 import io
 import json
+import shutil
+import subprocess
 import uuid
 import zipfile
 from datetime import datetime
@@ -81,6 +83,7 @@ from app.schemas.settings import (
     TokenRotateResponse,
     RetentionApplyResponse,
 )
+from app.services import paths
 from app.schemas.webhooks import Webhook, WebhookCreate
 from app.schemas.datasets import Dataset, DatasetCreate
 from app.services.artifacts import artifact_service
@@ -416,6 +419,76 @@ def _validate_entrypoint(entrypoint: str, import_check: bool = False) -> None:
             raise HTTPException(status_code=400, detail="entrypoint_not_callable")
 
 
+def _materialize_algo_source(
+    algo_id: str,
+    version: str,
+    entrypoint: str,
+    code: Optional[str],
+    metadata: Optional[dict],
+) -> tuple[str, dict]:
+    meta = dict(metadata) if isinstance(metadata, dict) else {}
+    source_path = meta.get("sourcePath") or meta.get("path")
+    git_cfg = meta.get("git") if isinstance(meta.get("git"), dict) else None
+    sources = [bool(code), bool(source_path), bool(git_cfg)]
+    if sum(1 for s in sources if s) > 1:
+        raise HTTPException(status_code=400, detail="algo_source_conflict")
+
+    store_dir = paths.algo_store_dir()
+    entrypoint_out = entrypoint.strip()
+    python_path: Optional[str] = None
+
+    if git_cfg and ":" not in entrypoint_out:
+        raise HTTPException(status_code=400, detail="algo_entrypoint_module_required")
+    if ":" not in entrypoint_out:
+        entrypoint_out = f"custom_{algo_id}_{version}:{entrypoint_out}"
+
+    if code:
+        module_part, func_part = entrypoint_out.split(":", 1)
+        module_part = module_part.strip()
+        if not module_part or "/" in module_part or "." in module_part:
+            filename = f"custom_{algo_id}_{version}.py"
+            entrypoint_out = f"{Path(filename).stem}:{func_part}"
+        else:
+            filename = f"{module_part}.py"
+        (store_dir / filename).write_text(code, encoding="utf-8")
+        python_path = str(store_dir)
+        meta["materializedPath"] = str(store_dir / filename)
+
+    if source_path:
+        src = Path(source_path).expanduser()
+        if not src.is_file():
+            raise HTTPException(status_code=400, detail="algo_source_path_invalid")
+        dest = store_dir / src.name
+        shutil.copyfile(src, dest)
+        module_name = dest.stem
+        mod_part, func_part = entrypoint_out.split(":", 1)
+        if mod_part != module_name:
+            entrypoint_out = f"{module_name}:{func_part}"
+        python_path = str(store_dir)
+        meta["materializedPath"] = str(dest)
+
+    if git_cfg:
+        repo = git_cfg.get("repo")
+        if not repo:
+            raise HTTPException(status_code=400, detail="algo_git_repo_missing")
+        clone_dir = store_dir / "git" / algo_id / version
+        if clone_dir.exists():
+            shutil.rmtree(clone_dir)
+        clone_dir.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", repo, str(clone_dir)], check=True)
+        checkout_ref = git_cfg.get("commit") or git_cfg.get("branch")
+        if checkout_ref:
+            subprocess.run(["git", "checkout", checkout_ref], cwd=str(clone_dir), check=True)
+        subdir = git_cfg.get("subdir")
+        python_path = str(clone_dir / subdir) if subdir else str(clone_dir)
+        meta["materializedPath"] = str(clone_dir)
+
+    if python_path:
+        meta["pythonPath"] = python_path
+
+    return entrypoint_out, meta
+
+
 def _collect_maps(map_sets: Optional[List[EnvMapSet]]) -> List[str]:
     if not map_sets:
         return []
@@ -637,35 +710,19 @@ def create_algo_version(algo_id: str, payload: AlgoVersionCreate, db: Session = 
     if not algo:
         raise HTTPException(status_code=404, detail="algo_not_found")
     
-    # Handle Code Upload
-    if payload.code:
-        # Determine filename from entrypoint (e.g. "my_script.py:train" -> "my_script.py")
-        # If entrypoint is just "train", default to "custom_{algo_id}_{version}.py"
-        entrypoint_str = payload.entrypoint
-        if ":" in entrypoint_str:
-            module_name = entrypoint_str.split(":")[0]
-            filename = f"{module_name}.py" if not module_name.endswith(".py") else module_name
-        else:
-            filename = f"custom_{algo_id}_{payload.version}.py"
-            # Auto-fix entrypoint to include module name
-            payload.entrypoint = f"{filename.replace('.py', '')}:{payload.entrypoint}"
-
-        # Save to runner/algorithms/
-        # Assumes backend is running in apps/portal-backend/
-        # Runner path: apps/portal-backend/runner/algorithms/
-        import os
-        runner_algo_dir = Path("runner/algorithms")
-        if not runner_algo_dir.exists():
-             # Fallback if running from root
-             runner_algo_dir = Path("apps/portal-backend/runner/algorithms")
-        
-        runner_algo_dir.mkdir(parents=True, exist_ok=True)
-        code_path = runner_algo_dir / filename
-        code_path.write_text(payload.code, encoding="utf-8")
-        print(f"[AlgoRegistry] Saved custom code to {code_path}")
-
     if not payload.entrypoint:
         raise HTTPException(status_code=400, detail="algo_entrypoint_missing")
+
+    entrypoint, metadata = _materialize_algo_source(
+        algo_id=algo_id,
+        version=payload.version,
+        entrypoint=payload.entrypoint,
+        code=payload.code,
+        metadata=payload.metadata,
+    )
+    payload.entrypoint = entrypoint
+    payload.metadata = metadata
+
     _validate_entrypoint(payload.entrypoint, settings.algo_entrypoint_validate)
     
     existing = (
@@ -713,6 +770,23 @@ def update_algo_version(
         raise HTTPException(status_code=404, detail="algo_version_not_found")
     if algo_version.frozen:
         raise HTTPException(status_code=400, detail="algo_version_frozen")
+
+    incoming_meta = payload.metadata if payload.metadata is not None else {}
+    if payload.code or incoming_meta:
+        base_meta = algo_version.metadata_ or {}
+        merged_meta = {**base_meta, **incoming_meta}
+        entrypoint = payload.entrypoint or algo_version.entrypoint
+        if not entrypoint:
+            raise HTTPException(status_code=400, detail="algo_entrypoint_missing")
+        entrypoint, merged_meta = _materialize_algo_source(
+            algo_id=algo_id,
+            version=version,
+            entrypoint=entrypoint,
+            code=payload.code,
+            metadata=merged_meta,
+        )
+        payload.entrypoint = entrypoint
+        payload.metadata = merged_meta
 
     if payload.entrypoint is not None:
         _validate_entrypoint(payload.entrypoint, settings.algo_entrypoint_validate)
@@ -1058,6 +1132,11 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
         )
 
     plugin_payload = payload.plugin.model_dump(by_alias=True) if payload.plugin else None
+    run_git = payload.git.model_dump(by_alias=True) if payload.git else None
+    if not run_git and algo_version and isinstance(algo_version.metadata_, dict):
+        git_meta = algo_version.metadata_.get("git")
+        if isinstance(git_meta, dict):
+            run_git = git_meta
     if payload.plugin:
         plugin = db.query(models.Plugin).filter(models.Plugin.id == payload.plugin.plugin_id).first()
         if not plugin:
@@ -1110,14 +1189,15 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
             "seedSet": payload.seed_set,
             "plugin": plugin_payload,
             "autoEval": payload.auto_eval.model_dump(by_alias=True) if payload.auto_eval else None,
-            "git": payload.git.model_dump(by_alias=True) if payload.git else None,
+            "git": run_git,
             "datasetId": payload.dataset_id,
         },
         metrics={"returnMean": [], "winRate": [], "entropy": []},
     )
-    if payload.git:
-        run.git_branch = payload.git.branch
-        run.git_commit = payload.git.commit
+    if run_git:
+        run.git = run_git
+        run.git_branch = run_git.get("branch")
+        run.git_commit = run_git.get("commit")
 
     if algo_version and algo_version.config_schema:
         config_error = validate_json_schema(algo_version.config_schema, run.config)

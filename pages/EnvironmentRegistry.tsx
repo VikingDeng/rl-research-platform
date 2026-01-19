@@ -3,9 +3,11 @@ import { api } from '../services/api';
 import { EnvSpec, EnvVersion } from '../types';
 import { Archive, Plus, Search, X, Box, Info } from 'lucide-react';
 import { useToast } from '../components/Toast';
+import { useLocation } from 'react-router-dom';
 
 export const EnvironmentRegistry: React.FC = () => {
   const { showToast } = useToast();
+  const location = useLocation();
   const [envs, setEnvs] = useState<EnvSpec[]>([]);
   const [envVersions, setEnvVersions] = useState<Record<string, EnvVersion[]>>({});
   const [search, setSearch] = useState('');
@@ -38,7 +40,11 @@ export const EnvironmentRegistry: React.FC = () => {
 
   useEffect(() => {
     api.getEnvs({ includeArchived }).then(setEnvs);
-  }, [includeArchived]);
+    const state = location.state as { openCreate?: boolean } | null;
+    if (state?.openCreate) {
+      setIsEnvModalOpen(true);
+    }
+  }, [includeArchived, location.state]);
 
   useEffect(() => {
     if (envs.length === 0) {
