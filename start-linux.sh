@@ -19,8 +19,9 @@ NC='\033[0m'
 echo -e "${GREEN}=== Starting RL Research Platform ===${NC}"
 
 # 0. Ensure Frontend Build (User-Space Node)
-if [ ! -f "$FRONTEND_DIST/index.html" ]; then
-    echo -e "${GREEN}[0/4] Frontend build not found. Setting up User-Space Node.js...${NC}"
+# Check for index.html AND at least one asset file to ensure valid build
+if [ ! -f "$FRONTEND_DIST/index.html" ] || [ -z "$(ls -A $FRONTEND_DIST/assets 2>/dev/null)" ]; then
+    echo -e "${GREEN}[0/4] Frontend build invalid or missing. Setting up User-Space Node.js...${NC}"
     
     # Check/Install Node
     if [ ! -d "$NODE_ROOT/bin" ]; then

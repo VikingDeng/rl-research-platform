@@ -19,7 +19,9 @@ export const ProjectDetail: React.FC = () => {
   useEffect(() => {
     if (id) {
         api.getProjectById(id).then(setProject);
-        api.getRuns().then(allRuns => setRuns(allRuns.filter(r => r.projectId === id)));
+        // Use server-side filtering and fetch more items if needed, or implement pagination here.
+        // For now, let's fetch a larger page size to be safe, or just use the projectId filter.
+        api.getRuns({ projectId: id, pageSize: 100 }).then(setRuns);
         localStorage.setItem('last_project_id', id);
     }
   }, [id]);
