@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { Project, EnvSpec, Algo, AlgoVersion, Template, TemplateVersion, EnvVersion, Plugin, EvalProtocol } from '../types';
-import { Play, Settings, Cpu, ChevronRight, GitFork, Info, Layers, Code, Box, Check, GitBranch, Zap, PlayCircle, Copy, Plus } from 'lucide-react';
+import { Play, Settings, Cpu, ChevronRight, GitFork, Info, Layers, Code, Box, Check, GitBranch, Zap, PlayCircle, Copy, Plus, Database } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '../components/Toast';
 
@@ -54,6 +54,9 @@ export const CreateJob: React.FC = () => {
   const [autoEvalEnabled, setAutoEvalEnabled] = useState(false);
   const [autoEvalProtocolId, setAutoEvalProtocolId] = useState('');
   const [autoEvalTrigger, setAutoEvalTrigger] = useState('train_succeeded');
+  
+  // Data Collection
+  const [enableDataCollection, setEnableDataCollection] = useState(false);
   
   // Sweep State
   const [isSweepMode, setIsSweepMode] = useState(false);
@@ -465,6 +468,13 @@ export const CreateJob: React.FC = () => {
     const plugin = selectedPlugins.length
       ? plugins.find(p => p.id === selectedPlugins[0])
       : null;
+    
+    // Inject Data Collection config if enabled
+    if (enableDataCollection) {
+        trainConfigs.forEach(cfg => {
+            cfg.saveReplayBuffer = true;
+        });
+    }
     
     // Extract algo overrides
     const algoOverride = parsedConfig?.algo && typeof parsedConfig.algo === 'object' ? parsedConfig.algo : {};
@@ -1003,9 +1013,33 @@ export const CreateJob: React.FC = () => {
                          </p>
                     </div>
 
-                    {/* Plugins */}
-                    <div>
-                        <h3 className="text-sm font-bold text-gray-700 mb-2">Enable Plugins</h3>
+                    {/* Plugins & Features */}
+                    <div className="space-y-6">
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">Features</h3>
+                            <div 
+                                onClick={() => setEnableDataCollection(!enableDataCollection)}
+                                className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between transition-colors ${
+                                    enableDataCollection ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-200 hover:bg-gray-50'
+                                }`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${enableDataCollection ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-400'}`}>
+                                        <Database className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                        <div className="text-sm font-bold text-gray-900">Data Collection</div>
+                                        <div className="text-xs text-gray-500">Save Replay Buffers for Offline RL</div>
+                                    </div>
+                                </div>
+                                <div className={`w-10 h-5 rounded-full relative transition-colors ${enableDataCollection ? 'bg-indigo-600' : 'bg-gray-300'}`}>
+                                    <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${enableDataCollection ? 'translate-x-5' : ''}`} />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">Enable Plugins</h3>
                         <div className="space-y-2 max-h-[300px] overflow-y-auto border border-gray-200 rounded-lg p-2 bg-white">
                             {plugins.map(p => (
                                 <div 
@@ -1030,6 +1064,7 @@ export const CreateJob: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            </div>
                 <div className="border-t border-gray-100 pt-4 space-y-3">
                     <div className="flex items-center justify-between">
                         <div>

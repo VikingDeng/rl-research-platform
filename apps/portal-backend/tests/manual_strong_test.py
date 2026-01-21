@@ -245,6 +245,27 @@ def run_strong_test():
     res = client.delete(f"/api/v1/notebooks/{nb_id}")
     assert res.status_code == 204, f"Delete Notebook failed: {res.text}"
     
+    # Create a run to cancel
+    res = client.post("/api/v1/train-jobs", json=payload)
+    cancel_run_id = res.json()["runId"]
+    cancel_job_id = res.json()["jobId"]
+    print(f"    Created Run to Cancel: {cancel_run_id}")
+    
+    # Cancel it
+    client.post(f"/api/v1/jobs/{cancel_job_id}/cancel", json={"reason": "test cleanup"})
+    
+    # 10. Verify Batch Delete
+    print(">>> Verifying Batch Delete (Cancelled Run)...")
+    res = client.post("/api/v1/runs/batch/delete", json=[cancel_run_id])
+    assert res.status_code == 200, f"Batch delete failed: {res.text}"
+    deleted_count = res.json()["deleted"]
+    print(f"    Deleted count: {deleted_count}")
+    assert deleted_count == 1, "Should have deleted 1 run"
+    
+    # Verify it's gone
+    res = client.get(f"/api/v1/runs/{cancel_run_id}")
+    assert res.status_code == 404, "Run should be deleted"
+
     print(">>> STRONG TEST PASSED! <<<")
 
 if __name__ == "__main__":

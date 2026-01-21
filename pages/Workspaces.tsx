@@ -59,45 +59,27 @@ export const Workspaces: React.FC = () => {
   };
 
   const openNotebook = (runId: string) => {
-      // We need to fetch the token/url. Since listRuns doesn't return full details usually, 
-      // we rely on the proxy url pattern we defined in LocalExecutor.
-      // But wait, the token is generated on start and returned in create response.
-      // It is NOT stored in the DB (only in LocalExecutor memory).
-      // If we refresh the page, we lose the token?
-      // Actually `LocalExecutor` stores it in memory.
-      // But `list_runs` doesn't return it.
-      // We need an endpoint to get connection info for a running notebook.
-      // Or we store the token in the Run config/metrics?
-      // Storing in Run config is better for persistence.
+      // Logic updated: Connection info is persisted in Run config by backend `start_notebook`
+      const nb = notebooks.find(n => n.id === runId);
+      // Config is deferred in listRuns usually, but for NOTEBOOK type we might want to return it?
+      // Wait, listRuns defers config.
+      // So `nb.config` might be null/empty in the list view.
+      // We need to fetch full run details if config is missing, or update `listRuns` to include config for notebooks.
+      // Or we can just call `getRunById` when clicking open.
       
-      // For now, let's assume we can't open it after refresh unless we persisted the token.
-      // I should update `start_notebook` to save token in `run.config`.
+      if (!nb) return;
       
-      // Let's do a quick fix in backend first?
-      // Or just try to open it if we have the URL stored.
-      // Let's assume the user just created it or we add a "Get Info" endpoint.
-      
-      // Actually, let's look at `RunDetail` logic.
-      // If I store token in `run.config`, I can read it back.
-      // Let's modify `start_notebook` in backend to save token to DB.
-      
-      // BUT, I can't modify backend right now without interrupting the flow.
-      // Wait, `LocalExecutor` keeps metadata.
-      // Maybe I can rely on the fact that I returned it in `create`?
-      // No, listing needs it.
-      
-      // Let's assume I fix backend to store token in `run.config` in next step.
-      // Proceeding with frontend assuming `run.config.url` or similar exists.
-      
-      // Wait, I can use `metrics` or `config` to store it.
-      
-      const config = notebooks.find(n => n.id === runId)?.config as any;
-      if (config?.url) {
-          window.open(config.url, '_blank');
-      } else {
-          // Fallback or error
-          showToast("Connection info not found. (Did you refresh? Persistence pending)", "warning");
-      }
+      api.getRunById(runId).then(run => {
+          const config = run.config as any;
+          if (config?.url && config?.token) {
+              const fullUrl = `${config.url}?token=${config.token}`;
+              window.open(fullUrl, '_blank');
+          } else {
+             showToast("Connection info not found in run config. Please try again or check logs.", "warning");
+          }
+      }).catch(e => {
+          showToast("Failed to fetch connection info.", "error");
+      });
   };
 
   return (

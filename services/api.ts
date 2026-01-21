@@ -229,6 +229,7 @@ export const api = {
     groupId?: string;
     datasetId?: string;
   }) => apiClient.submitTrainJob(payload),
+  getTuningStudy: async (studyName: string) => apiClient.getTuningStudy(studyName),
   submitMatrixJob: async (payload: {
     poolId?: string;
     policySnapshotIds: string[];
@@ -274,4 +275,6 @@ export const api = {
   getModelVersions: async (modelId: string): Promise<ModelVersion[]> => apiClient.listModelVersions(modelId),
   registerModelVersion: async (modelId: string, checkpointId: string): Promise<ModelVersion> => apiClient.createModelVersion(modelId, { checkpointId }),
   updateModelStage: async (versionId: string, stage: string): Promise<ModelVersion> => apiClient.updateModelVersionStage(versionId, stage),
+  
+  getSystemResources: async (): Promise<SystemResources> => apiClient.getSystemResources(),
 };

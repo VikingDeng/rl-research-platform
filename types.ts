@@ -45,3 +45,5 @@ export type TokenRotateResponse = ApiTypes.TokenRotateResponse;
 export type RetentionApplyResponse = ApiTypes.RetentionApplyResponse;
 export type RegisteredModel = ApiTypes.RegisteredModel;
 export type ModelVersion = ApiTypes.ModelVersion;
+export type SystemResources = ApiTypes.SystemResources;
+export type GpuInfo = ApiTypes.GpuInfo;

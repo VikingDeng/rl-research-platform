@@ -291,6 +291,14 @@ def _build_settings_response(db: Session) -> SettingsResponse:
     return SettingsResponse(api_token=token, executor=executor, storage=storage, retention=retention)
 
 
+from app.services.system_monitor import get_system_resources, SystemResources
+
+# ... (inside router)
+
+@router.get("/system/resources", response_model=SystemResources)
+def get_resources() -> SystemResources:
+    return get_system_resources()
+
 @router.post("/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest) -> LoginResponse:
     return LoginResponse(token="dev-token")
@@ -1383,6 +1391,47 @@ def create_tuning_job(payload: TuningRequest) -> TuningResponse:
     )
     return TuningResponse(group_id=group_id, message="Tuning started in background")
 
+@router.get("/tuning/{study_name}")
+def get_tuning_study(study_name: str):
+    """
+    Returns trials and importance for a study.
+    """
+    import optuna
+    from app.services.tuning import tuning_service
+    
+    try:
+        study = optuna.load_study(study_name=study_name, storage=tuning_service.storage_url)
+        trials = []
+        for t in study.trials:
+            if t.state.name == "COMPLETE":
+                trials.append({
+                    "number": t.number,
+                    "value": t.value,
+                    "params": t.params,
+                    "state": t.state.name,
+                    "datetime_start": t.datetime_start,
+                    "datetime_complete": t.datetime_complete
+                })
+        
+        # Calculate importance if possible
+        importance = {}
+        try:
+            if len(trials) > 3:
+                importance = optuna.importance.get_param_importances(study)
+        except Exception:
+            pass
+            
+        return {
+            "study_name": study_name,
+            "best_value": study.best_value if len(trials) > 0 else None,
+            "best_params": study.best_params if len(trials) > 0 else None,
+            "trials": trials,
+            "importance": importance
+        }
+    except Exception as e:
+        # If study doesn't exist yet, return empty
+        return {"error": "study_not_found", "details": str(e)}
+
 @router.post("/notebooks", response_model=NotebookResponse, status_code=201)
 def create_notebook(payload: NotebookCreate, db: Session = Depends(get_db)) -> NotebookResponse:
     project = db.query(models.Project).filter(models.Project.id == payload.project_id).first()
@@ -1699,6 +1748,8 @@ def delete_runs_batch(payload: List[str], db: Session = Depends(get_db)) -> dict
     db.query(models.Checkpoint).filter(models.Checkpoint.run_id.in_(run_ids)).delete(synchronize_session=False)
     # Delete associated artifacts
     db.query(models.Artifact).filter(models.Artifact.run_id.in_(run_ids)).delete(synchronize_session=False)
+    # Delete associated eval results
+    db.query(models.EvalResult).filter(models.EvalResult.run_id.in_(run_ids)).delete(synchronize_session=False)
     
     # Delete runs
     result = db.query(models.Run).filter(models.Run.id.in_(run_ids)).delete(synchronize_session=False)

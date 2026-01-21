@@ -308,7 +308,9 @@ export const createApiClient = (options: ApiClientOptions = {}) => {
     getReproBundle: (runId: string) => request<ReproBundleResponse>(`/runs/${runId}/repro-bundle`),
 
     // Webhooks
-    createWebhook: (body: WebhookCreate) => requestJson<Webhook>('/admin/webhooks', 'POST', body),
+    // Tuning
+    submitTuningJob: (body: TuningRequest) => requestJson<TuningResponse>('/tuning-jobs', 'POST', body),
+    getTuningStudy: (studyName: string) => request<any>(`/tuning/${studyName}`),
 
     // Notebooks
     createNotebook: (projectId: string, name?: string) => requestJson<{ runId: string; url: string; token: string }>('/notebooks', 'POST', { projectId, name }),

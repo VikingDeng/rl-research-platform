@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, PlusCircle, Box, Activity, Grid3X3, FileStack, Settings, Database, BarChart2, List, Cpu, Layers, Package, LogOut, BookOpen, Terminal } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, Box, Activity, Grid3X3, FileStack, Settings, Database, BarChart2, List, Cpu, Layers, Package, LogOut, BookOpen, Terminal, Sliders } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const navigate = useNavigate();
@@ -77,6 +77,10 @@ export const Sidebar: React.FC = () => {
           <BarChart2 className="w-4 h-4 mr-3" />
           Compare Runs
         </NavLink>
+        <NavLink to="/tuning" className={navClass}>
+          <Sliders className="w-4 h-4 mr-3" />
+          Hyperparameter Tuning
+        </NavLink>
         <NavLink to="/matrix" className={navClass}>
           <Grid3X3 className="w-4 h-4 mr-3" />
           Matrix & Cross-Play
@@ -101,6 +105,10 @@ export const Sidebar: React.FC = () => {
         <NavLink to="/registries/templates" className={navClass}>
             <BookOpen className="w-4 h-4 mr-3" />
             Templates
+        </NavLink>
+        <NavLink to="/registries/datasets" className={navClass}>
+            <Database className="w-4 h-4 mr-3" />
+            Datasets
         </NavLink>
         <NavLink to="/registries/plugins" className={navClass}>
             <Package className="w-4 h-4 mr-3" />

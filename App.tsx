@@ -16,6 +16,8 @@ import { EnvironmentRegistry } from './pages/EnvironmentRegistry';
 import { AlgorithmRegistry } from './pages/AlgorithmRegistry';
 import { PluginRegistry } from './pages/PluginRegistry';
 import { ModelRegistry } from './pages/ModelRegistry';
+import { DatasetRegistry } from './pages/DatasetRegistry';
+import { TuningDashboard } from './pages/TuningDashboard';
 import { Workspaces } from './pages/Workspaces';
 import { Login } from './pages/Login';
 import { CommandPalette } from './components/CommandPalette';
@@ -54,12 +56,14 @@ const App: React.FC = () => {
                     {/* Analysis */}
                     <Route path="/matrix" element={<MatrixView />} />
                     <Route path="/compare" element={<CompareRuns />} />
+                    <Route path="/tuning" element={<TuningDashboard />} />
                     <Route path="/queue" element={<JobQueue />} />
                     
                     {/* Registries */}
                     <Route path="/registries/environments" element={<EnvironmentRegistry />} />
                     <Route path="/registries/algorithms" element={<AlgorithmRegistry />} />
                     <Route path="/registries/templates" element={<TemplateLibrary />} />
+                    <Route path="/registries/datasets" element={<DatasetRegistry />} />
                     <Route path="/registries/plugins" element={<PluginRegistry />} />
                     <Route path="/registries/protocols" element={<EvalProtocols />} />
                     <Route path="/registries/pools" element={<OpponentPools />} />

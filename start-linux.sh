@@ -92,6 +92,10 @@ export PYTHONPATH=$BACKEND_DIR
 # This one script now does EVERYTHING: Create tables + Seed data
 python3 scripts/init_db_direct.py
 
+# 2.1 Seed Default Environment Data (Idempotent)
+echo -e "${GREEN}[2.1/4] Seeding Default Envs & Algos...${NC}"
+python3 scripts/seed-full.sh
+
 # 3. Start TensorBoard
 echo -e "${GREEN}[3/4] Starting TensorBoard...${NC}"
 python3 -m tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &

@@ -1,4 +1,4 @@
-# Dataset Registry Page (Placeholder for MVP)
+// Dataset Registry Page (Placeholder for MVP)
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { Download, Database, Plus } from 'lucide-react';

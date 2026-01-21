@@ -76,7 +76,12 @@ if FRONTEND_DIST.exists():
         # This catch-all serves index.html for client-side routing
         if full_path.startswith("api"):
             return {"error": "api_route_not_found"}
-            
+        if full_path.startswith("artifacts"):
+             # Fallback if the static mount below didn't catch it for some reason, 
+             # but usually it should be handled by `app.mount("/artifacts")`.
+             # We just return 404 here.
+             return {"error": "artifact_not_found"}
+
         file_path = FRONTEND_DIST / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
@@ -84,6 +89,18 @@ if FRONTEND_DIST.exists():
         return FileResponse(FRONTEND_DIST / "index.html")
 else:
     print(f"[Warning] Frontend dist not found at {FRONTEND_DIST}. Running in API-only mode.")
+
+# --- Local Artifact Serving (For non-S3/MinIO mode) ---
+LOCAL_ARTIFACTS = Path(settings.local_run_root).parent / "artifacts"
+if LOCAL_ARTIFACTS.exists():
+    print(f"[System] Serving Local Artifacts at: {LOCAL_ARTIFACTS}")
+    app.mount("/artifacts", StaticFiles(directory=LOCAL_ARTIFACTS), name="artifacts")
+else:
+    # Ensure it exists so we can mount it? Or just create it on startup.
+    # It's better to create it.
+    LOCAL_ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    print(f"[System] Initialized Local Artifacts at: {LOCAL_ARTIFACTS}")
+    app.mount("/artifacts", StaticFiles(directory=LOCAL_ARTIFACTS), name="artifacts")
 
 
 @app.on_event("startup")

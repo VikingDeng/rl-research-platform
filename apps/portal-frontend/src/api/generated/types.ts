@@ -683,12 +683,23 @@ export interface WebhookCreate {
   secret?: string;
 }
 
-export interface Webhook {
-  id: string;
-  url: string;
-  events: string[];
-  active?: boolean;
-  createdAt?: string;
+export interface GpuInfo {
+  index: number;
+  name: string;
+  utilizationGpu: number;
+  utilizationMemory: number;
+  memoryTotal: number;
+  memoryUsed: number;
+  memoryFree: number;
+  temperature: number;
+}
+
+export interface SystemResources {
+  cpuPercent: number;
+  memoryPercent: number;
+  memoryTotal: number;
+  memoryUsed: number;
+  gpus: GpuInfo[];
 }
 
 export interface RegisteredModel {
