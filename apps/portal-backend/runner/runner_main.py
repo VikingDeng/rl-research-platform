@@ -40,6 +40,8 @@ def _normalize_env_config(env_cfg: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(env_cfg)
     if "envId" in normalized and "env_id" not in normalized:
         normalized["env_id"] = normalized["envId"]
+    if "envId" in normalized and "id" not in normalized:
+        normalized["id"] = normalized["envId"]
     if "mapSet" in normalized and "map_set" not in normalized:
         normalized["map_set"] = normalized["mapSet"]
     if "apiMode" in normalized and "api_mode" not in normalized:
@@ -142,7 +144,24 @@ def run_with_config(
                     try:
                         env_fn = load_entrypoint(env_entrypoint)
                         env_kwargs = _normalize_env_config(env_cfg)
-                        env_obj = _call_with_kwargs(env_fn, env_kwargs)
+                        
+                        # Filter out system keys that shouldn't be passed to the env constructor
+                        system_keys = {
+                            "entrypoint", "package", "apiMode", "api_mode", "envId", "env_id", 
+                            "version", "mapSet", "map_set", "mapSets", "scenarioSchema", 
+                            "scenario_schema", "wrappers"
+                        }
+                        
+                        # Only filter if the target function accepts **kwargs (like gym.make)
+                        # because if it doesn't, _call_with_kwargs already filters by signature.
+                        # But gymnasium.make takes **kwargs and passes them to Env, which might fail.
+                        filtered_env_kwargs = {k: v for k, v in env_kwargs.items() if k not in system_keys}
+                        
+                        # But we MUST keep 'id' if we added it for gym.make
+                        if "id" in env_kwargs:
+                            filtered_env_kwargs["id"] = env_kwargs["id"]
+
+                        env_obj = _call_with_kwargs(env_fn, filtered_env_kwargs)
                         context["env"] = env_obj
                         context["env_config"] = env_cfg
                         context["env_entrypoint"] = env_entrypoint
@@ -169,6 +188,11 @@ def run_with_config(
         ]
 
         try:
+            # Check if datasetPath is injected into config (from job_manager)
+            dataset_path = config.get("datasetPath")
+            if dataset_path:
+                context["dataset_path"] = dataset_path
+
             if required and all(p.name in kwargs for p in required):
                 func(**kwargs)
                 return

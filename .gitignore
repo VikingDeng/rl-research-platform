@@ -1,5 +1,9 @@
+# OS files
+.DS_Store
+Thumbs.db
+
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,18 +11,61 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-# dist
-apps/portal-frontend/distdist-ssr
-*.local
+# Build artifacts
+dist/
+build/
+*.egg-info/
+.local/
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# Node dependencies
+node_modules/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Data & Databases (Crucial for Git size)
+runs_data/
+minio_data/
+postgres_data/
+*.db
+*.sqlite
+test_strong_artifacts/
+
+# Large Binary Files
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.mp4
+*.pkl
+*.h5
+*.hdf5
+*.onnx
+*.pt
+*.pth
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+.env.*.local

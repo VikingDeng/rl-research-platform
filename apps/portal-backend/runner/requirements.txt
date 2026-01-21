@@ -11,7 +11,9 @@ requests
 pydantic
 stable-baselines3>=2.2.1
 shimmy>=1.3.0
+imitation>=0.4.0
 psutil
+optuna>=3.0.0
 opencv-python-headless
 moviepy
 nvidia-ml-py

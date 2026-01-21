@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { EnvSpec, EnvVersion } from '../types';
-import { Archive, Plus, Search, X, Box, Info } from 'lucide-react';
+import { Archive, Plus, Search, X, Box, Info, CheckSquare, Square, Trash2 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { useLocation } from 'react-router-dom';
 
@@ -12,6 +12,7 @@ export const EnvironmentRegistry: React.FC = () => {
   const [envVersions, setEnvVersions] = useState<Record<string, EnvVersion[]>>({});
   const [search, setSearch] = useState('');
   const [includeArchived, setIncludeArchived] = useState(false);
+  const [selectedEnvIds, setSelectedEnvIds] = useState<Set<string>>(new Set());
   
   // Modal State
   const [isEnvModalOpen, setIsEnvModalOpen] = useState(false);
@@ -63,6 +64,30 @@ export const EnvironmentRegistry: React.FC = () => {
       setEnvVersions(next);
     });
   }, [envs]);
+
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedEnvIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedEnvIds(next);
+  };
+
+  const handleBulkArchive = (archive: boolean) => {
+    const ids = Array.from(selectedEnvIds);
+    if (ids.length === 0) return;
+    if (!window.confirm(`${archive ? 'Archive' : 'Restore'} ${ids.length} environments?`)) return;
+
+    Promise.all(
+      ids.map(id => archive ? api.archiveEnv(id) : api.updateEnv(id, { archived: false }))
+    ).then(() => {
+        showToast(`Successfully ${archive ? 'archived' : 'restored'} environments.`, 'success');
+        setSelectedEnvIds(new Set());
+        return api.getEnvs({ includeArchived });
+    }).then(setEnvs)
+    .catch(err => {
+        showToast(`Bulk action failed: ${err}`, 'error');
+    });
+  };
 
   const parseJsonPayload = () => {
       let mapSets: { id: string; maps: string[] }[] | undefined = undefined;
@@ -275,7 +300,7 @@ export const EnvironmentRegistry: React.FC = () => {
   const filteredEnvs = envs.filter(e => e.id.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative pb-20">
       <div className="flex justify-between items-center">
         <div>
            <h1 className="text-2xl font-bold text-gray-900">Environment Registry</h1>
@@ -317,10 +342,19 @@ export const EnvironmentRegistry: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredEnvs.map(env => (
-              <div key={env.id} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden">
+          {filteredEnvs.map(env => {
+              const isSelected = selectedEnvIds.has(env.id);
+              return (
+              <div key={env.id} className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden relative ${isSelected ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/10' : 'border-gray-200'}`}>
+                  <button 
+                    onClick={() => toggleSelect(env.id)}
+                    className="absolute top-4 right-4 text-gray-400 hover:text-blue-600 z-10"
+                  >
+                      {isSelected ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
+                  </button>
+
                   <div className="p-6 flex-1">
-                      <div className="flex justify-between items-start mb-4">
+                      <div className="flex justify-between items-start mb-4 pr-8">
                           <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
                               <Box className="w-6 h-6" />
                           </div>
@@ -374,8 +408,33 @@ export const EnvironmentRegistry: React.FC = () => {
                       })()}
                   </div>
               </div>
-          ))}
+          )})}
       </div>
+
+      {selectedEnvIds.size > 0 && (
+          <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-6 animate-in slide-in-from-bottom duration-200 z-50">
+              <span className="font-medium text-sm">{selectedEnvIds.size} selected</span>
+              <div className="h-4 w-px bg-gray-700"></div>
+              <button 
+                onClick={() => handleBulkArchive(true)}
+                className="flex items-center text-sm font-bold text-gray-300 hover:text-white"
+              >
+                  <Archive className="w-4 h-4 mr-2" /> Archive
+              </button>
+              <button 
+                onClick={() => handleBulkArchive(false)}
+                className="flex items-center text-sm font-bold text-gray-300 hover:text-white"
+              >
+                  <Archive className="w-4 h-4 mr-2 rotate-180" /> Restore
+              </button>
+              <button 
+                onClick={() => setSelectedEnvIds(new Set())}
+                className="text-gray-400 hover:text-gray-200 text-sm"
+              >
+                  Clear
+              </button>
+          </div>
+      )}
 
        {/* Register Env Modal */}
        {isEnvModalOpen && (

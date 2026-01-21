@@ -5,7 +5,7 @@ import { Run, Job, JobStatus, RunType, Checkpoint, EvalProtocol, ArtifactFile, M
 import { StatusBadge } from '../components/StatusBadge';
 import { Heatmap } from '../components/Heatmap';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Terminal, Download, RefreshCw, FileText, Tag, PlayCircle, Folder, ChevronRight, GitFork, Grid3X3, Search, ArrowDownCircle, Calculator, Copy, X, HardDrive, AlertTriangle } from 'lucide-react';
+import { Terminal, Download, RefreshCw, FileText, Tag, PlayCircle, Folder, ChevronRight, GitFork, Grid3X3, Search, ArrowDownCircle, Calculator, Copy, X, HardDrive, AlertTriangle, Package } from 'lucide-react';
 import { useToast } from '../components/Toast.tsx';
 
 const LOG_PAGE_SIZE = 200;
@@ -140,6 +140,14 @@ export const RunDetail: React.FC = () => {
   const [saveTemplateType, setSaveTemplateType] = useState<'Single-Agent' | 'Multi-Agent'>('Multi-Agent');
   const [saveTemplateConfig, setSaveTemplateConfig] = useState('');
   const [saveTemplateSubmitting, setSaveTemplateSubmitting] = useState(false);
+
+  // Model Registry State
+  const [showRegisterModelModal, setShowRegisterModelModal] = useState(false);
+  const [registerModelId, setRegisterModelId] = useState('');
+  const [registerNewModelName, setRegisterNewModelName] = useState('');
+  const [registerNewModelDesc, setRegisterNewModelDesc] = useState('');
+  const [models, setModels] = useState<{id: string, name: string}[]>([]);
+  const [isRegisteringModel, setIsRegisteringModel] = useState(false);
 
   // Artifact Browser State
   const [showArtifacts, setShowArtifacts] = useState(false);
@@ -408,6 +416,41 @@ export const RunDetail: React.FC = () => {
           window.open(res.url, '_blank', 'noreferrer');
       });
   }
+
+  const openRegisterModelModal = (ckpt: Checkpoint) => {
+      setSelectedCkpt(ckpt);
+      api.getModels().then(ms => {
+          setModels(ms);
+          if (ms.length > 0) setRegisterModelId(ms[0].id);
+      });
+      setShowRegisterModelModal(true);
+  };
+
+  const handleRegisterModel = async () => {
+      if (!selectedCkpt) return;
+      setIsRegisteringModel(true);
+      try {
+          let modelId = registerModelId;
+          if (registerNewModelName) {
+              const newModel = await api.createModel(registerNewModelName, registerNewModelDesc);
+              modelId = newModel.id;
+          }
+          if (!modelId) {
+              showToast('Please select or create a model family.', 'error');
+              return;
+          }
+          await api.registerModelVersion(modelId, selectedCkpt.id);
+          showToast('Checkpoint registered as new model version.', 'success');
+          setShowRegisterModelModal(false);
+          setRegisterNewModelName('');
+          setRegisterNewModelDesc('');
+      } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          showToast(`Failed to register model: ${detail}`, 'error');
+      } finally {
+          setIsRegisteringModel(false);
+      }
+  };
 
   const handleCheckpointDownload = (ckpt: Checkpoint) => {
       const path = `/checkpoints/ckpt_${ckpt.step}.json`;
@@ -1024,6 +1067,13 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                                           >
                                               <Tag className="w-4 h-4" />
                                           </button>
+                                          <button
+                                            onClick={() => openRegisterModelModal(ckpt)}
+                                            className="text-gray-500 hover:text-purple-600"
+                                            title="Register to Model Registry"
+                                          >
+                                              <Package className="w-4 h-4" />
+                                          </button>
                                           <button 
                                             onClick={() => openEvalModal(ckpt)}
                                             className="text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 px-2 py-1 rounded border border-blue-100" title="Launch Eval">
@@ -1124,6 +1174,69 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                 </div>
             </div>
         </div>
+      )}
+
+      {/* Register Model Modal */}
+      {showRegisterModelModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in duration-200">
+                  <div className="p-6 border-b border-gray-100">
+                      <h2 className="text-lg font-bold text-gray-900">Register Model</h2>
+                      <p className="text-sm text-gray-500 mt-1">Promote checkpoint {selectedCkpt?.step} to a managed model version.</p>
+                  </div>
+                  <div className="p-6 space-y-4">
+                      <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Select Existing Family</label>
+                          <select 
+                              className="w-full p-2 border border-gray-300 rounded-lg"
+                              value={registerModelId}
+                              onChange={(e) => { setRegisterModelId(e.target.value); setRegisterNewModelName(''); }}
+                              disabled={!!registerNewModelName}
+                          >
+                              <option value="">-- Select Model Family --</option>
+                              {models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                          </select>
+                      </div>
+                      
+                      <div className="relative flex py-2 items-center">
+                          <div className="flex-grow border-t border-gray-200"></div>
+                          <span className="flex-shrink-0 mx-4 text-gray-400 text-xs">OR CREATE NEW</span>
+                          <div className="flex-grow border-t border-gray-200"></div>
+                      </div>
+
+                      <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">New Family Name</label>
+                          <input 
+                              className="w-full p-2 border border-gray-300 rounded-lg"
+                              placeholder="e.g. Production-PPO"
+                              value={registerNewModelName}
+                              onChange={(e) => { setRegisterNewModelName(e.target.value); setRegisterModelId(''); }}
+                          />
+                      </div>
+                      {registerNewModelName && (
+                          <div>
+                              <input 
+                                  className="w-full p-2 border border-gray-300 rounded-lg text-sm"
+                                  placeholder="Description (optional)"
+                                  value={registerNewModelDesc}
+                                  onChange={(e) => setRegisterNewModelDesc(e.target.value)}
+                              />
+                          </div>
+                      )}
+
+                      <div className="flex justify-end gap-3 pt-4">
+                          <button onClick={() => setShowRegisterModelModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">Cancel</button>
+                          <button 
+                              onClick={handleRegisterModel} 
+                              disabled={isRegisteringModel || (!registerModelId && !registerNewModelName)}
+                              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
+                          >
+                              {isRegisteringModel ? 'Registering...' : 'Register'}
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
       )}
 
       {/* Eval Modal */}

@@ -66,5 +66,8 @@ class S3Client:
     def download_file(self, bucket: str, key: str, dest: str) -> None:
         self._client.download_file(bucket, key, dest)
 
+    def upload_file(self, src: str, key: str) -> None:
+        self._client.upload_file(src, self._bucket, key)
+
 
 s3_client = S3Client()

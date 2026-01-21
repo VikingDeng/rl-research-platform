@@ -47,21 +47,36 @@ export const ProjectDetail: React.FC = () => {
       navigate(`/compare?runs=${ids}`);
   }
 
-  const handleDeleteProject = () => {
-      if (!project) return;
-      if (!window.confirm(`Delete project "${project.name}" and all related runs/jobs?`)) {
+  const handleDeleteRuns = () => {
+      const ids = Array.from(selectedRunIds);
+      if (ids.length === 0) return;
+      if (!window.confirm(`Delete ${ids.length} selected runs? This cannot be undone.`)) {
           return;
       }
-      api
-        .deleteProject(project.id)
-        .then(() => {
-          showToast(`Deleted project "${project.name}".`, 'success');
-          navigate('/');
-        })
-        .catch((err) => {
+      api.deleteRunsBatch(ids).then(() => {
+          setRuns(prev => prev.filter(r => !selectedRunIds.has(r.id)));
+          setSelectedRunIds(new Set());
+          showToast(`Deleted ${ids.length} runs.`, 'success');
+      }).catch(err => {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to delete project: ${detail}`, 'error');
-        });
+          showToast(`Failed to delete runs: ${detail}`, 'error');
+      });
+  }
+
+  const handleDeleteSingleRun = (runId: string) => {
+      if (!window.confirm("Delete this run? This cannot be undone.")) return;
+      api.deleteRun(runId).then(() => {
+          setRuns(prev => prev.filter(r => r.id !== runId));
+          if (selectedRunIds.has(runId)) {
+              const next = new Set(selectedRunIds);
+              next.delete(runId);
+              setSelectedRunIds(next);
+          }
+          showToast("Run deleted.", 'success');
+      }).catch(err => {
+          const detail = err instanceof Error ? err.message : String(err);
+          showToast(`Failed to delete run: ${detail}`, 'error');
+      });
   }
 
   if (!project) return <div>Loading...</div>;
@@ -178,8 +193,15 @@ export const ProjectDetail: React.FC = () => {
                     <div className="text-xs text-gray-400">{run.env}</div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">{new Date(run.created).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-sm">
+                  <td className="px-6 py-4 text-sm flex gap-3">
                       <Link to={`/runs/${run.id}`} className="text-gray-500 hover:text-blue-600 font-medium">View</Link>
+                      <button 
+                        onClick={() => handleDeleteSingleRun(run.id)}
+                        className="text-gray-400 hover:text-red-600"
+                        title="Delete Run"
+                      >
+                          <Trash2 className="w-4 h-4" />
+                      </button>
                   </td>
                 </tr>
               ))}
@@ -205,6 +227,13 @@ export const ProjectDetail: React.FC = () => {
               >
                   <BarChart2 className="w-4 h-4 mr-2" /> Compare
               </button>
+              <button 
+                onClick={handleDeleteRuns}
+                className="flex items-center text-sm font-bold text-red-400 hover:text-red-300"
+              >
+                  <Trash2 className="w-4 h-4 mr-2" /> Delete
+              </button>
+              <div className="h-4 w-px bg-gray-700"></div>
               <button 
                 onClick={() => setSelectedRunIds(new Set())}
                 className="text-gray-400 hover:text-gray-200 text-sm"

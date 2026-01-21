@@ -3,7 +3,7 @@ import queue
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
 from app.db import models
 from app.db.session import SessionLocal
@@ -19,6 +19,7 @@ from app.services.repro_bundle import repro_bundle_service
 from app.services.retention import apply_checkpoint_policy
 from app.services.runner_bundle import runner_bundle_service
 from app.services.status import can_transition
+from app.services import paths
 
 
 class JobManager:
@@ -488,6 +489,35 @@ class JobManager:
                          except Exception:
                             pass
 
+                    # Check for Datasets (Auto-Registration)
+                    dataset_manifest_path = run_dir / "dataset_manifest.json"
+                    if dataset_manifest_path.exists():
+                        try:
+                            manifest = json.loads(dataset_manifest_path.read_text(encoding="utf-8"))
+                            local_file = run_dir / manifest.get("path", "")
+                            if local_file.exists():
+                                # 1. Upload to Artifact Store
+                                # For local executor, we might just keep it, but for consistency let's treat it as artifact
+                                # Ideally dataset is separate from run artifacts, but let's put it in run for now
+                                object_key = f"datasets/{run.id}/{local_file.name}"
+                                # We need to access s3_client to upload file
+                                from app.services.s3 import s3_client
+                                s3_client.upload_file(str(local_file), object_key)
+                                
+                                # 2. Register in DB
+                                ds = models.Dataset(
+                                    name=manifest.get("name", f"ds-{run.id}"),
+                                    description=manifest.get("description"),
+                                    path=f"s3://{settings.s3_bucket}/{object_key}",
+                                    format=manifest.get("format", "unknown"),
+                                    size_bytes=local_file.stat().st_size
+                                )
+                                db.add(ds)
+                                # Note: We don't commit here yet, finalize_job commits at the end
+                                print(f"[JobManager] Auto-registered dataset {ds.id}")
+                        except Exception as e:
+                            print(f"[JobManager] Failed to register dataset: {e}")
+
                 db.flush()
                 apply_checkpoint_policy(db, run.id)
             except ValueError as exc:
@@ -577,7 +607,32 @@ class JobManager:
             status="PENDING",
             algo="eval",
             env=protocol_id,
-            config={"protocolId": protocol_id, "policySnapshotId": checkpoint.id, "parentRunId": run.id},
+            config={
+                "protocolId": protocol_id,
+                "policySnapshotId": checkpoint.id,
+                "parentRunId": run.id,
+                "protocol": {
+                    "name": protocol.name,
+                    "version": protocol.version,
+                    "env": {
+                        "envId": protocol.env_id,
+                        "version": protocol.env_version or "",
+                        "mapSet": protocol.map_set or "",
+                    },
+                    "evalSeeds": protocol.eval_seeds,
+                    "episodesPerMatch": protocol.episodes_per_match,
+                    "timeoutSec": protocol.timeout_sec,
+                    "metrics": protocol.metrics,
+                    "scenarioGrid": protocol.scenario_grid,
+                    "opponentSampling": protocol.opponent_sampling,
+                    "opponentPoolRef": {
+                        "poolId": protocol.opponent_pool_id,
+                        "version": protocol.opponent_pool_version,
+                    }
+                    if protocol.opponent_pool_id
+                    else None,
+                },
+            },
             metrics={"returnMean": [], "winRate": [], "entropy": []},
         )
         db.add(eval_run)
@@ -598,5 +653,66 @@ class JobManager:
         db.commit()
         self.submit(eval_job.id)
 
+    def start_notebook(self, run_id: str) -> Dict[str, str]:
+        # Only LocalExecutor supports this for now
+        if not isinstance(self._executor, LocalExecutor):
+            raise ValueError("notebooks_only_supported_on_local_executor")
+        
+        db = SessionLocal()
+        try:
+            run = db.query(models.Run).filter(models.Run.id == run_id).first()
+            if not run:
+                raise ValueError("run_not_found")
+            
+            run_dir = paths.run_root(run_id)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Allocate a port (simple increment for MVP, better use socket bind check)
+            # We use a base port + hash of run_id mod 1000
+            import hashlib
+            port_offset = int(hashlib.sha256(run_id.encode()).hexdigest(), 16) % 1000
+            port = 9000 + port_offset
+            
+            backend_ref = self._executor.submit_notebook(run_id, run_dir, port)
+            
+            # Wait a bit for it to start? No, return details.
+            info = self._executor.get_notebook_info(backend_ref)
+            
+            # Update job status AND persist connection info in Run config
+            job = db.query(models.Job).filter(models.Job.run_id == run_id).first()
+            if job:
+                job.status = "RUNNING"
+                job.backend_ref = backend_ref
+                job.executor = "local"
+            
+            # Persist URL/Token so frontend can list it later
+            run.config = {
+                **(run.config or {}),
+                "url": info.get("url"),
+                "token": info.get("token"),
+                "port": info.get("port")
+            }
+            # Force update of JSON column
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(run, "config")
+            
+            db.commit()
+            
+            return info
+        finally:
+            db.close()
+
+    def stop_notebook(self, run_id: str) -> None:
+        backend_ref = f"notebook-{run_id}"
+        self._executor.cancel(backend_ref)
+        
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.run_id == run_id).first()
+            if job:
+                job.status = "CANCELED"
+                db.commit()
+        finally:
+            db.close()
 
 job_manager = JobManager()

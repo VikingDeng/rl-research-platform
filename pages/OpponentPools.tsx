@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { OpponentPool, EnvSpec, Run, Checkpoint } from '../types';
-import { Database, Plus, Users, Calendar, X, Trash2, Bot, Lock } from 'lucide-react';
+import { Database, Plus, Users, Calendar, X, Trash2, Bot, Lock, CheckSquare, Square } from 'lucide-react';
 import { useToast } from '../components/Toast';
 
 export const OpponentPools: React.FC = () => {
   const { showToast } = useToast();
   const [pools, setPools] = useState<OpponentPool[]>([]);
   const [envs, setEnvs] = useState<EnvSpec[]>([]);
+  const [selectedPoolIds, setSelectedPoolIds] = useState<Set<string>>(new Set());
   
   // Create Modal
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -124,12 +125,39 @@ export const OpponentPools: React.FC = () => {
         });
   }
 
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedPoolIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedPoolIds(next);
+  };
+
+  const handleBulkDelete = () => {
+    const ids = Array.from(selectedPoolIds);
+    if (ids.length === 0) return;
+    if (!window.confirm(`Delete ${ids.length} selected pools?`)) return;
+
+    Promise.all(ids.map(id => api.deletePool(id)))
+      .then(() => {
+        setPools(prev => prev.filter(p => !selectedPoolIds.has(p.id)));
+        setSelectedPoolIds(new Set());
+        if (selectedPool && selectedPoolIds.has(selectedPool.id)) {
+            setSelectedPool(null);
+        }
+        showToast(`Deleted ${ids.length} pools.`, 'success');
+      })
+      .catch(err => {
+        const detail = err instanceof Error ? err.message : String(err);
+        showToast(`Bulk delete failed: ${detail}`, 'error');
+      });
+  };
+
   const filteredRuns = selectedPool
     ? runs.filter(run => run.env.startsWith(`${selectedPool.env}:`))
     : runs;
 
   return (
-    <div className="space-y-6 relative h-[calc(100vh-4rem)] flex flex-col">
+    <div className="space-y-6 relative h-[calc(100vh-4rem)] flex flex-col pb-20">
        <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Opponent Pools</h1>
@@ -149,6 +177,7 @@ export const OpponentPools: React.FC = () => {
             <table className="w-full text-left">
             <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase">
                 <tr>
+                <th className="px-6 py-3 w-10"></th>
                 <th className="px-6 py-3">Pool Name</th>
                 <th className="px-6 py-3">Env</th>
                 <th className="px-6 py-3">Version</th>
@@ -164,6 +193,9 @@ export const OpponentPools: React.FC = () => {
                     className={`hover:bg-gray-50 cursor-pointer transition-colors ${selectedPool?.id === pool.id ? 'bg-blue-50' : ''}`}
                     onClick={() => handleOpenMembers(pool)}
                 >
+                    <td className="px-6 py-4" onClick={(e) => { e.stopPropagation(); toggleSelect(pool.id); }}>
+                        {selectedPoolIds.has(pool.id) ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5 text-gray-400" />}
+                    </td>
                     <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-purple-50 text-purple-600 rounded-lg">
@@ -337,6 +369,25 @@ export const OpponentPools: React.FC = () => {
             </div>
         )}
       </div>
+
+      {selectedPoolIds.size > 0 && (
+          <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-6 animate-in slide-in-from-bottom duration-200 z-50">
+              <span className="font-medium text-sm">{selectedPoolIds.size} selected</span>
+              <div className="h-4 w-px bg-gray-700"></div>
+              <button 
+                onClick={handleBulkDelete}
+                className="flex items-center text-sm font-bold text-red-400 hover:text-red-300"
+              >
+                  <Trash2 className="w-4 h-4 mr-2" /> Delete
+              </button>
+              <button 
+                onClick={() => setSelectedPoolIds(new Set())}
+                className="text-gray-400 hover:text-gray-200 text-sm"
+              >
+                  Clear
+              </button>
+          </div>
+      )}
 
        {/* Create Modal */}
        {isCreateOpen && (

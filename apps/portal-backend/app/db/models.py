@@ -3,11 +3,11 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, JSON
-# from sqlalchemy.dialects.postgresql import ARRAY, JSONB  <-- Removed
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
+from app.db.types import RobustArray
 
 
 def generate_id() -> str:
@@ -20,7 +20,7 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    tags: Mapped[list[str]] = mapped_column(RobustArray, nullable=False, default=list)
     git_repo: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     git_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="main")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -90,8 +90,8 @@ class EnvSpec(Base):
     __tablename__ = "envs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    versions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
-    maps: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    versions: Mapped[list[str]] = mapped_column(RobustArray, nullable=False, default=list)
+    maps: Mapped[list[str]] = mapped_column(RobustArray, nullable=False, default=list)
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
@@ -221,6 +221,8 @@ class EvalProtocol(Base):
     episodes_per_match: Mapped[int] = mapped_column(Integer, nullable=False)
     timeout_sec: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     metrics: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    scenario_grid: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    opponent_sampling: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     opponent_pool_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     opponent_pool_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -310,3 +312,25 @@ class Webhook(Base):
     secret: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RegisteredModel(Base):
+    __tablename__ = "registered_models"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ModelVersion(Base):
+    __tablename__ = "model_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    model_id: Mapped[str] = mapped_column(ForeignKey("registered_models.id"), nullable=False, index=True)
+    checkpoint_id: Mapped[str] = mapped_column(ForeignKey("checkpoints.id"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    stage: Mapped[str] = mapped_column(String, nullable=False, default="None")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

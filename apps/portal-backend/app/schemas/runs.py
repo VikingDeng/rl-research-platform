@@ -40,6 +40,12 @@ class Run(APIModel):
     metrics: Dict[str, Any]
 
 
+class RunSummary(Run):
+    config: Optional[Dict[str, Any]] = None
+    metrics: Optional[Dict[str, Any]] = None
+    git: Optional[GitInfo] = None
+
+
 class CheckpointMetrics(APIModel):
     win_rate: float
     return_mean: float
@@ -156,3 +162,14 @@ class LogPage(APIModel):
     page: int
     page_size: int
     has_more: bool
+
+
+class NotebookCreate(APIModel):
+    project_id: str
+    name: Optional[str] = None
+
+
+class NotebookResponse(APIModel):
+    run_id: str
+    url: str
+    token: str

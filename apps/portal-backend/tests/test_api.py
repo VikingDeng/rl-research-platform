@@ -27,10 +27,19 @@ def create_template(client, project_id: str):
 def ensure_algo_version(client, algo_id: str = "mappo", version: str = "1.0.0"):
     res = client.post("/api/v1/admin/algos", json={"id": algo_id, "name": algo_id.upper(), "description": "algo"})
     assert res.status_code == 201
+    manifest = {
+        "name": algo_id,
+        "version": version,
+        "entrypoint": "algorithms.simple_train:train",
+        "python": "3.10",
+        "dependencies": [],
+        "default_config": {"train": {"lr": 0.001}},
+        "config_schema": {"type": "object"},
+    }
     payload = {
         "version": version,
-        "entrypoint": "algos.mappo:train",
-        "package": "mappo==1.0.0",
+        "entrypoint": manifest["entrypoint"],
+        "metadata": {"manifest": manifest},
         "active": True,
     }
     res = client.post(f"/api/v1/admin/algos/{algo_id}/versions", json=payload)
@@ -80,6 +89,13 @@ def create_eval_protocol(client, name="EvalProto"):
         "episodesPerMatch": 4,
     }
     res = client.post("/api/v1/eval-protocols", json=payload)
+    assert res.status_code == 201
+    return res.json()
+
+
+def create_opponent_pool(client, name="Pool"):
+    payload = {"name": name, "env": "smac", "version": "1.0.0", "memberSnapshotIds": ["snap_a", "snap_b"]}
+    res = client.post("/api/v1/opponent-pools", json=payload)
     assert res.status_code == 201
     return res.json()
 
@@ -281,6 +297,48 @@ def test_eval_protocol_versioning(client):
     versions = list_res.json()
     assert len(versions) >= 2
     assert any(v["version"] == "2.0.0" for v in versions)
+
+
+def test_eval_protocol_update_with_pool(client):
+    ensure_env_version(client)
+    pool = create_opponent_pool(client)
+    payload = {
+        "name": "EvalProtoPool",
+        "env": {"envId": "smac", "version": "1.0.0", "mapSet": "easy"},
+        "evalSeeds": [1],
+        "episodesPerMatch": 2,
+        "scenarioGrid": {"axes": {"delay": ["low", "high"]}},
+        "opponentPoolRef": {"poolId": pool["id"], "version": pool["version"]},
+    }
+    res = client.post("/api/v1/eval-protocols", json=payload)
+    assert res.status_code == 201
+    protocol = res.json()
+    assert protocol["opponentPoolRef"]["poolId"] == pool["id"]
+
+    patch = {
+        "evalSeeds": [1, 2, 3],
+        "episodesPerMatch": 4,
+        "opponentPoolRef": None,
+    }
+    update_res = client.patch(f"/api/v1/eval-protocols/{protocol['id']}", json=patch)
+    assert update_res.status_code == 200
+    updated = update_res.json()
+    assert updated["evalSeeds"] == [1, 2, 3]
+    assert updated["opponentPoolRef"] is None
+
+
+def test_eval_protocol_invalid_pool_version(client):
+    ensure_env_version(client)
+    pool = create_opponent_pool(client, name="InvalidPool")
+    payload = {
+        "name": "EvalProtoInvalidPool",
+        "env": {"envId": "smac", "version": "1.0.0", "mapSet": "easy"},
+        "evalSeeds": [1],
+        "episodesPerMatch": 2,
+        "opponentPoolRef": {"poolId": pool["id"], "version": "9.9.9"},
+    }
+    res = client.post("/api/v1/eval-protocols", json=payload)
+    assert res.status_code == 404
 
 
 def test_opponent_pool_members(client):

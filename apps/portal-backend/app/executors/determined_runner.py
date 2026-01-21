@@ -43,6 +43,12 @@ def main() -> None:
         algo_cfg = config.get("algo")
         if isinstance(algo_cfg, dict) and algo_cfg.get("package"):
             packages.append(str(algo_cfg["package"]))
+        if isinstance(algo_cfg, dict):
+            meta = algo_cfg.get("metadata")
+            if isinstance(meta, dict):
+                runtime_pkgs = meta.get("runtimePackages")
+                if isinstance(runtime_pkgs, list):
+                    packages.extend(str(pkg) for pkg in runtime_pkgs if pkg)
     runtime_spec = runtime_packages.prepare_runtime(packages)
     if runtime_spec:
         python_path = os.environ.get("PYTHONPATH")

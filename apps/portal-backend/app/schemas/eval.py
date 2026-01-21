@@ -25,6 +25,9 @@ class EvalProtocolSummary(APIModel):
     map: str
     eval_seeds: List[int]
     episodes: int
+    scenario_grid: Optional[Dict[str, Any]] = None
+    opponent_sampling: Optional[Dict[str, Any]] = None
+    opponent_pool_ref: Optional[OpponentPoolRef] = None
     frozen: bool
     created: Optional[datetime] = None
 
@@ -39,6 +42,8 @@ class EvalProtocol(APIModel):
     episodes_per_match: int
     timeout_sec: Optional[int] = None
     metrics: Optional[List[str]] = None
+    scenario_grid: Optional[Dict[str, Any]] = None
+    opponent_sampling: Optional[Dict[str, Any]] = None
     opponent_pool_ref: Optional[OpponentPoolRef] = None
     frozen: bool
     created_at: Optional[datetime] = None
@@ -52,6 +57,8 @@ class EvalProtocolCreate(APIModel):
     episodes_per_match: int
     timeout_sec: Optional[int] = None
     metrics: Optional[List[str]] = None
+    scenario_grid: Optional[Dict[str, Any]] = None
+    opponent_sampling: Optional[Dict[str, Any]] = None
     opponent_pool_ref: Optional[OpponentPoolRef] = None
 
 
@@ -63,6 +70,20 @@ class EvalProtocolVersionCreate(APIModel):
     episodes_per_match: Optional[int] = None
     timeout_sec: Optional[int] = None
     metrics: Optional[List[str]] = None
+    scenario_grid: Optional[Dict[str, Any]] = None
+    opponent_sampling: Optional[Dict[str, Any]] = None
+    opponent_pool_ref: Optional[OpponentPoolRef] = None
+
+
+class EvalProtocolUpdate(APIModel):
+    name: Optional[str] = None
+    env: Optional[EnvRef] = None
+    eval_seeds: Optional[List[int]] = None
+    episodes_per_match: Optional[int] = None
+    timeout_sec: Optional[int] = None
+    metrics: Optional[List[str]] = None
+    scenario_grid: Optional[Dict[str, Any]] = None
+    opponent_sampling: Optional[Dict[str, Any]] = None
     opponent_pool_ref: Optional[OpponentPoolRef] = None
 
 

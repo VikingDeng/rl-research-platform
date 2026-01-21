@@ -1,19 +1,22 @@
 import asyncio
 import importlib
+import inspect
 import io
 import json
 import shutil
 import subprocess
+import sys
 import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.api.deps import get_db
 from app.db import models
@@ -45,6 +48,7 @@ from app.schemas.templates import (
 from app.schemas.plugins import Plugin, PluginUpdate, PluginVersion, PluginVersionCreate
 from app.schemas.runs import (
     Run,
+    RunSummary,
     Checkpoint,
     CheckpointTagRequest,
     Job,
@@ -53,14 +57,18 @@ from app.schemas.runs import (
     TrainJobResponse,
     RunMetricsResponse,
     LogPage,
+    NotebookCreate,
+    NotebookResponse,
 )
 from app.schemas.eval import (
     EnvRef,
     EvalProtocol,
     EvalProtocolCreate,
+    EvalProtocolUpdate,
     EvalProtocolSummary,
     EvalProtocolVersionCreate,
     OpponentPool,
+    OpponentPoolRef,
     OpponentPoolCreate,
     OpponentPoolMembersUpdate,
     OpponentPoolSummary,
@@ -73,6 +81,7 @@ from app.schemas.eval import (
     MatrixResult,
 )
 from app.core.config import settings
+from app.services.algo_manifest import AlgoManifest
 from app.schemas.artifacts import ArtifactFile, ArtifactDownloadResponse, ReproBundleResponse
 from app.schemas.settings import (
     ExecutorSettings,
@@ -83,7 +92,7 @@ from app.schemas.settings import (
     TokenRotateResponse,
     RetentionApplyResponse,
 )
-from app.services import paths
+from app.services import paths, runtime_packages
 from app.schemas.webhooks import Webhook, WebhookCreate
 from app.schemas.datasets import Dataset, DatasetCreate
 from app.services.artifacts import artifact_service
@@ -95,8 +104,91 @@ from app.services.retention import apply_checkpoint_policy
 from app.services.schema_validation import validate_env_constraints, validate_json_schema
 from app.services.s3 import s3_client
 from app.services.datasets import dataset_service
+from app.schemas.models import (
+    RegisteredModel,
+    ModelVersion,
+    ModelCreate,
+    ModelVersionCreate,
+    ModelVersionUpdate,
+)
 
 router = APIRouter()
+
+# ... (other code)
+
+@router.get("/models", response_model=List[RegisteredModel])
+def list_models(db: Session = Depends(get_db)) -> List[RegisteredModel]:
+    models_list = db.query(models.RegisteredModel).all()
+    return [RegisteredModel.model_validate(m) for m in models_list]
+
+@router.post("/models", response_model=RegisteredModel, status_code=201)
+def create_model(payload: ModelCreate, db: Session = Depends(get_db)) -> RegisteredModel:
+    existing = db.query(models.RegisteredModel).filter(models.RegisteredModel.name == payload.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="model_name_exists")
+    
+    model = models.RegisteredModel(
+        name=payload.name,
+        description=payload.description
+    )
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+    return RegisteredModel.model_validate(model)
+
+@router.get("/models/{model_id}/versions", response_model=List[ModelVersion])
+def list_model_versions(model_id: str, db: Session = Depends(get_db)) -> List[ModelVersion]:
+    versions = (
+        db.query(models.ModelVersion)
+        .filter(models.ModelVersion.model_id == model_id)
+        .order_by(models.ModelVersion.version.desc())
+        .all()
+    )
+    return [ModelVersion.model_validate(v) for v in versions]
+
+@router.post("/models/{model_id}/versions", response_model=ModelVersion, status_code=201)
+def create_model_version(model_id: str, payload: ModelVersionCreate, db: Session = Depends(get_db)) -> ModelVersion:
+    model = db.query(models.RegisteredModel).filter(models.RegisteredModel.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="model_not_found")
+    
+    ckpt = db.query(models.Checkpoint).filter(models.Checkpoint.id == payload.checkpoint_id).first()
+    if not ckpt:
+        raise HTTPException(status_code=404, detail="checkpoint_not_found")
+
+    # Get next version number
+    last_version = (
+        db.query(models.ModelVersion)
+        .filter(models.ModelVersion.model_id == model_id)
+        .order_by(models.ModelVersion.version.desc())
+        .first()
+    )
+    next_ver = (last_version.version + 1) if last_version else 1
+    
+    version = models.ModelVersion(
+        model_id=model_id,
+        checkpoint_id=payload.checkpoint_id,
+        version=next_ver,
+        stage="None"
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    return ModelVersion.model_validate(version)
+
+@router.patch("/models/versions/{version_id}", response_model=ModelVersion)
+def update_model_version_stage(version_id: str, payload: ModelVersionUpdate, db: Session = Depends(get_db)) -> ModelVersion:
+    version = db.query(models.ModelVersion).filter(models.ModelVersion.id == version_id).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="model_version_not_found")
+    
+    if payload.stage not in ["None", "Staging", "Production", "Archived"]:
+        raise HTTPException(status_code=400, detail="invalid_stage")
+        
+    version.stage = payload.stage
+    db.commit()
+    db.refresh(version)
+    return ModelVersion.model_validate(version)
 
 
 def _next_version(existing: List[str]) -> str:
@@ -419,6 +511,106 @@ def _validate_entrypoint(entrypoint: str, import_check: bool = False) -> None:
             raise HTTPException(status_code=400, detail="entrypoint_not_callable")
 
 
+def _apply_algo_manifest(
+    algo_id: str,
+    version: Optional[str],
+    entrypoint: Optional[str],
+    metadata: Optional[dict],
+    *,
+    require_manifest: bool = True,
+) -> tuple[AlgoManifest, dict]:
+    meta = dict(metadata) if isinstance(metadata, dict) else {}
+    raw = meta.get("manifest")
+    if not raw:
+        if require_manifest:
+            raise HTTPException(status_code=400, detail="algo_manifest_required")
+        raise HTTPException(status_code=400, detail="algo_manifest_missing")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"algo_manifest_invalid:{exc}") from exc
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="algo_manifest_invalid")
+
+    deps = raw.get("dependencies")
+    if deps is None:
+        deps = raw.get("runtimePackages")
+    if isinstance(deps, str):
+        raw["dependencies"] = [deps]
+    elif deps is None:
+        raw["dependencies"] = []
+
+    try:
+        manifest = AlgoManifest.model_validate(raw)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"algo_manifest_invalid:{exc}") from exc
+
+    if manifest.algo_id and manifest.algo_id != algo_id:
+        raise HTTPException(status_code=400, detail="algo_manifest_algo_id_mismatch")
+    if version and manifest.version != version:
+        raise HTTPException(status_code=400, detail="algo_manifest_version_mismatch")
+    if entrypoint and manifest.entrypoint != entrypoint:
+        raise HTTPException(status_code=400, detail="algo_manifest_entrypoint_mismatch")
+    if not manifest.config_schema:
+        raise HTTPException(status_code=400, detail="algo_manifest_config_schema_missing")
+
+    meta["manifest"] = manifest.model_dump(by_alias=True)
+    if manifest.dependencies:
+        meta["runtimePackages"] = manifest.dependencies
+    return manifest, meta
+
+
+def _preflight_algo_entrypoint(entrypoint: str, metadata: Optional[dict], package: Optional[str]) -> None:
+    packages: List[str] = []
+    if package:
+        packages.append(str(package))
+    meta = metadata if isinstance(metadata, dict) else {}
+    runtime_pkgs = meta.get("runtimePackages")
+    if isinstance(runtime_pkgs, list):
+        packages.extend(str(pkg) for pkg in runtime_pkgs if pkg)
+
+    runtime_spec = None
+    if packages:
+        try:
+            runtime_spec = runtime_packages.prepare_runtime(packages)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"runtime_packages_failed:{exc}") from exc
+
+    python_paths: List[str] = []
+    if runtime_spec:
+        python_paths.append(str(runtime_spec.python_path))
+    python_path = meta.get("pythonPath")
+    if python_path:
+        python_paths.insert(0, str(python_path))
+    python_paths.append(str(paths.algo_store_dir()))
+
+    backend_root = Path(__file__).resolve().parents[2]
+    runner_dir = backend_root / "runner"
+    python_paths.append(str(backend_root))
+    python_paths.append(str(runner_dir))
+
+    original_path = list(sys.path)
+    try:
+        sys.path = python_paths + original_path
+        module_name, func_name = entrypoint.split(":", 1)
+        module = importlib.import_module(module_name)
+        func = getattr(module, func_name, None)
+        if not callable(func):
+            raise HTTPException(status_code=400, detail="entrypoint_not_callable")
+        sig = inspect.signature(func)
+        params = sig.parameters
+        has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        if "config" not in params and not has_kwargs:
+            raise HTTPException(status_code=400, detail="entrypoint_signature_invalid")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"entrypoint_preflight_failed:{exc}") from exc
+    finally:
+        sys.path = original_path
+
+
 def _materialize_algo_source(
     algo_id: str,
     version: str,
@@ -520,6 +712,77 @@ def _validate_env_ref(db: Session, env_ref: EnvRef) -> models.EnvVersion:
         if map_set_ids and env_ref.map_set not in map_set_ids:
             raise HTTPException(status_code=400, detail="map_set_not_found")
     return env_version
+
+
+def _validate_scenario_grid(value: Optional[Dict[str, Any]]) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="scenario_grid_must_be_object")
+    has_axes = "axes" in value
+    has_scenarios = "scenarios" in value
+    if not has_axes and not has_scenarios:
+        raise HTTPException(status_code=400, detail="scenario_grid_missing_axes_or_scenarios")
+    if has_axes:
+        axes = value.get("axes")
+        if not isinstance(axes, dict) or not axes:
+            raise HTTPException(status_code=400, detail="scenario_grid_axes_invalid")
+        for axis_name, axis_values in axes.items():
+            if not isinstance(axis_values, list) or len(axis_values) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"scenario_grid_axis_invalid:{axis_name}",
+                )
+    if has_scenarios:
+        scenarios = value.get("scenarios")
+        if not isinstance(scenarios, list) or len(scenarios) == 0:
+            raise HTTPException(status_code=400, detail="scenario_grid_scenarios_invalid")
+        for idx, scenario in enumerate(scenarios):
+            if not isinstance(scenario, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"scenario_grid_scenario_invalid:{idx}",
+                )
+
+
+def _validate_opponent_sampling(value: Optional[Dict[str, Any]]) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="opponent_sampling_must_be_object")
+    pool_id = value.get("pool_id", value.get("poolId"))
+    if pool_id is not None and not isinstance(pool_id, str):
+        raise HTTPException(status_code=400, detail="opponent_sampling_pool_id_invalid")
+    weights = value.get("weights")
+    if weights is not None:
+        if not isinstance(weights, dict):
+            raise HTTPException(status_code=400, detail="opponent_sampling_weights_invalid")
+        for key, weight in weights.items():
+            if not isinstance(weight, (int, float)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"opponent_sampling_weight_invalid:{key}",
+                )
+
+
+def _validate_opponent_pool_ref(db: Session, ref: OpponentPoolRef) -> None:
+    if not ref.pool_id:
+        raise HTTPException(status_code=400, detail="opponent_pool_id_missing")
+    pool = db.query(models.OpponentPool).filter(models.OpponentPool.id == ref.pool_id).first()
+    if not pool:
+        raise HTTPException(status_code=404, detail="opponent_pool_not_found")
+    if not ref.version:
+        raise HTTPException(status_code=400, detail="opponent_pool_version_missing")
+    version = (
+        db.query(models.OpponentPoolVersion)
+        .filter(
+            models.OpponentPoolVersion.pool_id == ref.pool_id,
+            models.OpponentPoolVersion.version == ref.version,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="opponent_pool_version_not_found")
 
 
 @router.post("/admin/envs", response_model=EnvVersion, status_code=201)
@@ -710,8 +973,21 @@ def create_algo_version(algo_id: str, payload: AlgoVersionCreate, db: Session = 
     if not algo:
         raise HTTPException(status_code=404, detail="algo_not_found")
     
-    if not payload.entrypoint:
-        raise HTTPException(status_code=400, detail="algo_entrypoint_missing")
+    manifest, manifest_meta = _apply_algo_manifest(
+        algo_id=algo_id,
+        version=payload.version,
+        entrypoint=payload.entrypoint,
+        metadata=payload.metadata,
+        require_manifest=True,
+    )
+    payload.entrypoint = manifest.entrypoint
+    payload.config_schema = manifest.config_schema
+    payload.default_config = manifest.default_config
+    payload.resource_profile = manifest.resource_profile
+    payload.env_constraints = manifest.env_constraints
+    payload.metadata = manifest_meta
+    if manifest.dependencies:
+        payload.package = manifest.dependencies[0]
 
     entrypoint, metadata = _materialize_algo_source(
         algo_id=algo_id,
@@ -720,10 +996,13 @@ def create_algo_version(algo_id: str, payload: AlgoVersionCreate, db: Session = 
         code=payload.code,
         metadata=payload.metadata,
     )
+    if isinstance(metadata.get("manifest"), dict):
+        metadata["manifest"]["entrypoint"] = entrypoint
     payload.entrypoint = entrypoint
     payload.metadata = metadata
 
     _validate_entrypoint(payload.entrypoint, settings.algo_entrypoint_validate)
+    _preflight_algo_entrypoint(payload.entrypoint, payload.metadata, payload.package)
     
     existing = (
         db.query(models.AlgoVersion)
@@ -772,9 +1051,40 @@ def update_algo_version(
         raise HTTPException(status_code=400, detail="algo_version_frozen")
 
     incoming_meta = payload.metadata if payload.metadata is not None else {}
-    if payload.code or incoming_meta:
-        base_meta = algo_version.metadata_ or {}
-        merged_meta = {**base_meta, **incoming_meta}
+    base_meta = algo_version.metadata_ or {}
+    merged_meta = {**base_meta, **incoming_meta}
+
+    manifest_required = any(
+        value is not None
+        for value in (
+            payload.entrypoint,
+            payload.code,
+            payload.metadata,
+            payload.config_schema,
+            payload.default_config,
+            payload.resource_profile,
+            payload.env_constraints,
+        )
+    )
+    if "manifest" in merged_meta:
+        manifest, merged_meta = _apply_algo_manifest(
+            algo_id=algo_id,
+            version=version,
+            entrypoint=payload.entrypoint or algo_version.entrypoint,
+            metadata=merged_meta,
+            require_manifest=manifest_required,
+        )
+        payload.entrypoint = manifest.entrypoint
+        payload.config_schema = manifest.config_schema
+        payload.default_config = manifest.default_config
+        payload.resource_profile = manifest.resource_profile
+        payload.env_constraints = manifest.env_constraints
+        if manifest.dependencies:
+            payload.package = manifest.dependencies[0]
+    elif manifest_required:
+        raise HTTPException(status_code=400, detail="algo_manifest_required")
+
+    if payload.code or incoming_meta or payload.entrypoint:
         entrypoint = payload.entrypoint or algo_version.entrypoint
         if not entrypoint:
             raise HTTPException(status_code=400, detail="algo_entrypoint_missing")
@@ -785,6 +1095,8 @@ def update_algo_version(
             code=payload.code,
             metadata=merged_meta,
         )
+        if isinstance(merged_meta.get("manifest"), dict):
+            merged_meta["manifest"]["entrypoint"] = entrypoint
         payload.entrypoint = entrypoint
         payload.metadata = merged_meta
 
@@ -809,6 +1121,13 @@ def update_algo_version(
         algo_version.active = payload.active
     if payload.frozen is not None:
         algo_version.frozen = payload.frozen
+
+    if manifest_required:
+        _preflight_algo_entrypoint(
+            payload.entrypoint or algo_version.entrypoint,
+            payload.metadata or algo_version.metadata_,
+            payload.package or algo_version.package,
+        )
 
     db.commit()
     db.refresh(algo_version)
@@ -1045,6 +1364,77 @@ def freeze_plugin_version(plugin_id: str, version: str, db: Session = Depends(ge
     return PluginVersion.model_validate(plugin_version)
 
 
+from app.schemas.tuning import TuningRequest, TuningResponse
+from app.services.tuning import tuning_service
+
+# ... (inside router)
+
+@router.post("/tuning-jobs", response_model=TuningResponse, status_code=201)
+def create_tuning_job(payload: TuningRequest) -> TuningResponse:
+    group_id = tuning_service.start_tuning(
+        project_id=payload.project_id,
+        study_name=payload.study_name,
+        algo_spec=payload.algo_spec,
+        env_spec=payload.env_spec,
+        search_space=payload.search_space,
+        n_trials=payload.n_trials,
+        metric=payload.metric,
+        direction=payload.direction
+    )
+    return TuningResponse(group_id=group_id, message="Tuning started in background")
+
+@router.post("/notebooks", response_model=NotebookResponse, status_code=201)
+def create_notebook(payload: NotebookCreate, db: Session = Depends(get_db)) -> NotebookResponse:
+    project = db.query(models.Project).filter(models.Project.id == payload.project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="project_not_found")
+    
+    run = models.Run(
+        project_id=project.id,
+        name=payload.name or f"notebook-{datetime.utcnow().strftime('%H%M%S')}",
+        type="NOTEBOOK",
+        status="PENDING",
+        algo="notebook",
+        env="system",
+        config={},
+        metrics={}
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    
+    job = models.Job(run_id=run.id, status="PENDING")
+    db.add(job)
+    db.commit()
+    
+    try:
+        info = job_manager.start_notebook(run.id)
+        return NotebookResponse(
+            run_id=run.id,
+            url=info.get("url", ""),
+            token=info.get("token", "")
+        )
+    except Exception as e:
+        db.delete(job)
+        db.delete(run)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"notebook_start_failed:{str(e)}")
+
+
+@router.delete("/notebooks/{run_id}", status_code=204)
+def delete_notebook(run_id: str, db: Session = Depends(get_db)) -> Response:
+    run = db.query(models.Run).filter(models.Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="notebook_not_found")
+    
+    job_manager.stop_notebook(run_id)
+    # Cleanup DB record
+    db.query(models.Job).filter(models.Job.run_id == run_id).delete()
+    db.delete(run)
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.post("/train-jobs", response_model=TrainJobResponse, status_code=201)
 def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) -> TrainJobResponse:
     env_version = (
@@ -1220,15 +1610,21 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
     return TrainJobResponse(run_id=run.id, job_id=job.id)
 
 
-@router.get("/runs", response_model=List[Run])
+@router.get("/runs", response_model=List[RunSummary])
 def list_runs(
     project_id: Optional[str] = None,
     type: Optional[str] = None,
     status: Optional[str] = None,
     group_id: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
     db: Session = Depends(get_db),
-) -> List[Run]:
-    query = db.query(models.Run)
+) -> List[RunSummary]:
+    query = db.query(models.Run).options(
+        defer(models.Run.config),
+        defer(models.Run.metrics),
+        defer(models.Run.git),
+    )
     if project_id:
         query = query.filter(models.Run.project_id == project_id)
     if type:
@@ -1237,8 +1633,30 @@ def list_runs(
         query = query.filter(models.Run.status == status)
     if group_id:
         query = query.filter(models.Run.group_id == group_id)
-    runs = query.order_by(models.Run.created.desc()).all()
-    return [Run.model_validate(r) for r in runs]
+    
+    offset = (page - 1) * page_size
+    runs = query.order_by(models.Run.created.desc()).offset(offset).limit(page_size).all()
+    # Manual construction to avoid Pydantic accessing deferred fields
+    return [
+        RunSummary(
+            id=r.id,
+            project_id=r.project_id,
+            name=r.name,
+            type=r.type,
+            status=r.status,
+            algo=r.algo,
+            env=r.env,
+            group_id=r.group_id,
+            duration=r.duration,
+            gpu=r.gpu,
+            created=r.created,
+            # Explicitly None to avoid loading deferred columns
+            config=None,
+            metrics=None,
+            git=None
+        )
+        for r in runs
+    ]
 
 
 @router.get("/runs/{run_id}", response_model=Run)
@@ -1248,6 +1666,44 @@ def get_run(run_id: str, db: Session = Depends(get_db)) -> Run:
         raise HTTPException(status_code=404, detail="run_not_found")
     metrics_service.sync_run_metrics(db, run)
     return Run.model_validate(run)
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+def delete_run(run_id: str, db: Session = Depends(get_db)) -> Response:
+    run = db.query(models.Run).filter(models.Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="run_not_found")
+    
+    # Delete associated jobs
+    db.query(models.Job).filter(models.Job.run_id == run_id).delete()
+    # Delete associated checkpoints
+    db.query(models.Checkpoint).filter(models.Checkpoint.run_id == run_id).delete()
+    # Delete associated artifacts
+    db.query(models.Artifact).filter(models.Artifact.run_id == run_id).delete()
+    
+    # Delete run
+    db.delete(run)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/runs/batch/delete", status_code=200)
+def delete_runs_batch(payload: List[str], db: Session = Depends(get_db)) -> dict:
+    run_ids = payload
+    if not run_ids:
+        return {"deleted": 0}
+    
+    # Delete associated jobs
+    db.query(models.Job).filter(models.Job.run_id.in_(run_ids)).delete(synchronize_session=False)
+    # Delete associated checkpoints
+    db.query(models.Checkpoint).filter(models.Checkpoint.run_id.in_(run_ids)).delete(synchronize_session=False)
+    # Delete associated artifacts
+    db.query(models.Artifact).filter(models.Artifact.run_id.in_(run_ids)).delete(synchronize_session=False)
+    
+    # Delete runs
+    result = db.query(models.Run).filter(models.Run.id.in_(run_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": result}
 
 
 @router.get("/runs/{run_id}/job", response_model=Job)
@@ -1354,14 +1810,22 @@ def list_eval_protocols(db: Session = Depends(get_db)) -> List[EvalProtocolSumma
                     "protocol_key": protocol.protocol_key,
                     "name": protocol.name,
                     "version": protocol.version,
-                    "env_id": protocol.env_id,
-                    "map": protocol.map_set or "",
-                    "eval_seeds": protocol.eval_seeds,
-                    "episodes": protocol.episodes_per_match,
-                    "frozen": protocol.frozen,
-                    "created": protocol.created_at,
+                "env_id": protocol.env_id,
+                "map": protocol.map_set or "",
+                "eval_seeds": protocol.eval_seeds,
+                "episodes": protocol.episodes_per_match,
+                "scenario_grid": protocol.scenario_grid,
+                "opponent_sampling": protocol.opponent_sampling,
+                "opponent_pool_ref": {
+                    "pool_id": protocol.opponent_pool_id,
+                    "version": protocol.opponent_pool_version,
                 }
-            )
+                if protocol.opponent_pool_id
+                else None,
+                "frozen": protocol.frozen,
+                "created": protocol.created_at,
+            }
+        )
         )
     return results
 
@@ -1369,6 +1833,10 @@ def list_eval_protocols(db: Session = Depends(get_db)) -> List[EvalProtocolSumma
 @router.post("/eval-protocols", response_model=EvalProtocol, status_code=201)
 def create_eval_protocol(payload: EvalProtocolCreate, db: Session = Depends(get_db)) -> EvalProtocol:
     _validate_env_ref(db, payload.env)
+    _validate_scenario_grid(payload.scenario_grid)
+    _validate_opponent_sampling(payload.opponent_sampling)
+    if payload.opponent_pool_ref:
+        _validate_opponent_pool_ref(db, payload.opponent_pool_ref)
     protocol_key = models.generate_id()
     protocol = models.EvalProtocol(
         protocol_key=protocol_key,
@@ -1381,6 +1849,8 @@ def create_eval_protocol(payload: EvalProtocolCreate, db: Session = Depends(get_
         episodes_per_match=payload.episodes_per_match,
         timeout_sec=payload.timeout_sec,
         metrics=payload.metrics,
+        scenario_grid=payload.scenario_grid,
+        opponent_sampling=payload.opponent_sampling,
         opponent_pool_id=payload.opponent_pool_ref.pool_id if payload.opponent_pool_ref else None,
         opponent_pool_version=payload.opponent_pool_ref.version if payload.opponent_pool_ref else None,
         frozen=False,
@@ -1403,6 +1873,8 @@ def create_eval_protocol(payload: EvalProtocolCreate, db: Session = Depends(get_
             "episodes_per_match": protocol.episodes_per_match,
             "timeout_sec": protocol.timeout_sec,
             "metrics": protocol.metrics,
+            "scenario_grid": protocol.scenario_grid,
+            "opponent_sampling": protocol.opponent_sampling,
             "opponent_pool_ref": {
                 "pool_id": protocol.opponent_pool_id,
                 "version": protocol.opponent_pool_version,
@@ -1435,6 +1907,84 @@ def get_eval_protocol(protocol_id: str, db: Session = Depends(get_db)) -> EvalPr
             "episodes_per_match": protocol.episodes_per_match,
             "timeout_sec": protocol.timeout_sec,
             "metrics": protocol.metrics,
+            "scenario_grid": protocol.scenario_grid,
+            "opponent_sampling": protocol.opponent_sampling,
+            "opponent_pool_ref": {
+                "pool_id": protocol.opponent_pool_id,
+                "version": protocol.opponent_pool_version,
+            }
+            if protocol.opponent_pool_id
+            else None,
+            "frozen": protocol.frozen,
+            "created_at": protocol.created_at,
+        }
+    )
+
+
+@router.patch("/eval-protocols/{protocol_id}", response_model=EvalProtocol)
+def update_eval_protocol(
+    protocol_id: str,
+    payload: EvalProtocolUpdate,
+    db: Session = Depends(get_db),
+) -> EvalProtocol:
+    protocol = db.query(models.EvalProtocol).filter(models.EvalProtocol.id == protocol_id).first()
+    if not protocol:
+        raise HTTPException(status_code=404, detail="protocol_not_found")
+    if protocol.frozen:
+        raise HTTPException(status_code=400, detail="protocol_frozen")
+
+    fields_set = payload.model_fields_set
+    if "env" in fields_set:
+        if payload.env is None:
+            raise HTTPException(status_code=400, detail="env_required")
+        _validate_env_ref(db, payload.env)
+        protocol.env_id = payload.env.env_id
+        protocol.env_version = payload.env.version
+        protocol.map_set = payload.env.map_set
+    if "name" in fields_set and payload.name is not None:
+        protocol.name = payload.name
+    if "eval_seeds" in fields_set and payload.eval_seeds is not None:
+        protocol.eval_seeds = payload.eval_seeds
+    if "episodes_per_match" in fields_set and payload.episodes_per_match is not None:
+        protocol.episodes_per_match = payload.episodes_per_match
+    if "timeout_sec" in fields_set:
+        protocol.timeout_sec = payload.timeout_sec
+    if "metrics" in fields_set:
+        protocol.metrics = payload.metrics
+    if "scenario_grid" in fields_set:
+        _validate_scenario_grid(payload.scenario_grid)
+        protocol.scenario_grid = payload.scenario_grid
+    if "opponent_sampling" in fields_set:
+        _validate_opponent_sampling(payload.opponent_sampling)
+        protocol.opponent_sampling = payload.opponent_sampling
+    if "opponent_pool_ref" in fields_set:
+        if payload.opponent_pool_ref:
+            _validate_opponent_pool_ref(db, payload.opponent_pool_ref)
+            protocol.opponent_pool_id = payload.opponent_pool_ref.pool_id
+            protocol.opponent_pool_version = payload.opponent_pool_ref.version
+        else:
+            protocol.opponent_pool_id = None
+            protocol.opponent_pool_version = None
+
+    db.commit()
+    db.refresh(protocol)
+    return EvalProtocol.model_validate(
+        {
+            "id": protocol.id,
+            "protocol_key": protocol.protocol_key,
+            "name": protocol.name,
+            "version": protocol.version,
+            "env": {
+                "env_id": protocol.env_id,
+                "version": protocol.env_version or "",
+                "map_set": protocol.map_set or "",
+            },
+            "eval_seeds": protocol.eval_seeds,
+            "episodes_per_match": protocol.episodes_per_match,
+            "timeout_sec": protocol.timeout_sec,
+            "metrics": protocol.metrics,
+            "scenario_grid": protocol.scenario_grid,
+            "opponent_sampling": protocol.opponent_sampling,
             "opponent_pool_ref": {
                 "pool_id": protocol.opponent_pool_id,
                 "version": protocol.opponent_pool_version,
@@ -1471,6 +2021,14 @@ def list_eval_protocol_versions(protocol_id: str, db: Session = Depends(get_db))
                     "map": protocol.map_set or "",
                     "eval_seeds": protocol.eval_seeds,
                     "episodes": protocol.episodes_per_match,
+                    "scenario_grid": protocol.scenario_grid,
+                    "opponent_sampling": protocol.opponent_sampling,
+                    "opponent_pool_ref": {
+                        "pool_id": protocol.opponent_pool_id,
+                        "version": protocol.opponent_pool_version,
+                    }
+                    if protocol.opponent_pool_id
+                    else None,
                     "frozen": protocol.frozen,
                     "created": protocol.created_at,
                 }
@@ -1490,6 +2048,12 @@ def create_eval_protocol_version(
         raise HTTPException(status_code=404, detail="protocol_not_found")
 
     payload = payload or EvalProtocolVersionCreate()
+    if payload.scenario_grid is not None:
+        _validate_scenario_grid(payload.scenario_grid)
+    if payload.opponent_sampling is not None:
+        _validate_opponent_sampling(payload.opponent_sampling)
+    if payload.opponent_pool_ref:
+        _validate_opponent_pool_ref(db, payload.opponent_pool_ref)
     existing_versions = (
         db.query(models.EvalProtocol.version)
         .filter(models.EvalProtocol.protocol_key == base.protocol_key)
@@ -1513,6 +2077,8 @@ def create_eval_protocol_version(
         episodes_per_match=payload.episodes_per_match or base.episodes_per_match,
         timeout_sec=payload.timeout_sec if payload.timeout_sec is not None else base.timeout_sec,
         metrics=payload.metrics if payload.metrics is not None else base.metrics,
+        scenario_grid=payload.scenario_grid if payload.scenario_grid is not None else base.scenario_grid,
+        opponent_sampling=payload.opponent_sampling if payload.opponent_sampling is not None else base.opponent_sampling,
         opponent_pool_id=payload.opponent_pool_ref.pool_id if payload.opponent_pool_ref else base.opponent_pool_id,
         opponent_pool_version=payload.opponent_pool_ref.version if payload.opponent_pool_ref else base.opponent_pool_version,
         frozen=False,
@@ -1860,6 +2426,27 @@ def submit_eval_job(payload: EvalJobRequest, db: Session = Depends(get_db)) -> E
         config={
             "protocolId": payload.protocol_id, 
             "policySnapshotId": payload.policy_snapshot_id,
+            "protocol": {
+                "name": protocol.name,
+                "version": protocol.version,
+                "env": {
+                    "envId": protocol.env_id,
+                    "version": protocol.env_version or "",
+                    "mapSet": protocol.map_set or "",
+                },
+                "evalSeeds": protocol.eval_seeds,
+                "episodesPerMatch": protocol.episodes_per_match,
+                "timeoutSec": protocol.timeout_sec,
+                "metrics": protocol.metrics,
+                "scenarioGrid": protocol.scenario_grid,
+                "opponentSampling": protocol.opponent_sampling,
+                "opponentPoolRef": {
+                    "poolId": protocol.opponent_pool_id,
+                    "version": protocol.opponent_pool_version,
+                }
+                if protocol.opponent_pool_id
+                else None,
+            },
             # We also need to inject the algo entrypoint info so the Runner knows what to load
             # The runner looks at `config.algo.entrypoint`.
             "algo": {

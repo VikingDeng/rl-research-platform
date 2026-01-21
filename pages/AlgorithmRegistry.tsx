@@ -1,8 +1,108 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { Algo, AlgoVersion } from '../types';
-import { Archive, Plus, Search, X, Cpu, Info } from 'lucide-react';
+import { Archive, Plus, Search, X, Cpu, Info, CheckSquare, Square } from 'lucide-react';
 import { useToast } from '../components/Toast';
+
+type AlgoManifest = {
+  name: string;
+  version: string;
+  entrypoint: string;
+  python: string;
+  dependencies: string[];
+  defaultConfig: Record<string, unknown>;
+  configSchema: Record<string, unknown>;
+  resourceProfile?: Record<string, unknown>;
+  envConstraints?: Record<string, unknown>;
+  algoId?: string;
+};
+
+const MANIFEST_TEMPLATE = `{
+  "name": "",
+  "version": "0.1.0",
+  "entrypoint": "module:function",
+  "python": "3.10",
+  "dependencies": [],
+  "default_config": {},
+  "config_schema": {
+    "type": "object"
+  },
+  "resource_profile": {},
+  "env_constraints": {}
+}`;
+
+const normalizeManifest = (raw: any): AlgoManifest => {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Manifest must be a JSON object.');
+  }
+  const name = raw.name ?? raw.algoId ?? raw.algo_id;
+  const version = raw.version;
+  const entrypoint = raw.entrypoint;
+  const python = raw.python;
+  const dependenciesRaw = raw.dependencies ?? raw.runtimePackages ?? [];
+  const dependencies = Array.isArray(dependenciesRaw)
+    ? dependenciesRaw.map((dep: unknown) => String(dep)).filter(Boolean)
+    : [String(dependenciesRaw)];
+  const defaultConfig = raw.defaultConfig ?? raw.default_config ?? {};
+  const configSchema = raw.configSchema ?? raw.config_schema ?? {};
+  const resourceProfile = raw.resourceProfile ?? raw.resource_profile ?? undefined;
+  const envConstraints = raw.envConstraints ?? raw.env_constraints ?? undefined;
+  const algoId = raw.algoId ?? raw.algo_id ?? undefined;
+
+  if (!name || !version || !entrypoint || !python) {
+    throw new Error('Manifest requires name, version, entrypoint, and python.');
+  }
+  if (!configSchema || Object.keys(configSchema).length === 0) {
+    throw new Error('config_schema is required.');
+  }
+  return {
+    name: String(name),
+    version: String(version),
+    entrypoint: String(entrypoint),
+    python: String(python),
+    dependencies,
+    defaultConfig: defaultConfig && typeof defaultConfig === 'object' ? defaultConfig : {},
+    configSchema: configSchema && typeof configSchema === 'object' ? configSchema : {},
+    resourceProfile: resourceProfile && typeof resourceProfile === 'object' ? resourceProfile : undefined,
+    envConstraints: envConstraints && typeof envConstraints === 'object' ? envConstraints : undefined,
+    algoId: algoId ? String(algoId) : undefined,
+  };
+};
+
+const parseManifest = (value: string) => {
+  if (!value.trim()) {
+    return { manifest: null as AlgoManifest | null, error: 'Manifest is required.', raw: null as any };
+  }
+  try {
+    const raw = JSON.parse(value);
+    const manifest = normalizeManifest(raw);
+    return { manifest, error: '', raw };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { manifest: null, error: detail, raw: null };
+  }
+};
+
+const buildManifestFromVersion = (version: AlgoVersion) => {
+  const meta = (version.metadata || {}) as Record<string, unknown>;
+  const runtimePackages = Array.isArray((meta as any).runtimePackages)
+    ? ((meta as any).runtimePackages as unknown[]).map(item => String(item))
+    : version.package
+      ? [version.package]
+      : [];
+  return {
+    name: version.algoId,
+    version: version.version,
+    entrypoint: version.entrypoint,
+    python: '3.10',
+    dependencies: runtimePackages,
+    default_config: version.defaultConfig || {},
+    config_schema: version.configSchema || { type: 'object' },
+    resource_profile: version.resourceProfile || {},
+    env_constraints: version.envConstraints || {},
+    algo_id: version.algoId,
+  };
+};
 
 export const AlgorithmRegistry: React.FC = () => {
   const { showToast } = useToast();
@@ -10,6 +110,7 @@ export const AlgorithmRegistry: React.FC = () => {
   const [algoVersions, setAlgoVersions] = useState<Record<string, AlgoVersion[]>>({});
   const [search, setSearch] = useState('');
   const [includeArchived, setIncludeArchived] = useState(false);
+  const [selectedAlgoIds, setSelectedAlgoIds] = useState<Set<string>>(new Set());
 
   const [isAlgoModalOpen, setIsAlgoModalOpen] = useState(false);
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
@@ -29,6 +130,7 @@ export const AlgorithmRegistry: React.FC = () => {
 
   const [newVersion, setNewVersion] = useState('');
   const [newEntrypoint, setNewEntrypoint] = useState('');
+  const [newManifest, setNewManifest] = useState(MANIFEST_TEMPLATE);
   const [newSourceType, setNewSourceType] = useState<'code' | 'path' | 'git' | 'package'>('code');
   const [newSourcePath, setNewSourcePath] = useState('');
   const [newGitRepo, setNewGitRepo] = useState('');
@@ -36,7 +138,6 @@ export const AlgorithmRegistry: React.FC = () => {
   const [newGitCommit, setNewGitCommit] = useState('');
   const [newGitSubdir, setNewGitSubdir] = useState('');
   const [newCode, setNewCode] = useState('');
-  const [newPackage, setNewPackage] = useState('');
   const [newArtifactUri, setNewArtifactUri] = useState('');
   const [newConfigSchema, setNewConfigSchema] = useState('{}');
   const [newDefaultConfig, setNewDefaultConfig] = useState('{}');
@@ -47,6 +148,7 @@ export const AlgorithmRegistry: React.FC = () => {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [editEntrypoint, setEditEntrypoint] = useState('');
+  const [editManifest, setEditManifest] = useState(MANIFEST_TEMPLATE);
   const [editSourceType, setEditSourceType] = useState<'none' | 'code' | 'path' | 'git'>('none');
   const [editSourcePath, setEditSourcePath] = useState('');
   const [editGitRepo, setEditGitRepo] = useState('');
@@ -54,7 +156,6 @@ export const AlgorithmRegistry: React.FC = () => {
   const [editGitCommit, setEditGitCommit] = useState('');
   const [editGitSubdir, setEditGitSubdir] = useState('');
   const [editCode, setEditCode] = useState('');
-  const [editPackage, setEditPackage] = useState('');
   const [editArtifactUri, setEditArtifactUri] = useState('');
   const [editConfigSchema, setEditConfigSchema] = useState('{}');
   const [editDefaultConfig, setEditDefaultConfig] = useState('{}');
@@ -84,6 +185,30 @@ export const AlgorithmRegistry: React.FC = () => {
     });
   }, [algos]);
 
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedAlgoIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedAlgoIds(next);
+  };
+
+  const handleBulkArchive = (archive: boolean) => {
+    const ids = Array.from(selectedAlgoIds);
+    if (ids.length === 0) return;
+    if (!window.confirm(`${archive ? 'Archive' : 'Restore'} ${ids.length} algorithms?`)) return;
+
+    Promise.all(
+      ids.map(id => archive ? api.archiveAlgo(id) : api.updateAlgo(id, { archived: false }))
+    ).then(() => {
+        showToast(`Successfully ${archive ? 'archived' : 'restored'} algorithms.`, 'success');
+        setSelectedAlgoIds(new Set());
+        return api.getAlgos({ includeArchived });
+    }).then(setAlgos)
+    .catch(err => {
+        showToast(`Bulk action failed: ${err}`, 'error');
+    });
+  };
+
   const parseJsonField = (value: string, label: string) => {
     if (!value.trim()) return undefined;
     try {
@@ -94,9 +219,13 @@ export const AlgorithmRegistry: React.FC = () => {
     }
   };
 
+  const newManifestParsed = useMemo(() => parseManifest(newManifest), [newManifest]);
+  const editManifestParsed = useMemo(() => parseManifest(editManifest), [editManifest]);
+
   const resetVersionFields = () => {
     setNewVersion('');
     setNewEntrypoint('');
+    setNewManifest(MANIFEST_TEMPLATE);
     setNewSourceType('code');
     setNewSourcePath('');
     setNewGitRepo('');
@@ -104,7 +233,6 @@ export const AlgorithmRegistry: React.FC = () => {
     setNewGitCommit('');
     setNewGitSubdir('');
     setNewCode('');
-    setNewPackage('');
     setNewArtifactUri('');
     setNewConfigSchema('{}');
     setNewDefaultConfig('{}');
@@ -117,6 +245,7 @@ export const AlgorithmRegistry: React.FC = () => {
 
   const resetEditFields = () => {
     setEditEntrypoint('');
+    setEditManifest(MANIFEST_TEMPLATE);
     setEditSourceType('none');
     setEditSourcePath('');
     setEditGitRepo('');
@@ -124,7 +253,6 @@ export const AlgorithmRegistry: React.FC = () => {
     setEditGitCommit('');
     setEditGitSubdir('');
     setEditCode('');
-    setEditPackage('');
     setEditArtifactUri('');
     setEditConfigSchema('{}');
     setEditDefaultConfig('{}');
@@ -191,8 +319,8 @@ export const AlgorithmRegistry: React.FC = () => {
   const handleCreateVersion = (e: React.FormEvent) => {
     e.preventDefault();
     if (!versionTarget) return;
-    if (!newVersion.trim() || !newEntrypoint.trim()) {
-      showToast('Version and entrypoint are required.', 'error');
+    if (!newManifestParsed.manifest) {
+      showToast(`Manifest invalid: ${newManifestParsed.error || 'required'}`, 'error');
       return;
     }
     if (newSourceType === 'path' && !newSourcePath.trim()) {
@@ -203,17 +331,14 @@ export const AlgorithmRegistry: React.FC = () => {
       showToast('Git repo is required for Git source.', 'error');
       return;
     }
-    const configSchema = parseJsonField(newConfigSchema, 'Config schema');
-    if (configSchema === null) return;
-    const defaultConfig = parseJsonField(newDefaultConfig, 'Default config');
-    if (defaultConfig === null) return;
-    const resourceProfile = parseJsonField(newResourceProfile, 'Resource profile');
-    if (resourceProfile === null) return;
-    const envConstraints = parseJsonField(newEnvConstraints, 'Env constraints');
-    if (envConstraints === null) return;
+    const configSchema = newManifestParsed.manifest.configSchema;
+    const defaultConfig = newManifestParsed.manifest.defaultConfig;
+    const resourceProfile = newManifestParsed.manifest.resourceProfile;
+    const envConstraints = newManifestParsed.manifest.envConstraints;
     const metadata = parseJsonField(newMetadata, 'Metadata');
     if (metadata === null) return;
     const finalMetadata: Record<string, unknown> = metadata ? { ...metadata } : {};
+    finalMetadata.manifest = newManifestParsed.raw;
     if (newSourceType === 'path') {
       finalMetadata.path = newSourcePath.trim();
       delete (finalMetadata as any).git;
@@ -230,10 +355,10 @@ export const AlgorithmRegistry: React.FC = () => {
 
     api
       .createAlgoVersion(versionTarget.id, {
-        version: newVersion.trim(),
-        entrypoint: newEntrypoint.trim(),
+        version: newManifestParsed.manifest.version,
+        entrypoint: newManifestParsed.manifest.entrypoint,
         code: newSourceType === 'code' ? newCode.trim() || undefined : undefined,
-        package: newPackage.trim() || undefined,
+        package: newManifestParsed.manifest.dependencies[0] || undefined,
         artifactUri: newArtifactUri.trim() || undefined,
         configSchema,
         defaultConfig,
@@ -270,6 +395,11 @@ export const AlgorithmRegistry: React.FC = () => {
     setEditEnvConstraints(JSON.stringify(version.envConstraints || {}, null, 2));
     setEditMetadata(JSON.stringify(version.metadata || {}, null, 2));
     const meta = (version.metadata || {}) as Record<string, any>;
+    if (meta?.manifest) {
+      setEditManifest(JSON.stringify(meta.manifest, null, 2));
+    } else {
+      setEditManifest(JSON.stringify(buildManifestFromVersion(version), null, 2));
+    }
     if (meta?.git && typeof meta.git === 'object') {
       setEditSourceType('git');
       setEditGitRepo(meta.git.repo || '');
@@ -305,8 +435,8 @@ export const AlgorithmRegistry: React.FC = () => {
       showToast('Frozen versions cannot be edited.', 'error');
       return;
     }
-    if (!editEntrypoint.trim()) {
-      showToast('Entrypoint is required.', 'error');
+    if (!editManifestParsed.manifest) {
+      showToast(`Manifest invalid: ${editManifestParsed.error || 'required'}`, 'error');
       return;
     }
     if (editSourceType === 'path' && !editSourcePath.trim()) {
@@ -317,17 +447,14 @@ export const AlgorithmRegistry: React.FC = () => {
       showToast('Git repo is required for Git source.', 'error');
       return;
     }
-    const configSchema = parseJsonField(editConfigSchema, 'Config schema');
-    if (configSchema === null) return;
-    const defaultConfig = parseJsonField(editDefaultConfig, 'Default config');
-    if (defaultConfig === null) return;
-    const resourceProfile = parseJsonField(editResourceProfile, 'Resource profile');
-    if (resourceProfile === null) return;
-    const envConstraints = parseJsonField(editEnvConstraints, 'Env constraints');
-    if (envConstraints === null) return;
+    const configSchema = editManifestParsed.manifest.configSchema;
+    const defaultConfig = editManifestParsed.manifest.defaultConfig;
+    const resourceProfile = editManifestParsed.manifest.resourceProfile;
+    const envConstraints = editManifestParsed.manifest.envConstraints;
     const metadata = parseJsonField(editMetadata, 'Metadata');
     if (metadata === null) return;
     const finalMetadata: Record<string, unknown> = metadata ? { ...metadata } : {};
+    finalMetadata.manifest = editManifestParsed.raw;
     if (editSourceType === 'path') {
       finalMetadata.path = editSourcePath.trim();
       delete (finalMetadata as any).git;
@@ -346,9 +473,9 @@ export const AlgorithmRegistry: React.FC = () => {
 
     api
       .updateAlgoVersion(editTarget.algoId, editTarget.version, {
-        entrypoint: editEntrypoint.trim(),
+        entrypoint: editManifestParsed.manifest.entrypoint,
         code: editSourceType === 'code' ? editCode.trim() || undefined : undefined,
-        package: editPackage.trim() || undefined,
+        package: editManifestParsed.manifest.dependencies[0] || undefined,
         artifactUri: editArtifactUri.trim() || undefined,
         configSchema,
         defaultConfig,
@@ -410,7 +537,7 @@ export const AlgorithmRegistry: React.FC = () => {
   const filteredAlgos = algos.filter(a => a.name.toLowerCase().includes(search.toLowerCase()) || a.id.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative pb-20">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Algorithm Registry</h1>
@@ -450,10 +577,21 @@ export const AlgorithmRegistry: React.FC = () => {
         {filteredAlgos.map(algo => {
           const versions = algoVersions[algo.id] || [];
           const latest = versions.length > 0 ? versions[versions.length - 1] : undefined;
+          const isSelected = selectedAlgoIds.has(algo.id);
           return (
-            <div key={algo.id} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden">
+            <div 
+                key={algo.id} 
+                className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden relative ${isSelected ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/10' : 'border-gray-200'}`}
+            >
+              <button 
+                onClick={() => toggleSelect(algo.id)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-blue-600 z-10"
+              >
+                  {isSelected ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
+              </button>
+              
               <div className="p-6 flex-1">
-                <div className="flex justify-between items-start mb-4">
+                <div className="flex justify-between items-start mb-4 pr-8">
                   <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
                     <Cpu className="w-6 h-6" />
                   </div>
@@ -501,6 +639,31 @@ export const AlgorithmRegistry: React.FC = () => {
           );
         })}
       </div>
+
+      {selectedAlgoIds.size > 0 && (
+          <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-6 animate-in slide-in-from-bottom duration-200 z-50">
+              <span className="font-medium text-sm">{selectedAlgoIds.size} selected</span>
+              <div className="h-4 w-px bg-gray-700"></div>
+              <button 
+                onClick={() => handleBulkArchive(true)}
+                className="flex items-center text-sm font-bold text-gray-300 hover:text-white"
+              >
+                  <Archive className="w-4 h-4 mr-2" /> Archive
+              </button>
+              <button 
+                onClick={() => handleBulkArchive(false)}
+                className="flex items-center text-sm font-bold text-gray-300 hover:text-white"
+              >
+                  <Archive className="w-4 h-4 mr-2 rotate-180" /> Restore
+              </button>
+              <button 
+                onClick={() => setSelectedAlgoIds(new Set())}
+                className="text-gray-400 hover:text-gray-200 text-sm"
+              >
+                  Clear
+              </button>
+          </div>
+      )}
 
       {isAlgoModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -571,14 +734,31 @@ export const AlgorithmRegistry: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm</label>
                 <div className="text-sm text-gray-600">{versionTarget.name}</div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm Manifest (required)</label>
+                <textarea
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-44 font-mono text-xs"
+                  value={newManifest}
+                  onChange={e => setNewManifest(e.target.value)}
+                />
+                {newManifestParsed.error && (
+                  <p className="text-xs text-red-600 mt-1">{newManifestParsed.error}</p>
+                )}
+                {!newManifestParsed.error && newManifestParsed.manifest && (
+                  <p className="text-xs text-green-700 mt-1">
+                    Manifest OK: {newManifestParsed.manifest.name} v{newManifestParsed.manifest.version}
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Version</label>
                   <input
                     type="text"
                     required
+                    readOnly={!!newManifestParsed.manifest}
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    value={newVersion}
+                    value={newManifestParsed.manifest?.version ?? newVersion}
                     onChange={e => setNewVersion(e.target.value)}
                     placeholder="e.g., 1.0.0"
                   />
@@ -600,8 +780,9 @@ export const AlgorithmRegistry: React.FC = () => {
                 <input
                   type="text"
                   required
+                  readOnly={!!newManifestParsed.manifest}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  value={newEntrypoint}
+                  value={newManifestParsed.manifest?.entrypoint ?? newEntrypoint}
                   onChange={e => setNewEntrypoint(e.target.value)}
                   placeholder="e.g., myalgo.train:main"
                 />
@@ -700,14 +881,14 @@ export const AlgorithmRegistry: React.FC = () => {
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Package (optional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Dependencies</label>
                   <input
                     type="text"
-                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    value={newPackage}
-                    onChange={e => setNewPackage(e.target.value)}
-                    placeholder="e.g., mappo==1.2.0"
+                    readOnly
+                    className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
+                    value={(newManifestParsed.manifest?.dependencies || []).join(', ') || 'None'}
                   />
+                  <p className="text-xs text-gray-500 mt-1">Derived from manifest.dependencies.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Artifact URI (optional)</label>
@@ -735,16 +916,26 @@ export const AlgorithmRegistry: React.FC = () => {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Config Schema (JSON)</label>
                     <textarea
+                      readOnly={!!newManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                      value={newConfigSchema}
+                      value={
+                        newManifestParsed.manifest
+                          ? JSON.stringify(newManifestParsed.manifest.configSchema || {}, null, 2)
+                          : newConfigSchema
+                      }
                       onChange={e => setNewConfigSchema(e.target.value)}
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Default Config (JSON)</label>
                     <textarea
+                      readOnly={!!newManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                      value={newDefaultConfig}
+                      value={
+                        newManifestParsed.manifest
+                          ? JSON.stringify(newManifestParsed.manifest.defaultConfig || {}, null, 2)
+                          : newDefaultConfig
+                      }
                       onChange={e => setNewDefaultConfig(e.target.value)}
                     />
                   </div>
@@ -752,16 +943,26 @@ export const AlgorithmRegistry: React.FC = () => {
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Resource Profile (JSON)</label>
                       <textarea
+                        readOnly={!!newManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                        value={newResourceProfile}
+                        value={
+                          newManifestParsed.manifest
+                            ? JSON.stringify(newManifestParsed.manifest.resourceProfile || {}, null, 2)
+                            : newResourceProfile
+                        }
                         onChange={e => setNewResourceProfile(e.target.value)}
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Env Constraints (JSON)</label>
                       <textarea
+                        readOnly={!!newManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                        value={newEnvConstraints}
+                        value={
+                          newManifestParsed.manifest
+                            ? JSON.stringify(newManifestParsed.manifest.envConstraints || {}, null, 2)
+                            : newEnvConstraints
+                        }
                         onChange={e => setNewEnvConstraints(e.target.value)}
                       />
                     </div>
@@ -841,6 +1042,7 @@ export const AlgorithmRegistry: React.FC = () => {
                       <th className="px-4 py-2">Entrypoint</th>
                       <th className="px-4 py-2">Package</th>
                       <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2">Manifest</th>
                       <th className="px-4 py-2">Frozen</th>
                       <th className="px-4 py-2 text-right">Actions</th>
                     </tr>
@@ -856,6 +1058,13 @@ export const AlgorithmRegistry: React.FC = () => {
                             version.active === false ? 'bg-gray-100 text-gray-600 border-gray-200' : 'bg-green-50 text-green-700 border-green-200'
                           }`}>
                             {version.active === false ? 'Disabled' : 'Active'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                            version.metadata?.manifest ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}>
+                            {version.metadata?.manifest ? 'Manifest' : 'Legacy'}
                           </span>
                         </td>
                         <td className="px-4 py-2">
@@ -884,7 +1093,7 @@ export const AlgorithmRegistry: React.FC = () => {
                     ))}
                     {(algoVersions[manageAlgo.id] || []).length === 0 && (
                       <tr>
-                        <td className="px-4 py-4 text-sm text-gray-400" colSpan={6}>No versions registered.</td>
+                        <td className="px-4 py-4 text-sm text-gray-400" colSpan={7}>No versions registered.</td>
                       </tr>
                     )}
                   </tbody>
@@ -905,14 +1114,31 @@ export const AlgorithmRegistry: React.FC = () => {
               </button>
             </div>
             <form onSubmit={handleUpdateVersion} className="p-6 flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm Manifest (required)</label>
+                <textarea
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-44 font-mono text-xs"
+                  value={editManifest}
+                  onChange={e => setEditManifest(e.target.value)}
+                />
+                {editManifestParsed.error && (
+                  <p className="text-xs text-red-600 mt-1">{editManifestParsed.error}</p>
+                )}
+                {!editManifestParsed.error && editManifestParsed.manifest && (
+                  <p className="text-xs text-green-700 mt-1">
+                    Manifest OK: {editManifestParsed.manifest.name} v{editManifestParsed.manifest.version}
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Entrypoint</label>
                   <input
                     type="text"
                     required
+                    readOnly={!!editManifestParsed.manifest}
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    value={editEntrypoint}
+                    value={editManifestParsed.manifest?.entrypoint ?? editEntrypoint}
                     onChange={e => setEditEntrypoint(e.target.value)}
                   />
                 </div>
@@ -930,13 +1156,14 @@ export const AlgorithmRegistry: React.FC = () => {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Package</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Dependencies</label>
                   <input
                     type="text"
-                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    value={editPackage}
-                    onChange={e => setEditPackage(e.target.value)}
+                    readOnly
+                    className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
+                    value={(editManifestParsed.manifest?.dependencies || []).join(', ') || 'None'}
                   />
+                  <p className="text-xs text-gray-500 mt-1">Derived from manifest.dependencies.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Artifact URI</label>
@@ -1045,16 +1272,26 @@ export const AlgorithmRegistry: React.FC = () => {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Config Schema (JSON)</label>
                     <textarea
+                      readOnly={!!editManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                      value={editConfigSchema}
+                      value={
+                        editManifestParsed.manifest
+                          ? JSON.stringify(editManifestParsed.manifest.configSchema || {}, null, 2)
+                          : editConfigSchema
+                      }
                       onChange={e => setEditConfigSchema(e.target.value)}
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Default Config (JSON)</label>
                     <textarea
+                      readOnly={!!editManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                      value={editDefaultConfig}
+                      value={
+                        editManifestParsed.manifest
+                          ? JSON.stringify(editManifestParsed.manifest.defaultConfig || {}, null, 2)
+                          : editDefaultConfig
+                      }
                       onChange={e => setEditDefaultConfig(e.target.value)}
                     />
                   </div>
@@ -1062,16 +1299,26 @@ export const AlgorithmRegistry: React.FC = () => {
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Resource Profile (JSON)</label>
                       <textarea
+                        readOnly={!!editManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                        value={editResourceProfile}
+                        value={
+                          editManifestParsed.manifest
+                            ? JSON.stringify(editManifestParsed.manifest.resourceProfile || {}, null, 2)
+                            : editResourceProfile
+                        }
                         onChange={e => setEditResourceProfile(e.target.value)}
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Env Constraints (JSON)</label>
                       <textarea
+                        readOnly={!!editManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
-                        value={editEnvConstraints}
+                        value={
+                          editManifestParsed.manifest
+                            ? JSON.stringify(editManifestParsed.manifest.envConstraints || {}, null, 2)
+                            : editEnvConstraints
+                        }
                         onChange={e => setEditEnvConstraints(e.target.value)}
                       />
                     </div>

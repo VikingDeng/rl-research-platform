@@ -46,7 +46,7 @@ export const api = {
   createProject: async (payload: { name: string; description?: string; tags?: string[]; gitRepo?: string; gitBranch?: string }): Promise<Project> =>
     apiClient.createProject(payload),
   deleteProject: async (id: string): Promise<void> => apiClient.deleteProject(id),
-  getRuns: async (): Promise<Run[]> => apiClient.listRuns(),
+  getRuns: async (params?: { projectId?: string; type?: string; status?: string; groupId?: string; page?: number; pageSize?: number }): Promise<Run[]> => apiClient.listRuns(params),
   getRunById: async (id: string): Promise<Run> => apiClient.getRun(id),
   getRunJob: async (runId: string) => apiClient.getRunJob(runId),
   getRunMetrics: async (runId: string, params?: { keys?: string[]; fromStep?: number }): Promise<RunMetricsResponse> =>
@@ -60,6 +60,9 @@ export const api = {
   getCheckpoints: async (runId: string): Promise<Checkpoint[]> => apiClient.listCheckpoints(runId),
   tagCheckpoint: async (runId: string, checkpointId: string, payload: { tag: string }): Promise<Checkpoint> =>
     apiClient.tagCheckpoint(runId, checkpointId, payload),
+  deleteRun: async (runId: string): Promise<void> => apiClient.deleteRun(runId),
+  deleteRunsBatch: async (runIds: string[]): Promise<{ deleted: number }> => apiClient.deleteRunsBatch(runIds),
+
   getTemplates: async (params?: { projectId?: string; includeArchived?: boolean }): Promise<Template[]> =>
     apiClient.listTemplates(params),
   getTemplateById: async (id: string): Promise<TemplateDetail> => apiClient.getTemplate(id),
@@ -179,7 +182,22 @@ export const api = {
     env: { envId: string; version: string; mapSet: string };
     evalSeeds: number[];
     episodesPerMatch: number;
+    scenarioGrid?: Record<string, unknown>;
+    opponentSampling?: Record<string, unknown>;
+    opponentPoolRef?: { poolId: string; version: string };
   }) => apiClient.createEvalProtocol(payload),
+  updateProtocol: async (
+    protocolId: string,
+    payload: {
+      name?: string;
+      env?: { envId: string; version: string; mapSet: string };
+      evalSeeds?: number[];
+      episodesPerMatch?: number;
+      scenarioGrid?: Record<string, unknown> | null;
+      opponentSampling?: Record<string, unknown> | null;
+      opponentPoolRef?: { poolId: string; version: string } | null;
+    },
+  ) => apiClient.updateEvalProtocol(protocolId, payload),
   createProtocolVersion: async (
     protocolId: string,
     payload?: {
@@ -188,6 +206,9 @@ export const api = {
       env?: { envId: string; version: string; mapSet: string };
       evalSeeds?: number[];
       episodesPerMatch?: number;
+      scenarioGrid?: Record<string, unknown>;
+      opponentSampling?: Record<string, unknown>;
+      opponentPoolRef?: { poolId: string; version: string };
     },
   ) => apiClient.createEvalProtocolVersion(protocolId, payload),
   listProtocolVersions: async (protocolId: string): Promise<EvalProtocol[]> => apiClient.listEvalProtocolVersions(protocolId),
@@ -242,4 +263,15 @@ export const api = {
   getArtifacts: async (runId: string): Promise<ArtifactFile[]> => apiClient.listRunArtifacts(runId),
   getArtifactDownloadUrl: async (artifactId: string) => apiClient.getArtifactDownloadUrl(artifactId),
   getReproBundle: async (runId: string) => apiClient.getReproBundle(runId),
+
+  // Notebooks
+  createNotebook: async (projectId: string, name?: string) => apiClient.createNotebook(projectId, name),
+  deleteNotebook: async (runId: string) => apiClient.deleteNotebook(runId),
+
+  // Model Registry
+  getModels: async (): Promise<RegisteredModel[]> => apiClient.listModels(),
+  createModel: async (name: string, description?: string): Promise<RegisteredModel> => apiClient.createModel({ name, description }),
+  getModelVersions: async (modelId: string): Promise<ModelVersion[]> => apiClient.listModelVersions(modelId),
+  registerModelVersion: async (modelId: string, checkpointId: string): Promise<ModelVersion> => apiClient.createModelVersion(modelId, { checkpointId }),
+  updateModelStage: async (versionId: string, stage: string): Promise<ModelVersion> => apiClient.updateModelVersionStage(versionId, stage),
 };

@@ -7,6 +7,9 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 from pathlib import Path
 import numpy as np
+import random
+
+from algorithms.eval_utils import expand_scenario_grid, sample_opponent
 
 def evaluate(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None, env_config=None, output_dir=None):
     """
@@ -51,8 +54,14 @@ def evaluate(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=No
     maps = env_cfg.get("maps", ["CartPole-v1"])
     env_id = maps[0] if maps else "CartPole-v1"
     
+    protocol = config.get("protocol", {})
+    scenario_grid = protocol.get("scenarioGrid") or config.get("scenarioGrid")
+    opponent_sampling = protocol.get("opponentSampling") or config.get("opponentSampling")
+    opponent_pool_ref = protocol.get("opponentPoolRef")
+
     episodes = int(config.get("episodesPerMatch", 10))
     seeds = config.get("evalSeeds", [0])
+    scenarios = expand_scenario_grid(scenario_grid)
     
     # 2. Setup Environment
     # We use DummyVecEnv for SB3
@@ -93,48 +102,54 @@ def evaluate(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=No
     print(f"[Eval] Starting {episodes} episodes on {env_id}...")
     
     total_steps = 0
-    for seed in seeds:
-        # Set seed
-        # SB3 `predict` doesn't take seed directly, we set env seed
-        vec_env.seed(seed)
-        obs = vec_env.reset()
-        
-        for i in range(episodes):
-            done = False
-            episode_reward = 0.0
-            episode_steps = 0
-            
-            while not done:
-                action, _ = model.predict(obs, deterministic=True)
-                obs, reward, dones, info = vec_env.step(action)
-                episode_reward += reward[0]
-                episode_steps += 1
-                total_steps += 1
-                
-                if dones[0]:
-                    done = True
-                    obs = vec_env.reset()
-            
-            # Simple "Win" criteria for CartPole (e.g., > 195)
-            # For general envs, we can't assume.
-            win = 1 if episode_reward >= 195.0 and "CartPole" in env_id else 0
-            
-            result_entry = {
-                "seed": seed,
-                "episode": i,
-                "return": float(episode_reward),
-                "length": episode_steps,
-                "win": win
-            }
-            results.append(result_entry)
-            
-            # Live Metrics Log
-            if metrics_path:
-                 with open(metrics_path, "a", encoding="utf-8") as handle:
-                    handle.write(json.dumps({
-                        "step": total_steps, 
-                        "values": {"eval_return": float(episode_reward), "eval_len": episode_steps}
-                    }) + "\n")
+    for scenario_idx, scenario in enumerate(scenarios):
+        for seed in seeds:
+            rng = random.Random(seed + scenario_idx * 1000)
+            # Set seed
+            # SB3 `predict` doesn't take seed directly, we set env seed
+            vec_env.seed(seed + scenario_idx * 1000)
+            obs = vec_env.reset()
+
+            for i in range(episodes):
+                done = False
+                episode_reward = 0.0
+                episode_steps = 0
+                opponent = sample_opponent(opponent_sampling, opponent_pool_ref, rng)
+
+                while not done:
+                    action, _ = model.predict(obs, deterministic=True)
+                    obs, reward, dones, info = vec_env.step(action)
+                    episode_reward += reward[0]
+                    episode_steps += 1
+                    total_steps += 1
+
+                    if dones[0]:
+                        done = True
+                        obs = vec_env.reset()
+
+                # Simple "Win" criteria for CartPole (e.g., > 195)
+                # For general envs, we can't assume.
+                win = 1 if episode_reward >= 195.0 and "CartPole" in env_id else 0
+
+                result_entry = {
+                    "seed": seed,
+                    "episode": i,
+                    "return": float(episode_reward),
+                    "length": episode_steps,
+                    "win": win,
+                    "scenarioId": scenario_idx,
+                    "scenario": scenario,
+                    "opponent": opponent,
+                }
+                results.append(result_entry)
+
+                # Live Metrics Log
+                if metrics_path:
+                    with open(metrics_path, "a", encoding="utf-8") as handle:
+                        handle.write(json.dumps({
+                            "step": total_steps,
+                            "values": {"eval_return": float(episode_reward), "eval_len": episode_steps}
+                        }) + "\n")
 
     # 5. Summary
     returns = [r["return"] for r in results]
@@ -146,8 +161,18 @@ def evaluate(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=No
         "min": float(np.min(returns)),
         "max": float(np.max(returns)),
         "count": len(returns),
-        "winRate": float(np.mean(wins))
+        "winRate": float(np.mean(wins)),
+        "scenarioCount": len(scenarios),
     }
+
+    if scenarios and scenarios != [None]:
+        scenario_stats = {}
+        for r in results:
+            key = str(r.get("scenarioId", 0))
+            scenario_stats.setdefault(key, []).append(r["return"])
+        summary["perScenarioMean"] = {
+            key: float(np.mean(vals)) for key, vals in scenario_stats.items() if vals
+        }
     
     # Write Artifacts
     eval_dir = Path(output_dir) / "eval"

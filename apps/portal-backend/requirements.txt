@@ -14,3 +14,4 @@ testcontainers==4.8.1
 minio==7.2.15
 jsonschema==4.23.0
 tensorboard
+jupyterlab

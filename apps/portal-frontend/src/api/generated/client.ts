@@ -43,6 +43,7 @@ import {
   EvalProtocolSummary,
   EvalProtocol,
   EvalProtocolCreate,
+  EvalProtocolUpdate,
   EvalProtocolVersionCreate,
   OpponentPoolSummary,
   OpponentPool,
@@ -248,6 +249,8 @@ export const createApiClient = (options: ApiClientOptions = {}) => {
     listCheckpoints: (runId: string) => request<Checkpoint[]>(`/runs/${runId}/checkpoints`),
     tagCheckpoint: (runId: string, checkpointId: string, body: CheckpointTagRequest) =>
       requestJson<Checkpoint>(`/runs/${runId}/checkpoints/${checkpointId}/tag`, 'POST', body),
+    deleteRun: (runId: string) => request<void>(`/runs/${runId}`, { method: 'DELETE' }),
+    deleteRunsBatch: (runIds: string[]) => requestJson<{ deleted: number }>('/runs/batch/delete', 'POST', runIds),
 
     // Jobs
     getJob: (jobId: string) => request<Job>(`/jobs/${jobId}`),
@@ -263,6 +266,8 @@ export const createApiClient = (options: ApiClientOptions = {}) => {
     createEvalProtocol: (body: EvalProtocolCreate) => requestJson<EvalProtocol>('/eval-protocols', 'POST', body),
     getEvalProtocol: (protocolId: string) => request<EvalProtocol>(`/eval-protocols/${protocolId}`),
     deleteEvalProtocol: (protocolId: string) => request<void>(`/eval-protocols/${protocolId}`, { method: 'DELETE' }),
+    updateEvalProtocol: (protocolId: string, body: EvalProtocolUpdate) =>
+      requestJson<EvalProtocol>(`/eval-protocols/${protocolId}`, 'PATCH', body),
     listEvalProtocolVersions: (protocolId: string) =>
       request<EvalProtocolSummary[]>(`/eval-protocols/${protocolId}/versions`),
     createEvalProtocolVersion: (protocolId: string, body?: EvalProtocolVersionCreate) =>
@@ -304,5 +309,16 @@ export const createApiClient = (options: ApiClientOptions = {}) => {
 
     // Webhooks
     createWebhook: (body: WebhookCreate) => requestJson<Webhook>('/admin/webhooks', 'POST', body),
+
+    // Notebooks
+    createNotebook: (projectId: string, name?: string) => requestJson<{ runId: string; url: string; token: string }>('/notebooks', 'POST', { projectId, name }),
+    deleteNotebook: (runId: string) => request<void>(`/notebooks/${runId}`, { method: 'DELETE' }),
+
+    // Model Registry
+    listModels: () => request<RegisteredModel[]>('/models'),
+    createModel: (body: ModelCreate) => requestJson<RegisteredModel>('/models', 'POST', body),
+    listModelVersions: (modelId: string) => request<ModelVersion[]>(`/models/${modelId}/versions`),
+    createModelVersion: (modelId: string, body: ModelVersionCreate) => requestJson<ModelVersion>(`/models/${modelId}/versions`, 'POST', body),
+    updateModelVersionStage: (versionId: string, stage: string) => requestJson<ModelVersion>(`/models/versions/${versionId}`, 'PATCH', { stage }),
   };
 };

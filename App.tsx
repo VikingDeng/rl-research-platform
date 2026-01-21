@@ -15,6 +15,8 @@ import { TemplateLibrary } from './pages/TemplateLibrary';
 import { EnvironmentRegistry } from './pages/EnvironmentRegistry';
 import { AlgorithmRegistry } from './pages/AlgorithmRegistry';
 import { PluginRegistry } from './pages/PluginRegistry';
+import { ModelRegistry } from './pages/ModelRegistry';
+import { Workspaces } from './pages/Workspaces';
 import { Login } from './pages/Login';
 import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider } from './components/Toast.tsx';
@@ -44,6 +46,8 @@ const App: React.FC = () => {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/projects" element={<Navigate to="/" replace />} />
                     <Route path="/projects/:id" element={<ProjectDetail />} />
+                    <Route path="/workspaces" element={<Workspaces />} />
+                    <Route path="/models" element={<ModelRegistry />} />
                     <Route path="/create-job" element={<CreateJob />} />
                     <Route path="/runs/:id" element={<RunDetail />} />
                     

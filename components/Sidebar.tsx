@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, PlusCircle, Box, Activity, Grid3X3, FileStack, Settings, Database, BarChart2, List, Cpu, Layers, Package, LogOut, BookOpen } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, Box, Activity, Grid3X3, FileStack, Settings, Database, BarChart2, List, Cpu, Layers, Package, LogOut, BookOpen, Terminal } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const navigate = useNavigate();
@@ -56,6 +56,10 @@ export const Sidebar: React.FC = () => {
           <Layers className="w-4 h-4 mr-3" />
           Current Project
         </NavLink>
+        <NavLink to="/workspaces" className={navClass}>
+          <Terminal className="w-4 h-4 mr-3" />
+          Workspaces
+        </NavLink>
         <NavLink to="/create-job" className={navClass}>
           <PlusCircle className="w-4 h-4 mr-3" />
           New Job
@@ -76,6 +80,10 @@ export const Sidebar: React.FC = () => {
         <NavLink to="/matrix" className={navClass}>
           <Grid3X3 className="w-4 h-4 mr-3" />
           Matrix & Cross-Play
+        </NavLink>
+        <NavLink to="/models" className={navClass}>
+          <Package className="w-4 h-4 mr-3" />
+          Model Registry
         </NavLink>
 
         {/* Registries (The user's requested consolidation) */}

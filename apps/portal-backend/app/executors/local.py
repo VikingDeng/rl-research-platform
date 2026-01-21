@@ -58,6 +58,12 @@ class LocalExecutor:
             algo_cfg = job.config.get("algo")
             if isinstance(algo_cfg, dict) and algo_cfg.get("package"):
                 packages.append(str(algo_cfg["package"]))
+            if isinstance(algo_cfg, dict):
+                meta = algo_cfg.get("metadata")
+                if isinstance(meta, dict):
+                    runtime_pkgs = meta.get("runtimePackages")
+                    if isinstance(runtime_pkgs, list):
+                        packages.extend(str(pkg) for pkg in runtime_pkgs if pkg)
         runtime_spec = runtime_packages.prepare_runtime(packages)
 
         locks = self._gpu_allocator.acquire(job.gpus)
@@ -185,6 +191,68 @@ class LocalExecutor:
             self._locks[backend_ref] = locks
 
         return backend_ref
+
+    def submit_notebook(self, run_id: str, working_dir: Path, port: int) -> str:
+        """
+        Starts a Jupyter Lab instance.
+        """
+        token = uuid.uuid4().hex
+        cmd = [
+            sys.executable,
+            "-m",
+            "jupyter",
+            "lab",
+            "--no-browser",
+            f"--ip=0.0.0.0",
+            f"--port={port}",
+            f"--NotebookApp.token={token}",
+            f"--notebook-dir={str(working_dir)}",
+            "--NotebookApp.base_url=/notebooks/proxy/" + run_id
+        ]
+        
+        log_path = working_dir / "jupyter.log"
+        log_handle = open(log_path, "a", encoding="utf-8")
+        
+        env = os.environ.copy()
+        # Add backend/runner to path so notebooks can import app modules
+        backend_root = Path(__file__).resolve().parents[2]
+        algo_store = paths.algo_store_dir()
+        python_paths = [str(backend_root), str(backend_root / "runner"), str(algo_store)]
+        existing = env.get("PYTHONPATH")
+        if existing:
+            python_paths.append(existing)
+        env["PYTHONPATH"] = os.pathsep.join(python_paths)
+
+        backend_ref = f"notebook-{run_id}"
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(working_dir),
+                env=env,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception:
+            log_handle.close()
+            raise
+        
+        # We don't close log_handle immediately? Actually Popen uses the file descriptor. 
+        # But we should close it in parent process.
+        log_handle.close()
+
+        with self._lock:
+            self._processes[backend_ref] = process
+            self._metadata[backend_ref] = {
+                "url": f"http://localhost:{port}/notebooks/proxy/{run_id}?token={token}",
+                "token": token,
+                "port": str(port)
+            }
+        
+        return backend_ref
+
+    def get_notebook_info(self, backend_ref: str) -> Dict[str, str]:
+        with self._lock:
+            return self._metadata.get(backend_ref, {})
 
     def status(self, backend_ref: str) -> str:
         with self._lock:

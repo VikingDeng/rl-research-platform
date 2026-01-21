@@ -332,9 +332,9 @@ export interface Run {
   duration?: string;
   gpu?: number;
   created: string;
-  config: Record<string, unknown>;
+  config?: Record<string, unknown>;
   git?: GitInfo;
-  metrics: RunMetrics;
+  metrics?: RunMetrics;
 }
 
 export interface CheckpointMetrics {
@@ -454,6 +454,9 @@ export interface EvalProtocolSummary {
   map: string;
   evalSeeds: number[];
   episodes: number;
+  scenarioGrid?: Record<string, unknown>;
+  opponentSampling?: Record<string, unknown>;
+  opponentPoolRef?: OpponentPoolRef;
   frozen: boolean;
   created?: string;
 }
@@ -468,6 +471,8 @@ export interface EvalProtocol {
   episodesPerMatch: number;
   timeoutSec?: number;
   metrics?: string[];
+  scenarioGrid?: Record<string, unknown>;
+  opponentSampling?: Record<string, unknown>;
   opponentPoolRef?: OpponentPoolRef;
   frozen: boolean;
   createdAt?: string;
@@ -481,6 +486,8 @@ export interface EvalProtocolCreate {
   episodesPerMatch: number;
   timeoutSec?: number;
   metrics?: string[];
+  scenarioGrid?: Record<string, unknown>;
+  opponentSampling?: Record<string, unknown>;
   opponentPoolRef?: OpponentPoolRef;
 }
 
@@ -492,6 +499,20 @@ export interface EvalProtocolVersionCreate {
   episodesPerMatch?: number;
   timeoutSec?: number;
   metrics?: string[];
+  scenarioGrid?: Record<string, unknown>;
+  opponentSampling?: Record<string, unknown>;
+  opponentPoolRef?: OpponentPoolRef;
+}
+
+export interface EvalProtocolUpdate {
+  name?: string;
+  env?: EnvRef;
+  evalSeeds?: number[];
+  episodesPerMatch?: number;
+  timeoutSec?: number;
+  metrics?: string[];
+  scenarioGrid?: Record<string, unknown> | null;
+  opponentSampling?: Record<string, unknown> | null;
   opponentPoolRef?: OpponentPoolRef;
 }
 
@@ -668,4 +689,30 @@ export interface Webhook {
   events: string[];
   active?: boolean;
   createdAt?: string;
+}
+
+export interface RegisteredModel {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelVersion {
+  id: string;
+  modelId: string;
+  checkpointId: string;
+  version: number;
+  stage: string;
+  createdAt: string;
+}
+
+export interface ModelCreate {
+  name: string;
+  description?: string;
+}
+
+export interface ModelVersionCreate {
+  checkpointId: string;
 }
