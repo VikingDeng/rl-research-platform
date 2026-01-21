@@ -63,14 +63,15 @@ fi
 mkdir -p "$RUNS_DIR"
 cd "$BACKEND_DIR"
 
-if [ ! -z "$CONDA_DEFAULT_ENV" ]; then
-    echo "Using existing Conda environment: $CONDA_DEFAULT_ENV"
-else
+# Force local venv to avoid Python 3.13 conflicts in Conda base
+# if [ ! -z "$CONDA_DEFAULT_ENV" ]; then
+#     echo "Using existing Conda environment: $CONDA_DEFAULT_ENV"
+# else
     if [ ! -d ".venv" ]; then
         python3 -m venv .venv
     fi
     source .venv/bin/activate
-fi
+# fi
 
 echo "Ensuring dependencies..."
 pip install "setuptools<66" wheel > /dev/null 2>&1
