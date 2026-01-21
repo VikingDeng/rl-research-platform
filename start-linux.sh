@@ -73,10 +73,11 @@ fi
 
 echo "Ensuring dependencies..."
 pip install "setuptools<66" wheel > /dev/null 2>&1
-# Pre-install safe gym to avoid build errors from legacy deps
+# Pre-install safe gym
 pip install "gym==0.26.2" > /dev/null 2>&1
-pip install --no-build-isolation -r requirements.txt > /dev/null
-pip install --no-build-isolation -r runner/requirements.txt tensorboard > /dev/null
+# Install with constraints to prevent ray from pulling broken gym
+pip install --no-build-isolation -c ../../constraints.txt -r requirements.txt > /dev/null
+pip install --no-build-isolation -c ../../constraints.txt -r runner/requirements.txt tensorboard > /dev/null
 
 # 2. Database Initialization & Seeding (Direct Python Logic)
 echo -e "${GREEN}[2/4] Initializing Database & Seeding...${NC}"

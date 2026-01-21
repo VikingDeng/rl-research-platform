@@ -6,6 +6,9 @@ supersuit==3.9.2
 stable-baselines3==2.2.1
 imitation>=0.4.0
 
+# Legacy Compatibility
+gym==0.26.2
+
 # Distributed
 ray[rllib]>=2.9.0
 
