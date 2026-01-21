@@ -9,8 +9,8 @@ imitation>=0.4.0
 # Legacy Compatibility
 gym==0.26.2
 
-# Distributed
-ray[rllib]>=2.9.0
+# Distributed (Handled manually in start-linux.sh to bypass dependency hell)
+# ray[rllib]>=2.9.0
 
 # Frameworks & Utils
 torch>=2.1.2
