@@ -1,15 +1,16 @@
+# Modern RL Stack (Gymnasium-based)
 ray[rllib]>=2.9.0
 torch>=2.1.2
-gymnasium>=0.29.1
-pettingzoo>=1.24.3
-pygame>=2.5.2
-supersuit>=3.9.0
+gymnasium==0.29.1
+pettingzoo==1.24.3
+pygame==2.5.2
+supersuit==3.9.2
 numpy<2.0.0
 pandas
 pyyaml
 requests
 pydantic
-stable-baselines3>=2.2.1
+stable-baselines3==2.2.1
 shimmy>=1.3.0
 imitation>=0.4.0
 psutil
