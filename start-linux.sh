@@ -72,6 +72,7 @@ else
 fi
 
 echo "Ensuring dependencies..."
+pip install "setuptools<66" wheel > /dev/null 2>&1
 pip install -r requirements.txt > /dev/null
 pip install -r runner/requirements.txt tensorboard > /dev/null
 
