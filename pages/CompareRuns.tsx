@@ -24,6 +24,7 @@ const flattenObject = (obj: any, prefix = ''): Record<string, any> => {
 export const CompareRuns: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [allRuns, setAllRuns] = useState<Run[]>([]);
+  const [runDetails, setRunDetails] = useState<Record<string, Run>>({});
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [selectedMetric, setSelectedMetric] = useState<MetricKey>('returnMean');
   const [viewMode, setViewMode] = useState<ViewMode>('timeseries');
@@ -33,25 +34,17 @@ export const CompareRuns: React.FC = () => {
   const [paramKeys, setParamKeys] = useState<string[]>([]);
   
   useEffect(() => {
-    api.getRuns().then(runs => {
+    // Fetch summaries first
+    api.getRuns({ pageSize: 100 }).then(runs => {
         setAllRuns(runs);
         
-        // Extract all available config keys
-        const keys = new Set<string>();
-        runs.forEach(r => {
-            if (r.config) Object.keys(r.config).forEach(k => keys.add(k));
-        });
-        setParamKeys(Array.from(keys));
-
         // Auto-select logic
         const urlRuns = searchParams.get('runs');
         if (urlRuns) {
             const ids = urlRuns.split(',');
             setSelectedRunIds(ids);
-            // If many runs selected via URL, hint at correlation view if they seem like a sweep
             if (ids.length > 3) setViewMode('correlation');
         } else {
-            // Default behavior if no URL params
             const sweepRuns = runs.filter(r => r.name.includes('Sweep'));
             if (sweepRuns.length > 0) {
                 setSelectedRunIds(sweepRuns.map(r => r.id));
@@ -64,6 +57,28 @@ export const CompareRuns: React.FC = () => {
     });
   }, [searchParams]);
 
+  // Fetch full details for selected runs
+  useEffect(() => {
+      const missingIds = selectedRunIds.filter(id => !runDetails[id]);
+      if (missingIds.length === 0) return;
+
+      Promise.all(missingIds.map(id => api.getRunById(id))).then(fetchedRuns => {
+          setRunDetails(prev => {
+              const next = { ...prev };
+              fetchedRuns.forEach(r => next[r.id] = r);
+              
+              // Update param keys based on new configs
+              const keys = new Set<string>(paramKeys);
+              fetchedRuns.forEach(r => {
+                  if (r.config) Object.keys(r.config).forEach(k => keys.add(k));
+              });
+              setParamKeys(Array.from(keys));
+              
+              return next;
+          });
+      });
+  }, [selectedRunIds]);
+
   const toggleRun = (id: string) => {
     if (selectedRunIds.includes(id)) {
       setSelectedRunIds(selectedRunIds.filter(r => r !== id));
@@ -72,16 +87,20 @@ export const CompareRuns: React.FC = () => {
     }
   };
 
-  const selectedRuns = allRuns.filter(r => selectedRunIds.includes(r.id));
+  // Use full details if available, else summary (which might lack metrics)
+  const selectedRuns = selectedRunIds.map(id => runDetails[id] || allRuns.find(r => r.id === id)).filter(Boolean) as Run[];
   
   // --- Time Series Data Prep ---
   const timeSeriesData: any[] = [];
   if (selectedRuns.length > 0 && viewMode === 'timeseries') {
-      const baseSteps = selectedRuns[0].metrics[selectedMetric]?.map(m => m.step) || [];
+      // Find a run with metrics loaded to establish base steps
+      const baseRun = selectedRuns.find(r => r.metrics?.[selectedMetric]?.length);
+      const baseSteps = baseRun?.metrics?.[selectedMetric]?.map(m => m.step) || [];
+      
       baseSteps.forEach((step, idx) => {
           const point: any = { step };
           selectedRuns.forEach(r => {
-              const val = r.metrics[selectedMetric]?.[idx]?.value;
+              const val = r.metrics?.[selectedMetric]?.[idx]?.value;
               if (val !== undefined) point[r.name] = val;
           });
           timeSeriesData.push(point);
@@ -90,7 +109,7 @@ export const CompareRuns: React.FC = () => {
 
   // --- Scatter Data Prep ---
   const scatterData = selectedRuns.map(r => {
-      const finalMetric = r.metrics[selectedMetric];
+      const finalMetric = r.metrics?.[selectedMetric];
       const lastValue = finalMetric && finalMetric.length > 0 ? finalMetric[finalMetric.length - 1].value : 0;
       return {
           id: r.id,
