@@ -73,8 +73,8 @@ fi
 
 echo "Ensuring dependencies..."
 pip install "setuptools<66" wheel > /dev/null 2>&1
-pip install -r requirements.txt > /dev/null
-pip install -r runner/requirements.txt tensorboard > /dev/null
+pip install --no-build-isolation -r requirements.txt > /dev/null
+pip install --no-build-isolation -r runner/requirements.txt tensorboard > /dev/null
 
 # 2. Database Initialization & Seeding (Direct Python Logic)
 echo -e "${GREEN}[2/4] Initializing Database & Seeding...${NC}"
