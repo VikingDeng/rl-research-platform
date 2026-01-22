@@ -17,6 +17,7 @@ OREKIT_CACHE="$ROOT_DIR/.local/orbitzoo/orekit-data.zip"
 ORBITZOO_ROOT="$ROOT_DIR/.local/orbitzoo"
 ORBITZOO_REPO_DEFAULT="$ORBITZOO_ROOT/orbit_zoo"
 ORBITZOO_GIT_URL_DEFAULT="https://github.com/orbitzoo/orbit_zoo.git"
+ORBITZOO_OREKIT_DIR_DEFAULT="$ORBITZOO_ROOT/orekit-data"
 MINICONDA_ROOT="$ROOT_DIR/.local/miniconda"
 RUNS_DIR="$ROOT_DIR/.local/runs"
 NODE_DIR="$ROOT_DIR/.local/node"
@@ -146,6 +147,9 @@ else
     fi
     export ORBITZOO_REPO="${ORBITZOO_REPO:-$ORBITZOO_REPO_DEFAULT}"
 fi
+
+export ORBITZOO_OREKIT_DATA_DIR="${ORBITZOO_OREKIT_DATA_DIR:-$ORBITZOO_OREKIT_DIR_DEFAULT}"
+export OREKIT_DATA_PATH="${OREKIT_DATA_PATH:-$ORBITZOO_OREKIT_DATA_DIR}"
 
 # If OrbitZoo setup wrote a runner python path, use it for all runs.
 if [ -f "$ORBIT_PY_FILE" ]; then

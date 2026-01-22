@@ -117,10 +117,29 @@ def _write_shim(module_name: str, repo_path: Path) -> None:
 # Auto-generated OrbitZoo shim
 import importlib.util
 import sys
+import os
 from pathlib import Path
 
 REPO_PATH = Path(r\"{repo_path}\").resolve()
 SRC_PATH = REPO_PATH / \"src\"
+
+def _setup_orekit():
+    try:
+        import orekit  # type: ignore
+        try:
+            orekit.initVM()
+        except Exception:
+            pass
+        from orekit.pyhelpers import setup_orekit_data_path  # type: ignore
+        data_dir = os.environ.get(\"ORBITZOO_OREKIT_DATA_DIR\") or os.environ.get(\"OREKIT_DATA_PATH\")
+        if not data_dir:
+            default_dir = REPO_PATH.parent / \"orekit-data\"
+            if default_dir.exists():
+                data_dir = str(default_dir)
+        if data_dir and Path(data_dir).exists():
+            setup_orekit_data_path(str(data_dir))
+    except Exception:
+        pass
 
 def _find_candidate():
     if not SRC_PATH.exists():
@@ -156,6 +175,7 @@ def _load_module(path: Path):
     spec.loader.exec_module(module)
     return module
 
+_setup_orekit()
 candidate = _find_candidate()
 if candidate is None:
     raise ImportError(\"OrbitZoo shim could not locate a Python module in src/\")
