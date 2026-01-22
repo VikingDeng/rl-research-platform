@@ -134,23 +134,19 @@ def _setup_orekit():
         from orekit.pyhelpers import setup_orekit_data_path  # type: ignore
         data_dir = os.environ.get(\"ORBITZOO_OREKIT_DATA_DIR\") or os.environ.get(\"OREKIT_DATA_PATH\")
         data_zip = os.environ.get(\"ORBITZOO_OREKIT_DATA_ZIP\")
+        def _looks_like_data(root: Path) -> bool:
+            return (root / \"Earth-Orientation-Parameters\").exists() and (root / \"TimeScales\").exists()
+
         def _find_data(root: Path):
             if not root.exists():
                 return None
-            marker = root / \"Earth-Orientation-Parameters\"
-            if marker.exists():
+            if _looks_like_data(root):
                 return root
-            for candidate in root.glob(\"*\"):
-                if candidate.is_dir():
-                    marker = candidate / \"Earth-Orientation-Parameters\"
-                    if marker.exists():
-                        return candidate
-            # one more level deep
-            for candidate in root.glob(\"*/*\"):
-                if candidate.is_dir():
-                    marker = candidate / \"Earth-Orientation-Parameters\"
-                    if marker.exists():
-                        return candidate
+            # walk a few levels for a folder containing required dirs
+            for candidate in root.rglob(\"TimeScales\"):
+                parent = candidate.parent
+                if _looks_like_data(parent):
+                    return parent
             return None
 
         if not data_dir:
@@ -158,9 +154,12 @@ def _setup_orekit():
             found = _find_data(default_root)
             if found:
                 data_dir = str(found)
-        if data_dir and Path(data_dir).exists():
-            setup_orekit_data_path(str(data_dir))
-            return
+        if data_dir:
+            data_path = Path(data_dir)
+            found = _find_data(data_path)
+            if found:
+                setup_orekit_data_path(str(found))
+                return
         if data_zip and Path(data_zip).exists():
             setup_orekit_data_path(str(Path(data_zip)))
     except Exception:
@@ -269,14 +268,18 @@ from pathlib import Path
 root = Path(os.environ.get("OREKIT_DIR", ".")).resolve()
 extract_root = root / "orekit-data"
 
+def looks_like_data(base: Path) -> bool:
+    return (base / "Earth-Orientation-Parameters").exists() and (base / "TimeScales").exists()
+
 def find_data_dir(base: Path):
     if not base.exists():
         return None
-    if (base / "Earth-Orientation-Parameters").exists():
+    if looks_like_data(base):
         return base
-    for child in base.iterdir():
-        if child.is_dir() and (child / "Earth-Orientation-Parameters").exists():
-            return child
+    for child in base.rglob("TimeScales"):
+        parent = child.parent
+        if looks_like_data(parent):
+            return parent
     return None
 
 data_dir = find_data_dir(extract_root) or find_data_dir(root)
