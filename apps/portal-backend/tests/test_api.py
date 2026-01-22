@@ -70,9 +70,8 @@ def ensure_env_version(client, env_id: str = "smac", version: str = "1.0.0"):
         "envId": env_id,
         "version": version,
         "apiMode": "gym",
-        "entrypoint": "myenvs.smac:make_env",
-        "package": "smac==1.0.0",
-        "mapSets": [{"id": "easy", "maps": ["3s5z"]}],
+        "entrypoint": "app.envs.dummy:make_env",
+        "mapSets": [{"id": "easy", "maps": ["CartPole-v1"]}],
         "active": True,
     }
     res = client.post("/api/v1/admin/envs", json=payload)
@@ -89,7 +88,7 @@ def create_eval_protocol(client, name="EvalProto"):
         "episodesPerMatch": 4,
     }
     res = client.post("/api/v1/eval-protocols", json=payload)
-    assert res.status_code == 201
+    assert res.status_code == 201, res.text
     return res.json()
 
 
@@ -180,11 +179,11 @@ def test_train_job_creates_run_and_job(client):
         "templateVersionId": version["id"],
         "env": {"envId": "smac", "version": "1.0.0", "mapSet": "easy"},
         "algo": {"algoId": "mappo", "algoVersionId": version["algoVersionId"]},
-        "train": {"totalEnvSteps": 1000, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
+        "train": {"totalEnvSteps": 100, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
         "resources": {"gpus": 1},
     }
     res = client.post("/api/v1/train-jobs", json=payload)
-    assert res.status_code == 201
+    assert res.status_code == 201, res.text
     data = res.json()
 
     run_res = client.get(f"/api/v1/runs/{data['runId']}")
@@ -205,7 +204,7 @@ def test_train_job_end_to_end(client):
         "templateVersionId": version["id"],
         "env": {"envId": "smac", "version": "1.0.0", "mapSet": "easy"},
         "algo": {"algoId": "mappo", "algoVersionId": version["algoVersionId"]},
-        "train": {"totalEnvSteps": 1000, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
+        "train": {"totalEnvSteps": 100, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
         "resources": {"gpus": 1},
     }
     res = client.post("/api/v1/train-jobs", json=payload)
@@ -243,7 +242,7 @@ def test_list_runs_filter(client):
         "templateVersionId": version["id"],
         "env": {"envId": "smac", "version": "1.0.0", "mapSet": "easy"},
         "algo": {"algoId": "mappo", "algoVersionId": version["algoVersionId"]},
-        "train": {"totalEnvSteps": 1000, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
+        "train": {"totalEnvSteps": 100, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
         "resources": {"gpus": 1},
     }
     client.post("/api/v1/train-jobs", json=payload)
@@ -415,7 +414,7 @@ def test_repro_bundle_and_artifact_download(client, db_session):
         "templateVersionId": version["id"],
         "env": {"envId": "smac", "version": "1.0.0", "mapSet": "easy"},
         "algo": {"algoId": "mappo", "algoVersionId": version["algoVersionId"]},
-        "train": {"totalEnvSteps": 1000, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
+        "train": {"totalEnvSteps": 100, "rolloutLen": 10, "batchSize": 32, "lr": 0.0003},
         "resources": {"gpus": 1},
     }
     res = client.post("/api/v1/train-jobs", json=payload)

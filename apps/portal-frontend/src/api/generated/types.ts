@@ -30,8 +30,10 @@ export interface User {
 export interface ExecutorSettings {
   mode: string;
   localGpuCount: number;
+  localExecutorMode: string;
   determinedMasterUrl?: string | null;
   determinedConnected?: boolean | null;
+  determinedMock?: boolean | null;
   scheduler?: string | null;
 }
 
@@ -375,12 +377,14 @@ export interface TrainJobEnv {
   version: string;
   mapSet: string;
   wrappers?: string[];
+  [key: string]: any;
 }
 
 export interface TrainJobAlgo {
   algoId: string;
   algoVersionId: string;
   preset?: string;
+  [key: string]: any;
 }
 
 export interface TrainJobAgent {
@@ -397,6 +401,7 @@ export interface TrainJobTrain {
   entropyCoef?: number;
   gamma?: number;
   gaeLambda?: number;
+  [key: string]: any;
 }
 
 export interface ResourceSpec {
@@ -423,6 +428,7 @@ export interface TrainJobRequest {
   algo: TrainJobAlgo;
   agent?: TrainJobAgent;
   train: TrainJobTrain;
+  network?: Record<string, unknown>;
   resources: ResourceSpec;
   seedSet?: number[];
   plugin?: PluginRef;

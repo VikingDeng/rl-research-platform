@@ -57,11 +57,33 @@ npm install && npm run build
 ```bash
 # 1. 赋予权限
 chmod +x start-linux.sh
+chmod +x start-mac.sh
 
-# 2. 启动平台 (使用 Python venv + SQLite)
+# 2. 启动平台（一键安装 + 测试）
+# Linux:
 ./start-linux.sh
+# macOS:
+./start-mac.sh
 ```
 访问地址: **http://localhost:8000**
+
+---
+
+### start 脚本做了什么
+`start-*.sh` 已经整合为全自动流程，会：
+
+* 构建前端 + 生成 OpenAPI 客户端
+* 创建 venv 并安装后端/runner 依赖
+* 安装 Miniconda（用户态）+ OrbitZoo + Orekit 数据
+* 安装常用环境扩展（Box2D/MuJoCo/MiniGrid/PettingZoo）
+* 初始化数据库 + 预置默认与大型 MARL 环境
+* 运行后端测试
+* 启动 TensorBoard + 后端服务
+
+需要跳过耗时步骤时可用：
+```bash
+SEED_MARL_ENVS=0 RUN_TESTS=0 ./start-linux.sh
+```
 
 ---
 
@@ -76,7 +98,8 @@ rl-research-platform/
 │   └── portal-frontend/      # React 前端 (Vite)
 ├── scripts/
 │   ├── seed-full.sh          # 数据库初始化 (预设环境与算法)
-│   └── start-linux.sh        # 统一启动脚本
+│   ├── start-linux.sh        # 统一启动脚本 (Linux)
+│   └── start-mac.sh          # 统一启动脚本 (macOS)
 ├── docs/                     # 文档目录
 └── requirements.txt          # 全局依赖
 ```

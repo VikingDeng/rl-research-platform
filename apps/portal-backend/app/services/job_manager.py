@@ -2,6 +2,8 @@ import json
 import queue
 import threading
 from datetime import datetime
+from urllib.parse import urlparse
+import httpx
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -20,6 +22,7 @@ from app.services.retention import apply_checkpoint_policy
 from app.services.runner_bundle import runner_bundle_service
 from app.services.status import can_transition
 from app.services import paths
+from app.services.webhook_service import dispatch_webhooks
 
 
 class JobManager:
@@ -27,6 +30,9 @@ class JobManager:
         # PriorityQueue stores tuples: (priority_score, job_id). Lowest score popped first.
         # We map High(3) -> -3, Normal(2) -> -2, Low(1) -> -1.
         self._queue: "queue.PriorityQueue[tuple[int, str]]" = queue.PriorityQueue()
+        self._max_workers = max(1, settings.job_max_workers)
+        self._queue_max_size = max(0, settings.job_queue_max_size)
+        self._default_timeout_sec = max(0, settings.job_default_timeout_sec)
         executor_mode = settings.executor_mode.lower()
         if executor_mode == "determined":
             self._executor = DeterminedExecutor()
@@ -35,7 +41,7 @@ class JobManager:
             self._executor = LocalExecutor()
             self._executor_name = "local"
         self._stop = threading.Event()
-        self._dispatcher = threading.Thread(target=self._dispatch_loop, daemon=True)
+        self._workers: list[threading.Thread] = []
         self._lock = threading.Lock()
         self._active: dict[str, str] = {}
 
@@ -43,11 +49,15 @@ class JobManager:
         if self._stop.is_set():
             self._stop.clear()
         started = False
-        if not self._dispatcher.is_alive():
-            self._dispatcher = threading.Thread(target=self._dispatch_loop, daemon=True)
-            self._dispatcher.start()
+        if not any(worker.is_alive() for worker in self._workers):
+            self._workers = []
+            for _ in range(self._max_workers):
+                worker = threading.Thread(target=self._dispatch_loop, daemon=True)
+                worker.start()
+                self._workers.append(worker)
             started = True
         if enqueue_pending and started:
+            self._recover_incomplete()
             self._enqueue_pending()
 
     def stop(self) -> None:
@@ -66,15 +76,66 @@ class JobManager:
         finally:
             db.close()
 
+    def _recover_incomplete(self) -> None:
+        # Recover local RUNNING jobs after restart by re-queueing them as PENDING.
+        if settings.executor_mode.lower() != "local":
+            return
+        db = SessionLocal()
+        try:
+            jobs = db.query(models.Job).filter(models.Job.status == "RUNNING").all()
+            for job in jobs:
+                run = db.query(models.Run).filter(models.Run.id == job.run_id).first()
+                if not run:
+                    continue
+                # If executor is Determined, skip recovery.
+                if job.executor and job.executor.lower() == "determined":
+                    continue
+                # Best-effort terminate orphaned local process.
+                try:
+                    run_dir = paths.run_root(run.id)
+                    pid_file = run_dir / "runner.pid"
+                    if pid_file.exists():
+                        import os
+                        import signal
+                        pid = int(pid_file.read_text().strip() or "0")
+                        if pid > 0:
+                            try:
+                                os.kill(pid, signal.SIGTERM)
+                            except Exception:
+                                pass
+                        try:
+                            pid_file.unlink()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                job.status = "PENDING"
+                job.message = "recovered_after_restart"
+                job.backend_ref = None
+                job.executor = None
+                run.status = "PENDING"
+                if isinstance(run.config, dict) and run.type == "TRAIN":
+                    run.config["resume"] = True
+                    run.config.setdefault("resumeFrom", "latest")
+                    run.config.setdefault("resumeReason", "recovered_after_restart")
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(run, "config")
+            db.commit()
+        finally:
+            db.close()
+
     def submit(self, job_id: str) -> None:
-        if not self._dispatcher.is_alive():
+        if not any(worker.is_alive() for worker in self._workers):
             self.start(enqueue_pending=False)
-        
+
         # Need to fetch priority
         db = SessionLocal()
         try:
             job = db.query(models.Job).filter(models.Job.id == job_id).first()
             p = job.priority if job and job.priority is not None else 2
+            if self._queue_max_size > 0 and self._queue.qsize() >= self._queue_max_size:
+                raise ValueError("job_queue_full")
             self._queue.put((-p, job_id))
         finally:
             db.close()
@@ -149,6 +210,13 @@ class JobManager:
             run = db.query(models.Run).filter(models.Run.id == job.run_id).first()
             if run:
                 run.status = "PENDING"
+                if isinstance(run.config, dict) and run.type == "TRAIN":
+                    run.config["resume"] = True
+                    run.config.setdefault("resumeFrom", "latest")
+                    if reason:
+                        run.config["resumeReason"] = reason
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(run, "config")
             db.commit()
             db.refresh(job)
         finally:
@@ -164,107 +232,262 @@ class JobManager:
                 _, job_id = self._queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            threading.Thread(target=self._run_job, args=(job_id,), daemon=True).start()
+            try:
+                self._run_job(job_id)
+            except Exception:
+                # Keep worker alive even if a job crashes unexpectedly
+                continue
 
     def _run_job(self, job_id: str) -> None:
-        job = self._load_job(job_id)
-        if not job or job.status != "PENDING":
-            return
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).filter(models.Job.id == job_id).first()
+            if not job or job.status != "PENDING":
+                return
 
-        run = self._load_run(job.run_id)
-        if not run:
-            return
+            run = db.query(models.Run).filter(models.Run.id == job.run_id).first()
+            if not run:
+                return
+            job_id_value = job.id
+            run_id_value = run.id
+            run_type_value = run.type
+            run_gpu_value = run.gpu or 0
 
-        # --- Inject Model Path for Eval Jobs ---
-        # If this is an Eval run, we need to resolve the policySnapshotId to a real path
-        if run.type == "EVAL" and isinstance(run.config, dict):
-            snapshot_id = run.config.get("policySnapshotId")
-            if snapshot_id:
-                # Find the checkpoint
-                ckpt = db.query(models.Checkpoint).filter(models.Checkpoint.id == snapshot_id).first()
-                if ckpt:
-                    # In our MVP, `ckpt.path` is s3://... 
-                    # But for Local Execution, we know where it is: .local/runs/{run_id}/checkpoints/model_final.zip
-                    # Wait, the Checkpoint model doesn't store the local path directly, it stores the S3 path.
-                    # But the artifact path logic is predictable.
-                    # Let's use ArtifactService or Paths service to resolve it.
-                    # Actually, `ckpt.path` is `s3://runs/{runId}/checkpoints/ckpt_{step}.json`. 
-                    # The ACTUAL model file (zip) is what we need. 
-                    # `sb3_train.py` saves `model_final.zip`.
-                    # Let's try to infer the zip path from the run_id of the checkpoint.
-                    
-                    # 1. Get the parent run of the checkpoint
-                    parent_run_id = ckpt.run_id
-                    
-                    # 2. Construct local path (assuming shared FS / Local mode)
-                    # We can use `app.services.paths`
-                    from app.services import paths
-                    # Ideally we find the artifact record for the zip
-                    model_artifact = db.query(models.Artifact).filter(
+            config_updated = False
+
+            def resolve_policy_meta(parent_run: Optional[models.Run]) -> Dict[str, str]:
+                if not parent_run:
+                    return {"algoId": "", "algoName": "", "family": "custom"}
+                algo_id = parent_run.algo or ""
+                algo_name = ""
+                if isinstance(parent_run.config, dict):
+                    algo_cfg = parent_run.config.get("algo")
+                    if isinstance(algo_cfg, dict):
+                        algo_name = str(algo_cfg.get("name") or algo_cfg.get("algoId") or "")
+                family = "custom"
+                if algo_id.startswith("sb3"):
+                    family = "sb3"
+                elif algo_id.startswith("rllib"):
+                    family = "rllib"
+                elif algo_id.startswith("offline"):
+                    family = "offline"
+                elif algo_id in {"mappo-marl", "qmix-marl", "vdn-marl", "mappo-rnn-marl", "qmix-rnn-marl"}:
+                    family = "marl"
+                return {"algoId": algo_id, "algoName": algo_name or algo_id, "family": family}
+
+            def download_model_artifact(parent_run_id: str, snapshot_id: str, run_dir: Path) -> Optional[Path]:
+                model_artifact = (
+                    db.query(models.Artifact)
+                    .filter(
                         models.Artifact.run_id == parent_run_id,
-                        models.Artifact.name.like("%.zip") # Assuming SB3 zip
-                    ).order_by(models.Artifact.created_at.desc()).first()
-                    
-                    if model_artifact:
-                        # Construct absolute local path
-                        # settings.local_run_root / parent_run_id / ...
-                        # But wait, artifacts are in S3 (MinIO).
-                        # For Local Executor, we can assume MinIO is just a folder or we download it.
-                        # Since we are running "Real", we should download the artifact to a temp dir for the eval job.
-                        
-                        # Let's DOWNLOAD the model to the eval job's directory
+                        (models.Artifact.name.ilike("%.zip") | models.Artifact.name.ilike("%.pt")),
+                    )
+                    .order_by(models.Artifact.created_at.desc())
+                    .first()
+                )
+                if not model_artifact:
+                    return None
+                suffix = Path(model_artifact.name).suffix or ".bin"
+                local_path = run_dir / f"model_{snapshot_id}{suffix}"
+                try:
+                    from app.services.s3 import s3_client
+                    s3_client.download_file(
+                        s3_client.bucket,
+                        model_artifact.object_key,
+                        str(local_path),
+                    )
+                except Exception as exc:
+                    print(f"Failed to download model artifact: {exc}")
+                    return None
+                return local_path
+
+            def resolve_protocol_config(protocol_id: str) -> Optional[Dict]:
+                protocol = db.query(models.EvalProtocol).filter(models.EvalProtocol.id == protocol_id).first()
+                if not protocol:
+                    return None
+                return {
+                    "name": protocol.name,
+                    "version": protocol.version,
+                    "env": {
+                        "envId": protocol.env_id,
+                        "version": protocol.env_version or "",
+                        "mapSet": protocol.map_set or "",
+                    },
+                    "evalSeeds": protocol.eval_seeds,
+                    "episodesPerMatch": protocol.episodes_per_match,
+                    "timeoutSec": protocol.timeout_sec,
+                    "metrics": protocol.metrics,
+                    "scenarioGrid": protocol.scenario_grid,
+                    "opponentSampling": protocol.opponent_sampling,
+                    "opponentPoolRef": {
+                        "poolId": protocol.opponent_pool_id,
+                        "version": protocol.opponent_pool_version,
+                    }
+                    if protocol.opponent_pool_id
+                    else None,
+                }
+
+            # --- Inject Model Path for Eval Jobs ---
+            # If this is an Eval run, we need to resolve the policySnapshotId to a real path
+            if run.type == "EVAL" and isinstance(run.config, dict):
+                snapshot_id = run.config.get("policySnapshotId")
+                if snapshot_id:
+                    ckpt = db.query(models.Checkpoint).filter(models.Checkpoint.id == snapshot_id).first()
+                    if ckpt:
+                        parent_run_id = ckpt.run_id
                         eval_run_dir = paths.run_root(run.id)
                         eval_run_dir.mkdir(parents=True, exist_ok=True)
-                        local_model_path = eval_run_dir / "model.zip"
-                        
-                        try:
-                            # We can use s3_client to download
-                            # model_artifact.object_key is the key
-                            from app.services.s3 import s3_client
-                            s3_client.download_file(s3_client.bucket, model_artifact.object_key, str(local_model_path))
-                            
-                            # Update config with this local path
+                        local_model_path = download_model_artifact(parent_run_id, snapshot_id, eval_run_dir)
+                        if local_model_path:
                             run.config["modelPath"] = str(local_model_path)
-                            # We must commit this config change so the executor sees it? 
-                            # Or just pass it to ExecutionJob.
-                            # ExecutionJob takes `config` as argument. We update that dict.
-                        except Exception as e:
-                            print(f"Failed to download model for eval: {e}")
-                
-        # --- Inject Dataset Path for Offline RL ---
-        if isinstance(run.config, dict):
-            dataset_id = run.config.get("datasetId")
-            if dataset_id:
-                ds = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
-                if ds:
-                    run.config["datasetPath"] = ds.path
-                    run.config["datasetFormat"] = ds.format
+                            policy_meta = resolve_policy_meta(db.query(models.Run).filter(models.Run.id == parent_run_id).first())
+                            run.config["policyMeta"] = policy_meta
+                            if policy_meta.get("family") == "marl":
+                                run.config.setdefault("algo", {})
+                                run.config["algo"]["entrypoint"] = "algorithms.marl_eval:evaluate"
+                                run.config["algo"]["name"] = "MARL Evaluator"
+                            config_updated = True
 
-        self._update_status(run, job, "RUNNING")
+            # --- Inject Protocol & Snapshot Paths for Matrix Jobs ---
+            if run.type == "MATRIX" and isinstance(run.config, dict):
+                protocol_id = run.config.get("protocolId")
+                if protocol_id and "protocol" not in run.config:
+                    protocol_cfg = resolve_protocol_config(protocol_id)
+                    if protocol_cfg:
+                        run.config["protocol"] = protocol_cfg
+                        config_updated = True
+                snapshot_ids = run.config.get("policySnapshotIds") or []
+                if snapshot_ids and "policySnapshots" not in run.config:
+                    matrix_run_dir = paths.run_root(run.id)
+                    matrix_run_dir.mkdir(parents=True, exist_ok=True)
+                    policy_entries = []
+                    for snapshot_id in snapshot_ids:
+                        ckpt = db.query(models.Checkpoint).filter(models.Checkpoint.id == snapshot_id).first()
+                        if not ckpt:
+                            continue
+                        parent_run = db.query(models.Run).filter(models.Run.id == ckpt.run_id).first()
+                        if not parent_run:
+                            continue
+                        local_model_path = download_model_artifact(parent_run.id, snapshot_id, matrix_run_dir)
+                        policy_meta = resolve_policy_meta(parent_run)
+                        policy_entries.append(
+                            {
+                                "id": snapshot_id,
+                                "modelPath": str(local_model_path) if local_model_path else None,
+                                "algoId": policy_meta.get("algoId"),
+                                "algoName": policy_meta.get("algoName"),
+                                "family": policy_meta.get("family"),
+                            }
+                        )
+                    run.config["policySnapshots"] = policy_entries
+                    config_updated = True
+
+            # --- Inject Dataset Path for Offline RL ---
+            if isinstance(run.config, dict):
+                dataset_id = run.config.get("datasetId")
+                if dataset_id:
+                    ds = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+                    if ds:
+                        dataset_path = ds.path
+                        local_dataset_path = None
+                        if dataset_path.startswith("s3://"):
+                            parsed = urlparse(dataset_path)
+                            bucket = parsed.netloc
+                            key = parsed.path.lstrip("/")
+                            if bucket and key:
+                                run_dir = paths.run_root(run.id)
+                                run_dir.mkdir(parents=True, exist_ok=True)
+                                dest = run_dir / "datasets" / Path(key).name
+                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                try:
+                                    from app.services.s3 import s3_client
+                                    s3_client.download_file(bucket, key, str(dest))
+                                    local_dataset_path = str(dest)
+                                except Exception as exc:
+                                    print(f"Failed to download dataset from s3: {exc}")
+                        elif dataset_path.startswith("http://") or dataset_path.startswith("https://"):
+                            run_dir = paths.run_root(run.id)
+                            run_dir.mkdir(parents=True, exist_ok=True)
+                            dest = run_dir / "datasets" / Path(urlparse(dataset_path).path).name
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            try:
+                                with httpx.stream("GET", dataset_path, timeout=60.0) as response:
+                                    response.raise_for_status()
+                                    with open(dest, "wb") as handle:
+                                        for chunk in response.iter_bytes():
+                                            handle.write(chunk)
+                                local_dataset_path = str(dest)
+                            except Exception as exc:
+                                print(f"Failed to download dataset from URL: {exc}")
+                        else:
+                            path_obj = Path(dataset_path)
+                            if path_obj.exists():
+                                local_dataset_path = str(path_obj.resolve())
+
+                        run.config["datasetPath"] = local_dataset_path or dataset_path
+                        run.config["datasetFormat"] = ds.format
+                        config_updated = True
+
+            if config_updated:
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(run, "config")
+                db.commit()
+
+            run_config_value = dict(run.config) if isinstance(run.config, dict) else {}
+        finally:
+            db.close()
+
+        dummy_job = models.Job(id=job_id_value, run_id=run_id_value, status="PENDING")
+        dummy_run = models.Run(id=run_id_value, project_id="", name="", type=run_type_value, status="PENDING", algo="", env="", config={}, metrics={})
+        self._update_status(dummy_run, dummy_job, "RUNNING")
         exec_job = ExecutionJob(
-            job_id=job.id,
-            run_id=run.id,
-            run_type=run.type,
-            config=run.config,
-            gpus=run.gpu or 0,
+            job_id=job_id_value,
+            run_id=run_id_value,
+            run_type=run_type_value,
+            config=run_config_value,
+            gpus=run_gpu_value,
         )
         try:
             backend_ref = self._executor.submit(exec_job)
         except Exception as exc:
-            self._update_status(run, job, "FAILED")
-            self._set_job_message(job.id, str(exc))
+            self._update_status(dummy_run, dummy_job, "FAILED")
+            self._set_job_message(job_id_value, str(exc))
             return
-        self._set_backend_ref(job_id, backend_ref, self._executor_name)
+        self._set_backend_ref(job_id_value, backend_ref, self._executor_name)
 
         with self._lock:
-            self._active[job_id] = backend_ref
+            self._active[job_id_value] = backend_ref
+
+        timeout_timer = None
+        timeout_sec = 0
+        if isinstance(run_config_value, dict):
+            resources = run_config_value.get("resources") if isinstance(run_config_value.get("resources"), dict) else None
+            if resources:
+                timeout_sec = int(resources.get("timeoutSec") or resources.get("timeout_sec") or 0)
+        if timeout_sec <= 0:
+            timeout_sec = self._default_timeout_sec
+
+        if timeout_sec > 0:
+            def _timeout_cancel() -> None:
+                self._set_job_message(job_id_value, "timeout")
+                try:
+                    self._executor.cancel(backend_ref)
+                except Exception:
+                    pass
+
+            timeout_timer = threading.Timer(timeout_sec, _timeout_cancel)
+            timeout_timer.daemon = True
+            timeout_timer.start()
 
         result = self._executor.wait(backend_ref)
 
-        with self._lock:
-            self._active.pop(job_id, None)
+        if timeout_timer:
+            timeout_timer.cancel()
 
-        self._finalize_job(job_id, result.exit_code, result.metrics_path, result.checkpoint_path)
+        with self._lock:
+            self._active.pop(job_id_value, None)
+
+        self._finalize_job(job_id_value, result.exit_code, result.metrics_path, result.checkpoint_path)
 
     def _load_job(self, job_id: str) -> Optional[models.Job]:
         db = SessionLocal()
@@ -346,6 +569,7 @@ class JobManager:
                         }
 
             checkpoint_added = False
+            latest_checkpoint_id: Optional[str] = None
             try:
                 existing_checkpoints = (
                     db.query(models.Checkpoint).filter(models.Checkpoint.run_id == run.id).all()
@@ -386,6 +610,7 @@ class JobManager:
                     )
                     db.add(checkpoint)
                     checkpoint_added = True
+                    latest_checkpoint_id = checkpoint.id
 
                 if not checkpoint_added:
                     last_step = 0
@@ -422,10 +647,49 @@ class JobManager:
                         )
                         db.add(checkpoint)
                         checkpoint_added = True
+                        latest_checkpoint_id = checkpoint.id
+
+                # Auto-add latest checkpoint to opponent pool if configured
+                if latest_checkpoint_id and isinstance(run.config, dict):
+                    pool_id = None
+                    auto_pool = run.config.get("autoPool")
+                    if isinstance(auto_pool, dict):
+                        pool_id = auto_pool.get("poolId")
+                    if not pool_id:
+                        pool_id = run.config.get("autoPoolId")
+                    if pool_id:
+                        pool = db.query(models.OpponentPool).filter(models.OpponentPool.id == pool_id).first()
+                        if pool and not pool.frozen:
+                            exists = (
+                                db.query(models.OpponentPoolMember)
+                                .filter(
+                                    models.OpponentPoolMember.pool_id == pool_id,
+                                    models.OpponentPoolMember.snapshot_id == latest_checkpoint_id,
+                                )
+                                .first()
+                            )
+                            if not exists:
+                                db.add(models.OpponentPoolMember(pool_id=pool_id, snapshot_id=latest_checkpoint_id))
+                                pool.size = (pool.size or 0) + 1
 
                 # --- Capture Eval/Matrix Artifacts ---
                 run_dir = Path(metrics_path).parent if metrics_path else None
                 if run_dir and run_dir.exists():
+                    # Upload model files inside checkpoints (e.g., SB3 .zip, torch .pt)
+                    checkpoint_dir = run_dir / "checkpoints"
+                    if checkpoint_dir.exists():
+                        for item in checkpoint_dir.glob("*"):
+                            if item.suffix.lower() not in {".zip", ".pt", ".pth"}:
+                                continue
+                            try:
+                                content = item.read_bytes()
+                                mime = "application/octet-stream"
+                                artifact_service.write_artifact(
+                                    db, run.id, f"/checkpoints/{item.name}", content, mime
+                                )
+                            except Exception:
+                                pass
+
                     # Check for Eval outputs
                     eval_dir = run_dir / "eval"
                     if eval_dir.exists():
@@ -489,6 +753,67 @@ class JobManager:
                          except Exception:
                             pass
 
+                    # Reproducibility snapshots
+                    env_snapshot_path = run_dir / "env_snapshot.json"
+                    if env_snapshot_path.exists():
+                        try:
+                            content = env_snapshot_path.read_text(encoding="utf-8")
+                            artifact_service.write_artifact(
+                                db, run.id, "/manifest/env_snapshot.json", content, "application/json", overwrite=True
+                            )
+                        except Exception:
+                            pass
+
+                    freeze_path = run_dir / "requirements_freeze.txt"
+                    if freeze_path.exists():
+                        try:
+                            content = freeze_path.read_text(encoding="utf-8")
+                            artifact_service.write_artifact(
+                                db,
+                                run.id,
+                                "/manifest/requirements_freeze.txt",
+                                content,
+                                "text/plain",
+                                overwrite=True,
+                            )
+                        except Exception:
+                            pass
+
+                    git_diff_path = run_dir / "git_diff.patch"
+                    if git_diff_path.exists():
+                        try:
+                            content = git_diff_path.read_text(encoding="utf-8")
+                            artifact_service.write_artifact(
+                                db, run.id, "/manifest/git_diff.patch", content, "text/plain", overwrite=True
+                            )
+                        except Exception:
+                            pass
+
+                    git_status_path = run_dir / "git_status.txt"
+                    if git_status_path.exists():
+                        try:
+                            content = git_status_path.read_text(encoding="utf-8")
+                            artifact_service.write_artifact(
+                                db, run.id, "/manifest/git_status.txt", content, "text/plain", overwrite=True
+                            )
+                        except Exception:
+                            pass
+
+                    fingerprint_path = run_dir / "run_fingerprint.json"
+                    if fingerprint_path.exists():
+                        try:
+                            content = fingerprint_path.read_text(encoding="utf-8")
+                            artifact_service.write_artifact(
+                                db,
+                                run.id,
+                                "/manifest/run_fingerprint.json",
+                                content,
+                                "application/json",
+                                overwrite=True,
+                            )
+                        except Exception:
+                            pass
+
                     # Check for Datasets (Auto-Registration)
                     dataset_manifest_path = run_dir / "dataset_manifest.json"
                     if dataset_manifest_path.exists():
@@ -520,6 +845,10 @@ class JobManager:
 
                 db.flush()
                 apply_checkpoint_policy(db, run.id)
+                try:
+                    artifact_service.write_artifact_manifest(db, run.id)
+                except Exception:
+                    pass
             except ValueError as exc:
                 final_status = "FAILED"
                 job.message = str(exc)

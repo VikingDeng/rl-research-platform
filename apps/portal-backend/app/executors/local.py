@@ -64,7 +64,14 @@ class LocalExecutor:
                     runtime_pkgs = meta.get("runtimePackages")
                     if isinstance(runtime_pkgs, list):
                         packages.extend(str(pkg) for pkg in runtime_pkgs if pkg)
-        runtime_spec = runtime_packages.prepare_runtime(packages)
+        runtime_spec = None
+        if packages:
+            try:
+                runtime_spec = runtime_packages.prepare_runtime(packages)
+            except ValueError as exc:
+                if settings.local_executor_mode.lower() == "real":
+                    raise
+                # In fake mode we skip runtime package enforcement
 
         locks = self._gpu_allocator.acquire(job.gpus)
         gpu_ids = ",".join(str(lock.gpu_id) for lock in locks)
@@ -79,10 +86,11 @@ class LocalExecutor:
         # For this refactor, we assume real mode primarily or we point to the one in runner
         # If runner_mode is NOT real, we might want to keep using the fake runner in executors? 
         # Let's keep fake_runner.py in executors for now as it is a testing stub.
+        python_exec = settings.runner_python or sys.executable
         if runner_mode == "real":
             script_to_run = str(runner_script_path)
             cmd = [
-                sys.executable,
+                python_exec,
                 script_to_run,
                 "--run-id",
                 job.run_id,
@@ -97,7 +105,7 @@ class LocalExecutor:
             # Keep using the fake runner located in this directory
             script_to_run = str(Path(__file__).resolve().with_name("fake_runner.py"))
             cmd = [
-                sys.executable,
+                python_exec,
                 script_to_run,
                 "--run-id",
                 job.run_id,
@@ -181,12 +189,19 @@ class LocalExecutor:
             raise
         log_handle.close()
 
+        pid_file = run_dir / "runner.pid"
+        try:
+            pid_file.write_text(str(process.pid), encoding="utf-8")
+        except Exception:
+            pid_file = None
+
         with self._lock:
             self._processes[backend_ref] = process
             self._metadata[backend_ref] = {
                 "metrics_path": str(metrics_path),
                 "checkpoint_path": str(ckpt_path),
                 "log_path": str(log_path),
+                "pid_file": str(pid_file) if pid_file else "",
             }
             self._locks[backend_ref] = locks
 
@@ -266,6 +281,7 @@ class LocalExecutor:
     def cancel(self, backend_ref: str) -> None:
         with self._lock:
             process = self._processes.get(backend_ref)
+            metadata = self._metadata.get(backend_ref, {})
         if not process:
             return
         process.terminate()
@@ -273,6 +289,12 @@ class LocalExecutor:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
+        pid_path = metadata.get("pid_file")
+        if pid_path:
+            try:
+                Path(pid_path).unlink()
+            except Exception:
+                pass
         self._release_locks(backend_ref)
         with self._lock:
             self._processes.pop(backend_ref, None)
@@ -306,6 +328,12 @@ class LocalExecutor:
             return ExecutionResult(backend_ref=backend_ref, exit_code=1, metrics_path="", checkpoint_path=None)
 
         exit_code = process.wait()
+        pid_path = metadata.get("pid_file")
+        if pid_path:
+            try:
+                Path(pid_path).unlink()
+            except Exception:
+                pass
         self._release_locks(backend_ref)
         with self._lock:
             self._processes.pop(backend_ref, None)

@@ -86,8 +86,10 @@ export const Settings: React.FC = () => {
 
   const usagePercent = settings ? Math.min(100, Math.round((settings.storage.artifactBytes / (1024 ** 3)) * 2)) : 0;
   const executorMode = settings?.executor.mode ?? 'local';
+  const localExecutorMode = settings?.executor.localExecutorMode ?? 'real';
   const masterUrl = settings?.executor.determinedMasterUrl;
   const connected = settings?.executor.determinedConnected;
+  const determinedMock = settings?.executor.determinedMock;
   const scheduler = settings?.executor.scheduler ?? (executorMode === 'local' ? 'Local' : 'Unknown');
 
   return (
@@ -153,6 +155,12 @@ export const Settings: React.FC = () => {
                     <span className="text-sm font-mono text-gray-900">{settings?.executor.localGpuCount ?? '-'}</span>
                 </div>
                 <div className="p-4 flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Local Executor Mode</span>
+                    <span className={`text-sm font-medium ${localExecutorMode === 'real' ? 'text-green-700' : 'text-amber-700'}`}>
+                        {localExecutorMode}
+                    </span>
+                </div>
+                <div className="p-4 flex justify-between items-center">
                     <span className="text-sm text-gray-600">Determined Master URL</span>
                     <span className="text-sm font-mono text-gray-900">{masterUrl || 'Not configured'}</span>
                 </div>
@@ -167,6 +175,12 @@ export const Settings: React.FC = () => {
                             Local
                         </span>
                     )}
+                </div>
+                <div className="p-4 flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Determined Mock Mode</span>
+                    <span className={`text-sm font-medium ${determinedMock ? 'text-amber-700' : 'text-gray-900'}`}>
+                        {determinedMock ? 'Enabled' : 'Disabled'}
+                    </span>
                 </div>
                 <div className="p-4 flex justify-between items-center">
                     <span className="text-sm text-gray-600">Scheduler Type</span>

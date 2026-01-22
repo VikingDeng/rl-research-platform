@@ -46,6 +46,36 @@ class RunSummary(Run):
     git: Optional[GitInfo] = None
 
 
+class RunGroupItem(APIModel):
+    id: str
+    name: str
+    status: str
+    created: datetime
+    algo: str
+    env: str
+    seed: Optional[int] = None
+    metrics: Dict[str, float] = {}
+
+
+class RunGroupMetricSummary(APIModel):
+    mean: float
+    std: float
+    min: float
+    max: float
+    n: int
+    best_run_id: Optional[str] = None
+    ci_low: Optional[float] = None
+    ci_high: Optional[float] = None
+
+
+class RunGroupSummary(APIModel):
+    group_id: str
+    total_runs: int
+    status_counts: Dict[str, int]
+    metrics: Dict[str, RunGroupMetricSummary]
+    runs: List[RunGroupItem]
+
+
 class CheckpointMetrics(APIModel):
     win_rate: float
     return_mean: float
@@ -85,11 +115,17 @@ class TrainJobEnv(APIModel):
     map_set: str
     wrappers: Optional[List[str]] = None
 
+    class Config(APIModel.Config):
+        extra = "allow"
+
 
 class TrainJobAlgo(APIModel):
     algo_id: str
     algo_version_id: str
     preset: Optional[str] = None
+
+    class Config(APIModel.Config):
+        extra = "allow"
 
 
 class TrainJobAgent(APIModel):
@@ -107,12 +143,16 @@ class TrainJobTrain(APIModel):
     gamma: Optional[float] = None
     gae_lambda: Optional[float] = None
 
+    class Config(APIModel.Config):
+        extra = "allow"
+
 
 class ResourceSpec(APIModel):
     gpus: int
     cpus: Optional[int] = None
     mem_gb: Optional[int] = None
     priority: Optional[int] = 2  # 1=Low, 2=Normal, 3=High
+    timeout_sec: Optional[int] = None
 
 
 class PluginRef(APIModel):
@@ -138,6 +178,7 @@ class TrainJobRequest(APIModel):
     algo: TrainJobAlgo
     agent: Optional[TrainJobAgent] = None
     train: TrainJobTrain
+    network: Optional[Dict[str, Any]] = None
     resources: ResourceSpec
     seed_set: Optional[List[int]] = None
     plugin: Optional[PluginRef] = None
@@ -173,3 +214,10 @@ class NotebookResponse(APIModel):
     run_id: str
     url: str
     token: str
+
+
+class RunExportTemplateRequest(APIModel):
+    template_id: Optional[str] = None
+    name: Optional[str] = None
+    version: Optional[str] = None
+    description: Optional[str] = None

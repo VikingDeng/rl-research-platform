@@ -35,6 +35,8 @@ tags:
     description: Metrics, logs, and streaming
   - name: Artifacts
     description: Artifacts and repro bundles
+  - name: Datasets
+    description: Offline datasets registry and downloads
   - name: Webhooks
     description: Webhook subscriptions
 security:
@@ -977,6 +979,54 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/export-template:
+    post:
+      tags: [Runs]
+      summary: Export run config to template version
+      operationId: postRunsByRunIdExportTemplate
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunExportTemplateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/groups/{group_id}:
+    get:
+      tags: [Runs]
+      summary: Get run group summary
+      operationId: getRunsByGroupId
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunGroupSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /runs/{run_id}/job:
     get:
       tags: [Runs]
@@ -1678,6 +1728,117 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /datasets:
+    get:
+      tags: [Datasets]
+      summary: List datasets
+      operationId: getDatasets
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Dataset'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Datasets]
+      summary: Register dataset by path
+      operationId: postDatasets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatasetCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /datasets/upload:
+    post:
+      tags: [Datasets]
+      summary: Upload dataset file
+      operationId: postDatasetsUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, file]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                format:
+                  type: string
+                  default: jsonl
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /datasets/{dataset_id}/download:
+    get:
+      tags: [Datasets]
+      summary: Download dataset
+      operationId: getDatasetsByDatasetIdDownload
+      parameters:
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to download URL
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /datasets/{dataset_id}/preview:
+    get:
+      tags: [Datasets]
+      summary: Preview dataset contents
+      operationId: getDatasetsByDatasetIdPreview
+      parameters:
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetPreview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /admin/webhooks:
     post:
       tags: [Webhooks]
@@ -1867,17 +2028,23 @@ components:
             type: string
     ExecutorSettings:
       type: object
-      required: [mode, localGpuCount]
+      required: [mode, localGpuCount, localExecutorMode]
       properties:
         mode:
           type: string
         localGpuCount:
           type: integer
+        localExecutorMode:
+          type: string
         determinedMasterUrl:
           type:
             - string
             - 'null'
         determinedConnected:
+          type:
+            - boolean
+            - 'null'
+        determinedMock:
           type:
             - boolean
             - 'null'
@@ -2492,6 +2659,80 @@ components:
           $ref: '#/components/schemas/GitInfo'
         metrics:
           $ref: '#/components/schemas/RunMetrics'
+    RunGroupItem:
+      type: object
+      required: [id, name, status, created, algo, env, metrics]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        created:
+          type: string
+          format: date-time
+        algo:
+          type: string
+        env:
+          type: string
+        seed:
+          type: integer
+        metrics:
+          type: object
+          additionalProperties:
+            type: number
+    RunGroupMetricSummary:
+      type: object
+      required: [mean, std, min, max, n]
+      properties:
+        mean:
+          type: number
+        std:
+          type: number
+        min:
+          type: number
+        max:
+          type: number
+        n:
+          type: integer
+        bestRunId:
+          type: string
+        ciLow:
+          type: number
+        ciHigh:
+          type: number
+    RunGroupSummary:
+      type: object
+      required: [groupId, totalRuns, statusCounts, metrics, runs]
+      properties:
+        groupId:
+          type: string
+        totalRuns:
+          type: integer
+        statusCounts:
+          type: object
+          additionalProperties:
+            type: integer
+        metrics:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RunGroupMetricSummary'
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunGroupItem'
+    RunExportTemplateRequest:
+      type: object
+      properties:
+        templateId:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
     CheckpointMetrics:
       type: object
       required: [winRate, returnMean]
@@ -2553,6 +2794,7 @@ components:
     TrainJobEnv:
       type: object
       required: [envId, version, mapSet]
+      additionalProperties: true
       properties:
         envId:
           type: string
@@ -2567,6 +2809,7 @@ components:
     TrainJobAlgo:
       type: object
       required: [algoId, algoVersionId]
+      additionalProperties: true
       properties:
         algoId:
           type: string
@@ -2586,6 +2829,7 @@ components:
     TrainJobTrain:
       type: object
       required: [totalEnvSteps, rolloutLen, batchSize, lr]
+      additionalProperties: true
       properties:
         totalEnvSteps:
           type: integer
@@ -2643,6 +2887,9 @@ components:
           $ref: '#/components/schemas/TrainJobAgent'
         train:
           $ref: '#/components/schemas/TrainJobTrain'
+        network:
+          type: object
+          additionalProperties: true
         resources:
           $ref: '#/components/schemas/ResourceSpec'
         seedSet:
@@ -3100,6 +3347,61 @@ components:
         manifest:
           type: object
           additionalProperties: true
+    DatasetCreate:
+      type: object
+      required: [name, path]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        path:
+          type: string
+        format:
+          type: string
+          default: jsonl
+    Dataset:
+      type: object
+      required: [id, name, path, format, sizeBytes, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        path:
+          type: string
+        format:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+    DatasetPreview:
+      type: object
+      required: [id, available, format, sizeBytes]
+      properties:
+        id:
+          type: string
+        available:
+          type: boolean
+        format:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+        summary:
+          type: object
+          additionalProperties: true
+        sample:
+          nullable: true
+        error:
+          type: string
     WebhookCreate:
       type: object
       required: [url, events]

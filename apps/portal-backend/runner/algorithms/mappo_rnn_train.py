@@ -44,17 +44,6 @@ def _flat_obs(obs) -> np.ndarray:
     return arr.reshape(-1)
 
 
-def _build_mlp(input_dim: int, output_dim: int, hidden: Tuple[int, ...] = (128, 128)) -> nn.Sequential:
-    layers: List[nn.Module] = []
-    last = input_dim
-    for h in hidden:
-        layers.append(nn.Linear(last, h))
-        layers.append(nn.Tanh())
-        last = h
-    layers.append(nn.Linear(last, output_dim))
-    return nn.Sequential(*layers)
-
-
 def _resolve_resume_path(config: Dict, checkpoint_dir: str) -> Optional[Path]:
     if not isinstance(config, dict):
         return None
@@ -76,52 +65,80 @@ def _save_checkpoint(path: Path, payload: Dict) -> None:
     torch.save(payload, path)
 
 
-class MAPPOPolicy(nn.Module):
-    def __init__(
-        self,
-        obs_dim: int,
-        global_dim: int,
-        act_dim: int,
-        continuous: bool,
-        actor_hidden: Tuple[int, ...] = (128, 128),
-        critic_hidden: Tuple[int, ...] = (128, 128),
-    ):
+class RNNPolicy(nn.Module):
+    def __init__(self, obs_dim: int, global_dim: int, act_dim: int, hidden_dim: int, continuous: bool):
         super().__init__()
         self.continuous = continuous
-        self.actor = _build_mlp(obs_dim, act_dim, actor_hidden)
-        self.critic = _build_mlp(global_dim, 1, critic_hidden)
+        self.actor_rnn = nn.GRU(obs_dim, hidden_dim, batch_first=False)
+        self.critic_rnn = nn.GRU(global_dim, hidden_dim, batch_first=False)
+        self.actor_head = nn.Linear(hidden_dim, act_dim)
+        self.critic_head = nn.Linear(hidden_dim, 1)
         if self.continuous:
             self.log_std = nn.Parameter(torch.zeros(act_dim))
 
-    def act(self, obs: torch.Tensor, global_obs: torch.Tensor):
+    def act_step(self, obs: torch.Tensor, global_obs: torch.Tensor, h_actor: torch.Tensor, h_critic: torch.Tensor):
+        obs_in = obs.unsqueeze(0)
+        glob_in = global_obs.unsqueeze(0)
+        actor_out, h_actor = self.actor_rnn(obs_in, h_actor)
+        critic_out, h_critic = self.critic_rnn(glob_in, h_critic)
+        actor_out = actor_out.squeeze(0)
+        critic_out = critic_out.squeeze(0)
         if self.continuous:
-            mean = self.actor(obs)
+            mean = self.actor_head(actor_out)
             std = self.log_std.exp().expand_as(mean)
             dist = torch.distributions.Normal(mean, std)
             action = dist.sample()
             log_prob = dist.log_prob(action).sum(-1)
         else:
-            logits = self.actor(obs)
+            logits = self.actor_head(actor_out)
             dist = torch.distributions.Categorical(logits=logits)
             action = dist.sample()
             log_prob = dist.log_prob(action)
-        value = self.critic(global_obs).squeeze(-1)
-        return action, log_prob, value
+        value = self.critic_head(critic_out).squeeze(-1)
+        return action, log_prob, value, h_actor, h_critic
 
-    def evaluate_actions(self, obs: torch.Tensor, global_obs: torch.Tensor, actions: torch.Tensor):
-        if self.continuous:
-            mean = self.actor(obs)
-            std = self.log_std.exp().expand_as(mean)
-            dist = torch.distributions.Normal(mean, std)
-            log_prob = dist.log_prob(actions).sum(-1)
-            entropy = dist.entropy().sum(-1)
-        else:
-            logits = self.actor(obs)
-            dist = torch.distributions.Categorical(logits=logits)
-            log_prob = dist.log_prob(actions)
-            entropy = dist.entropy()
-        value = self.critic(global_obs).squeeze(-1)
-        return log_prob, entropy, value
+    def evaluate_sequence(
+        self,
+        obs_seq: torch.Tensor,
+        global_seq: torch.Tensor,
+        actions_seq: torch.Tensor,
+        dones: torch.Tensor,
+    ):
+        seq_len, batch, _ = obs_seq.shape
+        h_actor = torch.zeros(1, batch, self.actor_rnn.hidden_size, device=obs_seq.device)
+        h_critic = torch.zeros(1, batch, self.critic_rnn.hidden_size, device=obs_seq.device)
+        log_probs = []
+        entropies = []
+        values = []
+        for t in range(seq_len):
+            obs_t = obs_seq[t]
+            glob_t = global_seq[t]
+            h_actor = h_actor * (1.0 - dones[t].view(1, batch, 1))
+            h_critic = h_critic * (1.0 - dones[t].view(1, batch, 1))
+            actor_out, h_actor = self.actor_rnn(obs_t.unsqueeze(0), h_actor)
+            critic_out, h_critic = self.critic_rnn(glob_t.unsqueeze(0), h_critic)
+            actor_out = actor_out.squeeze(0)
+            critic_out = critic_out.squeeze(0)
+            if self.continuous:
+                mean = self.actor_head(actor_out)
+                std = self.log_std.exp().expand_as(mean)
+                dist = torch.distributions.Normal(mean, std)
+                log_prob = dist.log_prob(actions_seq[t]).sum(-1)
+                entropy = dist.entropy().sum(-1)
+            else:
+                logits = self.actor_head(actor_out)
+                dist = torch.distributions.Categorical(logits=logits)
+                log_prob = dist.log_prob(actions_seq[t])
+                entropy = dist.entropy()
+            value = self.critic_head(critic_out).squeeze(-1)
+            log_probs.append(log_prob)
+            entropies.append(entropy)
+            values.append(value)
+        return (
+            torch.stack(log_probs, dim=0),
+            torch.stack(entropies, dim=0),
+            torch.stack(values, dim=0),
+        )
 
 
 @dataclass
@@ -156,8 +173,7 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     train_cfg = config.get("train", {}) if isinstance(config, dict) else {}
     total_steps = int(train_cfg.get("totalEnvSteps", 200000))
     rollout_len = int(train_cfg.get("rolloutLen", 200))
-    epochs = int(train_cfg.get("epochs", 10))
-    minibatch = int(train_cfg.get("minibatchSize", 512))
+    epochs = int(train_cfg.get("epochs", 5))
     gamma = float(train_cfg.get("gamma", 0.99))
     gae_lambda = float(train_cfg.get("gaeLambda", 0.95))
     clip_range = float(train_cfg.get("clipRange", 0.2))
@@ -165,11 +181,10 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     value_coef = float(train_cfg.get("valueCoef", 0.5))
     entropy_coef = float(train_cfg.get("entropyCoef", 0.01))
     max_grad_norm = float(train_cfg.get("maxGradNorm", 0.5))
-    checkpoint_every = int(train_cfg.get("checkpointEvery", max(1000, total_steps // 10)))
-
+    hidden_dim = int(train_cfg.get("rnnHidden", 128))
     network_cfg = config.get("network", {}) if isinstance(config, dict) else {}
-    actor_hidden = tuple(network_cfg.get("actorHidden") or network_cfg.get("hidden") or [128, 128])
-    critic_hidden = tuple(network_cfg.get("criticHidden") or network_cfg.get("hidden") or [128, 128])
+    hidden_dim = int(network_cfg.get("rnnHidden", hidden_dim))
+    checkpoint_every = int(train_cfg.get("checkpointEvery", max(1000, total_steps // 10)))
 
     if env is None:
         env_cfg = env_config or config.get("env", {}) if isinstance(config, dict) else {}
@@ -190,14 +205,7 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
         act_dim = int(sample_space.n)
 
     global_dim = obs_dim * n_agents
-    policy = MAPPOPolicy(
-        obs_dim,
-        global_dim,
-        act_dim,
-        continuous,
-        actor_hidden=actor_hidden,
-        critic_hidden=critic_hidden,
-    )
+    policy = RNNPolicy(obs_dim, global_dim, act_dim, hidden_dim, continuous)
     optimizer = optim.Adam(policy.parameters(), lr=lr)
 
     episode_rewards = []
@@ -207,18 +215,21 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     resume_path = _resolve_resume_path(config, checkpoint_dir)
     if resume_path:
         payload = torch.load(resume_path, map_location="cpu")
-        state_dict = payload.get("state_dict") if isinstance(payload, dict) else None
-        if state_dict:
-            policy.load_state_dict(state_dict)
-        opt_state = payload.get("optimizer_state") if isinstance(payload, dict) else None
-        if opt_state:
-            optimizer.load_state_dict(opt_state)
-        steps_done = int(payload.get("steps_done", 0)) if isinstance(payload, dict) else 0
-        print(f"[MAPPO] Resumed from {resume_path} at step {steps_done}")
+        if isinstance(payload, dict):
+            state_dict = payload.get("state_dict")
+            opt_state = payload.get("optimizer_state")
+            if state_dict:
+                policy.load_state_dict(state_dict)
+            if opt_state:
+                optimizer.load_state_dict(opt_state)
+            steps_done = int(payload.get("steps_done", 0))
+            print(f"[MAPPO-RNN] Resumed from {resume_path} at step {steps_done}")
 
     last_checkpoint = steps_done
     while steps_done < total_steps:
         rollout = RolloutBuffer([], [], [], [], [], [], [])
+        h_actor = torch.zeros(1, n_agents, hidden_dim)
+        h_critic = torch.zeros(1, n_agents, hidden_dim)
         for _ in range(rollout_len):
             obs_arr = np.stack([_flat_obs(obs_dict[a]) for a in agents], axis=0)
             global_obs = obs_arr.reshape(1, -1).repeat(n_agents, axis=0)
@@ -227,7 +238,9 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
             global_tensor = torch.tensor(global_obs, dtype=torch.float32)
 
             with torch.no_grad():
-                actions, log_probs, values = policy.act(obs_tensor, global_tensor)
+                actions, log_probs, values, h_actor, h_critic = policy.act_step(
+                    obs_tensor, global_tensor, h_actor, h_critic
+                )
 
             action_dict = {}
             if continuous:
@@ -265,6 +278,8 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
                 obs_dict = env.reset()
                 if isinstance(obs_dict, tuple):
                     obs_dict = obs_dict[0]
+                h_actor = torch.zeros(1, n_agents, hidden_dim)
+                h_critic = torch.zeros(1, n_agents, hidden_dim)
 
             if steps_done >= total_steps:
                 break
@@ -272,7 +287,17 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
         obs_arr = np.stack([_flat_obs(obs_dict[a]) for a in agents], axis=0)
         global_obs = obs_arr.reshape(1, -1).repeat(n_agents, axis=0)
         with torch.no_grad():
-            last_values = policy.critic(torch.tensor(global_obs, dtype=torch.float32)).squeeze(-1).cpu().numpy()
+            last_values = (
+                policy.critic_head(
+                    policy.critic_rnn(
+                        torch.tensor(global_obs, dtype=torch.float32).unsqueeze(0),
+                        torch.zeros(1, n_agents, hidden_dim),
+                    )[0].squeeze(0)
+                )
+                .squeeze(-1)
+                .cpu()
+                .numpy()
+            )
 
         values_np = np.vstack([np.asarray(rollout.values), last_values[None, :]])
         rewards_np = np.asarray(rollout.rewards)
@@ -280,48 +305,32 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
 
         advantages, returns = _compute_gae(rewards_np, values_np, dones_np, gamma, gae_lambda)
 
-        obs_flat = np.asarray(rollout.obs).reshape(-1, obs_dim)
-        global_flat = np.asarray(rollout.global_obs).reshape(-1, global_dim)
-        actions_flat = np.asarray(rollout.actions).reshape(-1, act_dim if continuous else 1)
-        if not continuous:
-            actions_flat = actions_flat.squeeze(-1)
-        log_probs_flat = np.asarray(rollout.log_probs).reshape(-1)
-        adv_flat = advantages.reshape(-1)
-        returns_flat = returns.reshape(-1)
+        obs_seq = torch.tensor(np.asarray(rollout.obs), dtype=torch.float32)
+        global_seq = torch.tensor(np.asarray(rollout.global_obs), dtype=torch.float32)
+        actions_seq = torch.tensor(np.asarray(rollout.actions), dtype=torch.float32 if continuous else torch.int64)
+        old_logp_seq = torch.tensor(np.asarray(rollout.log_probs), dtype=torch.float32)
+        adv_seq = torch.tensor(advantages, dtype=torch.float32)
+        returns_seq = torch.tensor(returns, dtype=torch.float32)
+        dones_seq = torch.tensor(np.asarray(rollout.dones), dtype=torch.float32)
 
-        adv_flat = (adv_flat - adv_flat.mean()) / (adv_flat.std() + 1e-8)
-
-        dataset_size = obs_flat.shape[0]
-        indices = np.arange(dataset_size)
+        adv_seq = (adv_seq - adv_seq.mean()) / (adv_seq.std() + 1e-8)
 
         for _ in range(epochs):
-            np.random.shuffle(indices)
-            for start in range(0, dataset_size, minibatch):
-                end = start + minibatch
-                mb_idx = indices[start:end]
-                obs_mb = torch.tensor(obs_flat[mb_idx], dtype=torch.float32)
-                global_mb = torch.tensor(global_flat[mb_idx], dtype=torch.float32)
-                if continuous:
-                    actions_mb = torch.tensor(actions_flat[mb_idx], dtype=torch.float32)
-                else:
-                    actions_mb = torch.tensor(actions_flat[mb_idx], dtype=torch.int64)
-                old_logp_mb = torch.tensor(log_probs_flat[mb_idx], dtype=torch.float32)
-                adv_mb = torch.tensor(adv_flat[mb_idx], dtype=torch.float32)
-                ret_mb = torch.tensor(returns_flat[mb_idx], dtype=torch.float32)
+            logp, entropy, values_pred = policy.evaluate_sequence(
+                obs_seq, global_seq, actions_seq, dones_seq
+            )
+            ratio = torch.exp(logp - old_logp_seq)
+            surr1 = ratio * adv_seq
+            surr2 = torch.clamp(ratio, 1 - clip_range, 1 + clip_range) * adv_seq
+            policy_loss = -torch.min(surr1, surr2).mean()
+            value_loss = 0.5 * (returns_seq - values_pred).pow(2).mean()
+            entropy_loss = -entropy.mean()
+            loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
 
-                logp, entropy, values_pred = policy.evaluate_actions(obs_mb, global_mb, actions_mb)
-                ratio = torch.exp(logp - old_logp_mb)
-                surr1 = ratio * adv_mb
-                surr2 = torch.clamp(ratio, 1 - clip_range, 1 + clip_range) * adv_mb
-                policy_loss = -torch.min(surr1, surr2).mean()
-                value_loss = 0.5 * (ret_mb - values_pred).pow(2).mean()
-                entropy_loss = -entropy.mean()
-                loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
-
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
-                optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
+            optimizer.step()
 
         if metrics_path:
             mean_reward = float(np.mean(episode_rewards[-10:])) if episode_rewards else 0.0
@@ -330,13 +339,12 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
 
         if checkpoint_every > 0 and steps_done - last_checkpoint >= checkpoint_every:
             payload = {
-                "algo": "mappo",
+                "algo": "mappo_rnn",
                 "obs_dim": obs_dim,
                 "global_dim": global_dim,
                 "act_dim": act_dim,
                 "continuous": continuous,
-                "actor_hidden": list(actor_hidden),
-                "critic_hidden": list(critic_hidden),
+                "hidden_dim": hidden_dim,
                 "steps_done": steps_done,
                 "state_dict": policy.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
@@ -346,13 +354,12 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
 
     ckpt_path = Path(checkpoint_dir) / "model_final.pt"
     payload = {
-        "algo": "mappo",
+        "algo": "mappo_rnn",
         "obs_dim": obs_dim,
         "global_dim": global_dim,
         "act_dim": act_dim,
         "continuous": continuous,
-        "actor_hidden": list(actor_hidden),
-        "critic_hidden": list(critic_hidden),
+        "hidden_dim": hidden_dim,
         "steps_done": steps_done,
         "state_dict": policy.state_dict(),
         "optimizer_state": optimizer.state_dict(),
@@ -362,4 +369,4 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     ckpt_json = Path(checkpoint_dir) / f"ckpt_{total_steps}.json"
     with ckpt_json.open("w", encoding="utf-8") as handle:
         json.dump({"run_id": run_id, "step": steps_done, "metrics": {}, "path": str(ckpt_path)}, handle)
-    print("[MAPPO] Training finished.")
+    print("[MAPPO-RNN] Training finished.")

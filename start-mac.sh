@@ -1,7 +1,12 @@
 #!/bin/bash
 set -e
 
-# === RL Platform: User-Space Launcher ===
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "This script targets macOS."
+    exit 1
+fi
+
+# === RL Platform: User-Space Launcher (macOS) ===
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
 export FRONTEND_DIST="$ROOT_DIR/dist"
@@ -20,58 +25,56 @@ ORBITZOO_GIT_URL_DEFAULT="https://github.com/orbitzoo/orbit_zoo.git"
 MINICONDA_ROOT="$ROOT_DIR/.local/miniconda"
 RUNS_DIR="$ROOT_DIR/.local/runs"
 NODE_DIR="$ROOT_DIR/.local/node"
-# Using Node v20.19.0 (LTS) to satisfy Vite/React plugin engine requirements
 NODE_VER="v20.19.0"
 NODE_ROOT="$NODE_DIR/$NODE_VER"
-NODE_DIST="node-$NODE_VER-linux-x64"
 SEED_MARL_ENVS="${SEED_MARL_ENVS:-1}"
 RUN_TESTS="${RUN_TESTS:-1}"
+
+ARCH="$(uname -m)"
+if [ "$ARCH" = "arm64" ]; then
+    NODE_DIST="node-$NODE_VER-darwin-arm64"
+    MINICONDA_DIST="Miniconda3-latest-MacOSX-arm64.sh"
+else
+    NODE_DIST="node-$NODE_VER-darwin-x64"
+    MINICONDA_DIST="Miniconda3-latest-MacOSX-x86_64.sh"
+fi
 
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== Starting RL Research Platform ===${NC}"
+echo -e "${GREEN}=== Starting RL Research Platform (macOS) ===${NC}"
 
 # 0. Ensure Frontend Build (User-Space Node)
-# Check for index.html AND at least one asset file to ensure valid build
 if [ ! -f "$FRONTEND_DIST/index.html" ] || [ -z "$(ls -A $FRONTEND_DIST/assets 2>/dev/null)" ]; then
     echo -e "${GREEN}[0/4] Frontend build invalid or missing. Setting up User-Space Node.js...${NC}"
-    
-    # Check/Install Node
+
     if [ ! -d "$NODE_ROOT/bin" ]; then
         echo "Downloading Node.js $NODE_VER..."
         mkdir -p "$NODE_ROOT"
-        curl -L "https://nodejs.org/dist/$NODE_VER/$NODE_DIST.tar.xz" | tar -xJ -C "$NODE_ROOT" --strip-components=1
+        curl -L "https://nodejs.org/dist/$NODE_VER/$NODE_DIST.tar.gz" | tar -xz -C "$NODE_ROOT" --strip-components=1
     fi
-    
-    # Temporarily add to PATH
+
     export PATH="$NODE_ROOT/bin:$PATH"
     echo "Node version: $(node -v)"
     echo "NPM version: $(npm -v)"
 
     echo "Building Frontend..."
     cd "$ROOT_DIR"
-    # Clean install to avoid version conflicts
     rm -rf node_modules
-    
-    # Prefer lockfile for reproducible builds
     if [ -f package-lock.json ]; then
         npm ci
     else
         npm install
     fi
-
     echo "Generating OpenAPI client..."
     npx openapi-typescript docs/openapi_v1.yaml -o apps/portal-frontend/src/api/generated/types.ts
     npx openapi-typescript-codegen --input docs/openapi_v1.yaml --output apps/portal-frontend/src/api/generated --client fetch
-    
     npm run build
-    
+
     if [ ! -d "$FRONTEND_DIST" ]; then
         echo "Error: Build failed, dist directory not found."
         exit 1
     fi
-    
     echo "Frontend built successfully at $FRONTEND_DIST"
 else
     echo -e "${GREEN}[0/4] Frontend build found at $FRONTEND_DIST. Skipping build.${NC}"
@@ -82,26 +85,18 @@ mkdir -p "$RUNS_DIR"
 mkdir -p "$SETUP_DIR"
 cd "$BACKEND_DIR"
 
-# Force local venv to avoid Python 3.13 conflicts in Conda base
-# if [ ! -z "$CONDA_DEFAULT_ENV" ]; then
-#     echo "Using existing Conda environment: $CONDA_DEFAULT_ENV"
-# else
-    if [ ! -d ".venv" ]; then
-        python3 -m venv .venv
-    fi
-    source .venv/bin/activate
-# fi
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+source .venv/bin/activate
 
 echo "Ensuring dependencies..."
 pip install "setuptools<66" wheel > /dev/null 2>&1
-# Pre-install safe gym
 pip install "gym==0.26.2" > /dev/null 2>&1
-# Install with constraints to prevent legacy gym build errors
 pip install --no-build-isolation -c ../../constraints.txt -r requirements.txt > /dev/null
 pip install --no-build-isolation -c ../../constraints.txt "python-multipart==0.0.13" > /dev/null
 pip install --no-build-isolation -c ../../constraints.txt -r runner/requirements.txt tensorboard > /dev/null
 
-# Force install Ray RLLib without checking dependencies (Bypass Gym Hell)
 echo "Installing Ray RLLib (No Deps mode)..."
 pip install --no-deps "ray[rllib]>=2.9.0" "dm-tree" "lz4" "scipy" "typer" > /dev/null
 
@@ -109,7 +104,7 @@ pip install --no-deps "ray[rllib]>=2.9.0" "dm-tree" "lz4" "scipy" "typer" > /dev
 if ! command -v conda >/dev/null 2>&1; then
     if [ ! -x "$MINICONDA_ROOT/bin/conda" ]; then
         echo -e "${GREEN}[1.5/4] Installing Miniconda (user-space)...${NC}"
-        curl -L "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" -o "$SETUP_DIR/miniconda.sh"
+        curl -L "https://repo.anaconda.com/miniconda/$MINICONDA_DIST" -o "$SETUP_DIR/miniconda.sh"
         bash "$SETUP_DIR/miniconda.sh" -b -p "$MINICONDA_ROOT"
         rm -f "$SETUP_DIR/miniconda.sh"
     fi
@@ -147,7 +142,6 @@ else
     export ORBITZOO_REPO="${ORBITZOO_REPO:-$ORBITZOO_REPO_DEFAULT}"
 fi
 
-# If OrbitZoo setup wrote a runner python path, use it for all runs.
 if [ -f "$ORBIT_PY_FILE" ]; then
     export RUNNER_PYTHON="$(cat "$ORBIT_PY_FILE")"
 fi
@@ -161,18 +155,15 @@ else
     echo -e "${GREEN}[1.7/4] RL extras already installed. Skipping.${NC}"
 fi
 
-# 2. Database Initialization & Seeding (Direct Python Logic)
+# 2. Database Initialization & Seeding
 echo -e "${GREEN}[2/4] Initializing Database & Seeding...${NC}"
 export DATABASE_URL="sqlite:///rl_platform.db"
 export PYTHONPATH=$BACKEND_DIR
-# This one script now does EVERYTHING: Create tables + Seed data
 python3 scripts/init_db_direct.py
 
-# 2.1 Seed Default Environment Data (Idempotent)
 echo -e "${GREEN}[2.1/4] Seeding Default Envs & Algos...${NC}"
 /bin/sh "$ROOT_DIR/scripts/seed-full.sh"
 
-# 2.2 Seed Comprehensive MARL Envs
 if [ "$SEED_MARL_ENVS" = "1" ]; then
     echo -e "${GREEN}[2.2/4] Seeding Comprehensive MARL Envs...${NC}"
     python3 scripts/seed_marl_envs.py
@@ -180,7 +171,6 @@ else
     echo -e "${GREEN}[2.2/4] Skipping MARL env seed (SEED_MARL_ENVS=0).${NC}"
 fi
 
-# 2.3 Run Backend Tests
 if [ "$RUN_TESTS" = "1" ]; then
     echo -e "${GREEN}[2.3/4] Running Backend Tests...${NC}"
     PYTHONPATH="$BACKEND_DIR" pytest -q

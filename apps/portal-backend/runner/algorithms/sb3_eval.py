@@ -1,8 +1,9 @@
 import json
 import os
 import sys
+
 import gymnasium as gym
-from stable_baselines3 import PPO, SAC, DQN
+from stable_baselines3 import A2C, DQN, PPO, SAC, TD3
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 from pathlib import Path
@@ -84,10 +85,22 @@ def evaluate(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=No
     # We need to know the algo class. PPO is safe default for this demo.
     # Ideally, metadata tells us.
     algo_name = config.get("algo", {}).get("name", "PPO").upper()
+    if algo_name in {"SB3-SAC", "SAC"}:
+        algo_name = "SAC"
+    if algo_name in {"SB3-DQN", "DQN"}:
+        algo_name = "DQN"
+    if algo_name in {"SB3-PPO", "PPO"}:
+        algo_name = "PPO"
+    if algo_name in {"SB3-A2C", "A2C"}:
+        algo_name = "A2C"
+    if algo_name in {"SB3-TD3", "TD3"}:
+        algo_name = "TD3"
     model_cls = {
         "PPO": PPO,
         "SAC": SAC,
-        "DQN": DQN
+        "DQN": DQN,
+        "A2C": A2C,
+        "TD3": TD3,
     }.get(algo_name, PPO)
     
     print(f"[Eval] Loading {algo_name} model from {model_path}...")

@@ -20,6 +20,8 @@ import type {
   SettingsUpdate,
   TokenRotateResponse,
   RetentionApplyResponse,
+  BootstrapResponse,
+  Dataset,
 } from '../types';
 import { createApiClient } from '../apps/portal-frontend/src/api/generated/client';
 
@@ -34,13 +36,26 @@ const resolvedBaseUrl = (() => {
   return '/api/v1';
 })();
 
+const authFetch: typeof fetch = (input, init = {}) => {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has('Authorization')) {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+  }
+  return fetch(input, { ...init, headers });
+};
+
 const apiClient = createApiClient({
   baseUrl: resolvedBaseUrl,
+  fetcher: authFetch,
 });
 
 export const apiBaseUrl = resolvedBaseUrl;
 
 export const api = {
+  login: async (payload: { email: string; password: string }) => apiClient.login(payload),
   getProjects: async (): Promise<Project[]> => apiClient.listProjects(),
   getProjectById: async (id: string): Promise<Project> => apiClient.getProject(id),
   createProject: async (payload: { name: string; description?: string; tags?: string[]; gitRepo?: string; gitBranch?: string }): Promise<Project> =>
@@ -48,6 +63,26 @@ export const api = {
   deleteProject: async (id: string): Promise<void> => apiClient.deleteProject(id),
   getRuns: async (params?: { projectId?: string; type?: string; status?: string; groupId?: string; page?: number; pageSize?: number }): Promise<Run[]> => apiClient.listRuns(params),
   getRunById: async (id: string): Promise<Run> => apiClient.getRun(id),
+  getRunGroupSummary: async (groupId: string): Promise<any> => {
+    const res = await authFetch(`${apiBaseUrl}/runs/groups/${groupId}`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'group_summary_failed');
+    }
+    return res.json();
+  },
+  exportRunTemplate: async (runId: string, payload: { templateId?: string; name?: string; version?: string; description?: string }) => {
+    const res = await authFetch(`${apiBaseUrl}/runs/${runId}/export-template`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'export_template_failed');
+    }
+    return res.json();
+  },
   getRunJob: async (runId: string) => apiClient.getRunJob(runId),
   getRunMetrics: async (runId: string, params?: { keys?: string[]; fromStep?: number }): Promise<RunMetricsResponse> =>
     apiClient.queryRunMetrics(runId, params),
@@ -57,6 +92,14 @@ export const api = {
   updateSettings: async (payload: SettingsUpdate): Promise<SettingsResponse> => apiClient.updateSettings(payload),
   rotateToken: async (): Promise<TokenRotateResponse> => apiClient.rotateToken(),
   applyRetention: async (): Promise<RetentionApplyResponse> => apiClient.applyRetention(),
+  bootstrapDefaults: async (): Promise<BootstrapResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/admin/bootstrap`, { method: 'POST' });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'bootstrap_failed');
+    }
+    return res.json();
+  },
   getCheckpoints: async (runId: string): Promise<Checkpoint[]> => apiClient.listCheckpoints(runId),
   tagCheckpoint: async (runId: string, checkpointId: string, payload: { tag: string }): Promise<Checkpoint> =>
     apiClient.tagCheckpoint(runId, checkpointId, payload),
@@ -216,12 +259,54 @@ export const api = {
   deleteProtocol: async (protocolId: string): Promise<void> => apiClient.deleteEvalProtocol(protocolId),
   submitEvalJob: async (payload: { policySnapshotId: string; protocolId: string; resources?: { gpus: number } }) =>
     apiClient.submitEvalJob(payload),
+  getDatasets: async (): Promise<Dataset[]> => {
+    const res = await authFetch(`${apiBaseUrl}/datasets`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'datasets_fetch_failed');
+    }
+    return res.json();
+  },
+  registerDataset: async (payload: { name: string; description?: string; path: string; format?: string }): Promise<Dataset> => {
+    const res = await authFetch(`${apiBaseUrl}/datasets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: payload.name,
+        description: payload.description,
+        path: payload.path,
+        format: payload.format ?? 'jsonl',
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'dataset_register_failed');
+    }
+    return res.json();
+  },
+  uploadDataset: async (payload: { name: string; description?: string; format?: string; file: File }): Promise<Dataset> => {
+    const form = new FormData();
+    form.append('name', payload.name);
+    if (payload.description) form.append('description', payload.description);
+    form.append('format', payload.format ?? 'jsonl');
+    form.append('file', payload.file);
+    const res = await authFetch(`${apiBaseUrl}/datasets/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'dataset_upload_failed');
+    }
+    return res.json();
+  },
   submitTrainJob: async (payload: {
     projectId: string;
     templateVersionId: string;
-    env: { envId: string; version: string; mapSet: string };
+    env: { envId: string; version: string; mapSet: string; wrappers?: string[] } & Record<string, unknown>;
     algo: { algoId: string; algoVersionId: string; preset?: string } & Record<string, unknown>;
     train: { totalEnvSteps: number; rolloutLen: number; batchSize: number; lr: number } & Record<string, unknown>;
+    network?: Record<string, unknown>;
     resources: { gpus: number; priority?: number };
     seedSet?: number[];
     plugin?: { pluginId: string; version: string };

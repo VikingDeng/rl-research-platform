@@ -25,3 +25,4 @@ opencv-python-headless
 moviepy
 nvidia-ml-py
 tensorboard
+h5py

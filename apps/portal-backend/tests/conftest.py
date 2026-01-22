@@ -82,6 +82,8 @@ def containers():
         os.environ["S3_SECRET_KEY"] = "minioadmin"
         os.environ["S3_BUCKET"] = "rl-artifacts"
         os.environ["ALLOW_ANON"] = "true"
+        os.environ["EVAL_ENTRYPOINT"] = "algorithms.simple_eval:evaluate"
+        os.environ["EVAL_ALGO_NAME"] = "Simple Eval"
 
         yield
 
@@ -94,6 +96,8 @@ def containers():
     os.environ.setdefault("S3_SECRET_KEY", "minioadmin")
     os.environ.setdefault("S3_BUCKET", "rl-artifacts")
     os.environ.setdefault("ALLOW_ANON", "true")
+    os.environ.setdefault("EVAL_ENTRYPOINT", "algorithms.simple_eval:evaluate")
+    os.environ.setdefault("EVAL_ALGO_NAME", "Simple Eval")
 
     # Force SQLite for local/CI tests to ensure schema consistency
     print("Using SQLite for local tests.")
@@ -132,6 +136,7 @@ def app(containers):
     importlib.reload(main)
 
     # Initialize DB
+    import app.db.models  # Ensure all models are registered with SQLAlchemy
     from app.db.base import Base
     from app.db.session import engine
     

@@ -12,6 +12,7 @@ from app.services.s3 import s3_client
 
 class ReproBundleService:
     def build_manifest(self, run: models.Run) -> Dict[str, Any]:
+        git_config = run.config.get("git") if isinstance(run.config, dict) else None
         return {
             "run_id": run.id,
             "project_id": run.project_id,
@@ -19,9 +20,17 @@ class ReproBundleService:
             "created_at": run.created.isoformat() if hasattr(run, "created") else datetime.utcnow().isoformat(),
             "config": run.config,
             "git": {
+                "repo": git_config.get("repo") if isinstance(git_config, dict) else None,
                 "branch": run.git_branch,
                 "commit": run.git_commit
-            }
+            },
+            "repro_artifacts": {
+                "env_snapshot": "/manifest/env_snapshot.json",
+                "requirements_freeze": "/manifest/requirements_freeze.txt",
+                "git_diff": "/manifest/git_diff.patch",
+                "git_status": "/manifest/git_status.txt",
+                "run_fingerprint": "/manifest/run_fingerprint.json",
+            },
         }
 
     def _generate_readme(self, run: models.Run, manifest: Dict[str, Any]) -> str:
@@ -48,7 +57,7 @@ class ReproBundleService:
 - **Final Return**: {final_return}
 
 ## 🧬 Configuration
-See `config_resolved.yaml` for full hyperparameters.
+See `config_resolved.json` (or `config_resolved.yaml`) for full hyperparameters.
 
 ### Environment
 - **Env ID**: {run.env}
@@ -76,12 +85,18 @@ bash reproduce.sh
 """
 
     def _generate_reproduce_script(self, run: models.Run) -> str:
-        git_config = run.config.get("git")
+        git_config = run.config.get("git") if isinstance(run.config, dict) else None
         if not git_config or not git_config.get("repo"):
             return "#!/bin/bash\necho 'No git repository linked to this run. Cannot auto-reproduce.'"
             
         repo = git_config.get("repo")
         commit = run.git_commit or git_config.get("commit") or "main"
+        algo_entrypoint = None
+        algo_cfg = run.config.get("algo") if isinstance(run.config, dict) else None
+        if isinstance(algo_cfg, dict):
+            algo_entrypoint = algo_cfg.get("entrypoint")
+        if not algo_entrypoint:
+            return "#!/bin/bash\necho 'Missing algorithm entrypoint. Cannot auto-reproduce.'"
         
         # We assume the user runs this script in a clean dir
         return f"""#!/bin/bash
@@ -101,18 +116,71 @@ cd source_code
 echo "Checking out {commit}..."
 git checkout {commit}
 
-# 3. Install Dependencies (Optional, adjust as needed)
-if [ -f "requirements.txt" ]; then
+# 3. Setup Virtualenv
+python -m venv .venv
+source .venv/bin/activate
+
+# 4. Install Dependencies (Optional, adjust as needed)
+FREEZE_FILE="../manifest/requirements_freeze.txt"
+if [ -f "$FREEZE_FILE" ]; then
+    echo "Installing frozen dependencies..."
+    pip install -r "$FREEZE_FILE"
+elif [ -f "requirements.txt" ]; then
     echo "Installing dependencies..."
     pip install -r requirements.txt
 fi
 
-# 4. Run Training
-# Assuming standard python entrypoint. Adjust if using custom runner.
-# We pass the config file from the bundle.
+# 5. Run Training
+# We use the saved entrypoint and resolved config.
 echo "Starting Training..."
 export PYTHONPATH=$PYTHONPATH:.
-python -m {run.algo} --config ../config_resolved.yaml
+python - <<'PY'
+import inspect
+import importlib
+import json
+import os
+from pathlib import Path
+
+ENTRYPOINT = "{algo_entrypoint}"
+CONFIG_PATH = Path("../config_resolved.json")
+
+def load_entrypoint(entrypoint: str):
+    module_name, func_name = entrypoint.split(":", 1)
+    module = importlib.import_module(module_name)
+    return getattr(module, func_name)
+
+def call_with_kwargs(func, context):
+    signature = inspect.signature(func)
+    params = signature.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return func(**context)
+    filtered = {key: value for key, value in context.items() if key in params}
+    if filtered:
+        return func(**filtered)
+    if len(params) == 0:
+        return func()
+    if len(params) == 1:
+        return func(context["config"])
+    return func(context["config"], **filtered)
+
+config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+output_dir = Path("repro_output").resolve()
+metrics_path = output_dir / "metrics.jsonl"
+checkpoint_dir = output_dir / "checkpoints"
+output_dir.mkdir(parents=True, exist_ok=True)
+checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+context = {
+    "config": config,
+    "run_id": "repro",
+    "output_dir": str(output_dir),
+    "metrics_path": str(metrics_path),
+    "checkpoint_dir": str(checkpoint_dir),
+}
+
+func = load_entrypoint(ENTRYPOINT)
+call_with_kwargs(func, context)
+PY
 
 # Note: You might need to adjust the python command depending on your project structure.
 """
@@ -122,6 +190,7 @@ python -m {run.algo} --config ../config_resolved.yaml
         
         files = {
             "/manifest/repro_manifest.json": (json.dumps(manifest, indent=2), "application/json"),
+            "/manifest/config_resolved.json": (json.dumps(run.config or {}, indent=2), "application/json"),
             "/manifest/config_resolved.yaml": (yaml.safe_dump(run.config or {}, sort_keys=False), "text/yaml"),
             "/manifest/README.md": (self._generate_readme(run, manifest), "text/markdown"),
             "/manifest/reproduce.sh": (self._generate_reproduce_script(run), "text/x-shellscript")

@@ -18,6 +18,28 @@ type LogHint = {
   action?: string;
 };
 
+const smoothSeries = (
+  series: { step: number; value: number }[] | undefined,
+  windowSize: number,
+) => {
+  if (!series || series.length === 0) return [];
+  if (windowSize <= 1) return series;
+  const output: { step: number; value: number }[] = [];
+  const window: number[] = [];
+  let sum = 0;
+  series.forEach(point => {
+    window.push(point.value);
+    sum += point.value;
+    if (window.length > windowSize) {
+      const removed = window.shift();
+      if (removed !== undefined) sum -= removed;
+    }
+    const denom = window.length || 1;
+    output.push({ step: point.step, value: sum / denom });
+  });
+  return output;
+};
+
 const deriveLogHints = (lines: string[]): LogHint[] => {
   const recent = lines.slice(-LOG_HINT_WINDOW);
   const hints: LogHint[] = [];
@@ -129,6 +151,7 @@ export const RunDetail: React.FC = () => {
   // Repro Bundle State
   const [reproBundleUrl, setReproBundleUrl] = useState<string | null>(null);
   const [reproManifest, setReproManifest] = useState<Record<string, unknown> | null>(null);
+  const [smoothWindow, setSmoothWindow] = useState(1);
 
   // Modal State
   const [showEvalModal, setShowEvalModal] = useState(false);
@@ -186,7 +209,7 @@ export const RunDetail: React.FC = () => {
       }
       
       const vids = files.filter(f => f.name.endsWith('.mp4'));
-      setVideoFiles(vids);
+      setVideoFiles(vids.sort((a, b) => a.name.localeCompare(b.name)));
   }
 
   const buildMatrixCells = (result: MatrixResult | null): MatrixCell[] => {
@@ -515,6 +538,27 @@ export const RunDetail: React.FC = () => {
 
   // Log filtering logic
   const logHints = useMemo(() => deriveLogHints(logLines), [logLines]);
+  const videoGroups = useMemo(() => {
+      const groups: Record<string, { label: string; files: ArtifactFile[] }> = {
+          train: { label: 'Training', files: [] },
+          eval: { label: 'Evaluation', files: [] },
+          matrix: { label: 'Matrix', files: [] },
+          other: { label: 'Other', files: [] },
+      };
+      videoFiles.forEach(file => {
+          const ref = `${file.path || ''}/${file.name}`.toLowerCase();
+          if (ref.includes('eval')) {
+              groups.eval.files.push(file);
+          } else if (ref.includes('train')) {
+              groups.train.files.push(file);
+          } else if (ref.includes('matrix')) {
+              groups.matrix.files.push(file);
+          } else {
+              groups.other.files.push(file);
+          }
+      });
+      return Object.values(groups).filter(group => group.files.length > 0);
+  }, [videoFiles]);
   const filteredLogs = logLines
     .filter(line => line.toLowerCase().includes(logSearch.toLowerCase()))
     .join('\n');
@@ -537,6 +581,11 @@ export const RunDetail: React.FC = () => {
       returnMean: metricsSeries.returnMean || run.metrics.returnMean || [],
       winRate: metricsSeries.winRate || run.metrics.winRate || [],
       entropy: metricsSeries.entropy || run.metrics.entropy || [],
+  };
+  const chartSeries = {
+      returnMean: smoothSeries(metricSeries.returnMean, smoothWindow),
+      winRate: smoothSeries(metricSeries.winRate, smoothWindow),
+      entropy: smoothSeries(metricSeries.entropy, smoothWindow),
   };
   const matrixMetric = matrixResult?.meta?.metric || 'winRate';
   const matrixLabel = matrixMetric === 'returnMean'

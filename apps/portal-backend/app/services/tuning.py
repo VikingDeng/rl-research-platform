@@ -3,7 +3,11 @@ import time
 import threading
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-import optuna
+
+try:
+    import optuna
+except Exception:
+    optuna = None
 from sqlalchemy.orm import Session
 
 from app.db import models
@@ -17,6 +21,7 @@ class TuningService:
     def __init__(self):
         # In-memory track of active tuning threads
         self._threads: Dict[str, threading.Thread] = {}
+        self.available = optuna is not None
         # Storage URL for Optuna
         self.storage_url = settings.database_url.replace("+psycopg2", "") # Optuna uses standard sqlalchemy URLs
 
@@ -29,6 +34,8 @@ class TuningService:
                      n_trials: int = 10,
                      metric: str = "winRate",
                      direction: str = "maximize"):
+        if not self.available:
+            raise ValueError("optuna_not_installed")
         
         # Create a parent "Group" run to hold these? 
         # Or just use a common group_id.

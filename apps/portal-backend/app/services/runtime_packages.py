@@ -54,14 +54,16 @@ def _normalize_packages(packages: Iterable[str]) -> List[str]:
 
 
 def _cache_key(packages: List[str]) -> str:
-    seed = "|".join(packages) + f"|py{sys.version_info.major}.{sys.version_info.minor}"
+    python_marker = settings.runner_python or f"py{sys.version_info.major}.{sys.version_info.minor}"
+    seed = "|".join(packages) + f"|{python_marker}"
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     return digest[:12]
 
 
 def _pip_install(packages: List[str], target: Path) -> None:
+    python_exec = settings.runner_python or sys.executable
     cmd = [
-        sys.executable,
+        python_exec,
         "-m",
         "pip",
         "install",

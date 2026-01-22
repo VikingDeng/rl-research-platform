@@ -6,8 +6,10 @@ from app.schemas.base import APIModel
 class ExecutorSettings(APIModel):
     mode: str
     local_gpu_count: int
+    local_executor_mode: str
     determined_master_url: Optional[str] = None
     determined_connected: Optional[bool] = None
+    determined_mock: Optional[bool] = None
     scheduler: Optional[str] = None
 
 

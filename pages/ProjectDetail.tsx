@@ -181,9 +181,13 @@ export const ProjectDetail: React.FC = () => {
                             </td>
                             <td className="px-6 py-4">
                                 {run.groupId ? (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100" title={run.groupId}>
+                                    <Link
+                                      to={`/groups/${run.groupId}`}
+                                      className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100 hover:bg-purple-100"
+                                      title={run.groupId}
+                                    >
                                         {run.groupId.includes('sweep') ? 'Sweep' : 'Group'}
-                                    </span>
+                                    </Link>
                                 ) : <span className="text-gray-300">-</span>}
                             </td>
                             <td className="px-6 py-4">

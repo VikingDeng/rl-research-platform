@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple
 from sqlalchemy.orm import Session
 
 from app.db import models
-from app.services.artifacts import artifact_service
 from app.services.s3 import s3_client
 
 
@@ -33,20 +32,29 @@ class EvalMatrixService:
         
         if not summary_artifact:
             print(f"[EvalMatrix] No summary artifact found for run {run.id}")
+            win_rate = 0.0
+            if isinstance(eval_result.metrics, dict):
+                try:
+                    win_rate = float(eval_result.metrics.get("winRate", 0.0))
+                except (TypeError, ValueError):
+                    win_rate = 0.0
+            summary_data = {"mean": win_rate, "std": 0.0, "n": 0}
+            eval_result.metrics = {"winRate": win_rate}
+            eval_result.summary = summary_data
+            eval_result.ci = {"low": win_rate, "high": win_rate, "level": 0.95}
             return
 
         try:
-            content_stream = s3_client.get_object(summary_artifact.object_key)
-            if content_stream:
-                summary_data = json.load(content_stream)
+            content_bytes = s3_client.get_object_bytes(summary_artifact.object_key)
+            if content_bytes:
+                summary_data = json.loads(content_bytes.decode("utf-8"))
                 
-                eval_result.metrics = {"winRate": summary_data.get("winRate", 0.0)}
-                eval_result.summary = summary_data
-                # Assuming summary has std/count, we can approx ci if needed, or just use mean
-                eval_result.ci = {
-                    "mean": summary_data.get("mean", 0.0),
-                    "std": summary_data.get("std", 0.0)
-                }
+                mean = float(summary_data.get("mean", summary_data.get("winRate", 0.0)))
+                std = float(summary_data.get("std", 0.0))
+                n = int(summary_data.get("n", summary_data.get("count", 0)))
+                eval_result.metrics = {"winRate": summary_data.get("winRate", mean)}
+                eval_result.summary = {"mean": mean, "std": std, "n": n}
+                eval_result.ci = {"low": mean, "high": mean, "level": 0.95}
                 eval_result.artifact_url = s3_client.presigned_get_url(summary_artifact.object_key)
                 print(f"[EvalMatrix] Materialized result for {run.id}")
         except Exception as e:
@@ -69,12 +77,24 @@ class EvalMatrixService:
         
         if not json_artifact:
             print(f"[EvalMatrix] No matrix artifact found for run {run.id}")
+            labels = []
+            if isinstance(run.config, dict):
+                snapshot_ids = run.config.get("policySnapshotIds") or []
+                labels = [str(sid) for sid in snapshot_ids]
+            size = len(labels)
+            matrix_result.labels = labels
+            matrix_result.matrix = [[0.0 for _ in range(size)] for _ in range(size)]
+            matrix_result.cells = []
+            matrix_result.ranking = [{"id": label, "score": 0.0} for label in labels]
+            matrix_result.summary = {"generated": True, "placeholder": True}
+            matrix_result.meta = {"source": "placeholder"}
+            matrix_result.artifacts = {"jsonUri": None}
             return
 
         try:
-            content_stream = s3_client.get_object(json_artifact.object_key)
-            if content_stream:
-                payload = json.load(content_stream)
+            content_bytes = s3_client.get_object_bytes(json_artifact.object_key)
+            if content_bytes:
+                payload = json.loads(content_bytes.decode("utf-8"))
                 
                 matrix_result.labels = payload.get("labels", [])
                 matrix_result.matrix = payload.get("matrix", [])

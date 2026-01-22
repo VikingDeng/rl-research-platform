@@ -12,13 +12,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session, defer
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_api_token, check_ws_token
 from app.db import models
 from app.db.session import SessionLocal
 from app.schemas.auth import LoginRequest, LoginResponse, User
@@ -49,6 +49,9 @@ from app.schemas.plugins import Plugin, PluginUpdate, PluginVersion, PluginVersi
 from app.schemas.runs import (
     Run,
     RunSummary,
+    RunGroupSummary,
+    RunGroupItem,
+    RunGroupMetricSummary,
     Checkpoint,
     CheckpointTagRequest,
     Job,
@@ -59,6 +62,7 @@ from app.schemas.runs import (
     LogPage,
     NotebookCreate,
     NotebookResponse,
+    RunExportTemplateRequest,
 )
 from app.schemas.eval import (
     EnvRef,
@@ -92,9 +96,11 @@ from app.schemas.settings import (
     TokenRotateResponse,
     RetentionApplyResponse,
 )
+from app.schemas.bootstrap import BootstrapResponse
 from app.services import paths, runtime_packages
+from app.services.auth import get_api_token, ensure_setting, generate_api_token
 from app.schemas.webhooks import Webhook, WebhookCreate
-from app.schemas.datasets import Dataset, DatasetCreate
+from app.schemas.datasets import Dataset, DatasetCreate, DatasetPreview
 from app.services.artifacts import artifact_service
 from app.services.job_manager import job_manager
 from app.services.metrics import metrics_service
@@ -104,6 +110,7 @@ from app.services.retention import apply_checkpoint_policy
 from app.services.schema_validation import validate_env_constraints, validate_json_schema
 from app.services.s3 import s3_client
 from app.services.datasets import dataset_service
+from app.services.bootstrap import bootstrap_service
 from app.schemas.models import (
     RegisteredModel,
     ModelVersion,
@@ -112,7 +119,7 @@ from app.schemas.models import (
     ModelVersionUpdate,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_token)])
 
 # ... (other code)
 
@@ -229,34 +236,9 @@ def get_or_create_system_project(db: Session) -> models.Project:
     return project
 
 
-def _generate_api_token() -> str:
-    return f"sk-{uuid.uuid4().hex}"
-
-
-def _ensure_setting(db: Session, key: str, default_value: dict) -> models.SystemSetting:
-    setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
-    if setting:
-        return setting
-    setting = models.SystemSetting(key=key, value=default_value)
-    db.add(setting)
-    db.commit()
-    db.refresh(setting)
-    return setting
-
-
-def _get_api_token(db: Session) -> str:
-    setting = _ensure_setting(db, "api_token", {"token": _generate_api_token()})
-    token = setting.value.get("token") if isinstance(setting.value, dict) else None
-    if not token:
-        token = _generate_api_token()
-        setting.value = {"token": token}
-        db.commit()
-    return token
-
-
 def _build_settings_response(db: Session) -> SettingsResponse:
-    token = _get_api_token(db)
-    retention_setting = _ensure_setting(db, "retention", {"checkpointPolicy": "best_latest_5"})
+    token = get_api_token(db)
+    retention_setting = ensure_setting(db, "retention", {"checkpointPolicy": "best_latest_5"})
     checkpoint_policy = (
         retention_setting.value.get("checkpointPolicy")
         if isinstance(retention_setting.value, dict)
@@ -282,8 +264,10 @@ def _build_settings_response(db: Session) -> SettingsResponse:
     executor = ExecutorSettings(
         mode=executor_mode,
         local_gpu_count=settings.local_executor_gpu_count,
+        local_executor_mode=settings.local_executor_mode.lower(),
         determined_master_url=determined_url,
         determined_connected=determined_connected,
+        determined_mock=settings.determined_mock,
         scheduler="local" if executor_mode == "local" else "determined",
     )
     storage = StorageUsage(artifact_bytes=artifact_bytes, db_bytes=db_bytes)
@@ -300,8 +284,13 @@ def get_resources() -> SystemResources:
     return get_system_resources()
 
 @router.post("/auth/login", response_model=LoginResponse)
-def login(payload: LoginRequest) -> LoginResponse:
-    return LoginResponse(token="dev-token")
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
+    token = get_api_token(db)
+    if settings.allow_anon:
+        return LoginResponse(token=token)
+    if payload.password != token and payload.email != token:
+        raise HTTPException(status_code=401, detail="invalid_api_token")
+    return LoginResponse(token=token)
 
 
 @router.get("/auth/me", response_model=User)
@@ -317,7 +306,7 @@ def get_settings(db: Session = Depends(get_db)) -> SettingsResponse:
 @router.patch("/settings", response_model=SettingsResponse)
 def update_settings(payload: SettingsUpdate, db: Session = Depends(get_db)) -> SettingsResponse:
     if payload.checkpoint_policy:
-        setting = _ensure_setting(db, "retention", {"checkpointPolicy": "best_latest_5"})
+        setting = ensure_setting(db, "retention", {"checkpointPolicy": "best_latest_5"})
         current = setting.value if isinstance(setting.value, dict) else {}
         current["checkpointPolicy"] = payload.checkpoint_policy
         setting.value = current
@@ -327,8 +316,8 @@ def update_settings(payload: SettingsUpdate, db: Session = Depends(get_db)) -> S
 
 @router.post("/settings/token/rotate", response_model=TokenRotateResponse)
 def rotate_token(db: Session = Depends(get_db)) -> TokenRotateResponse:
-    token = _generate_api_token()
-    setting = _ensure_setting(db, "api_token", {"token": token})
+    token = generate_api_token()
+    setting = ensure_setting(db, "api_token", {"token": token})
     setting.value = {"token": token}
     db.commit()
     return TokenRotateResponse(api_token=token)
@@ -362,6 +351,12 @@ def apply_retention_policy(db: Session = Depends(get_db)) -> RetentionApplyRespo
         checkpoints_removed=checkpoints_removed,
         artifacts_removed=artifacts_removed,
     )
+
+
+@router.post("/admin/bootstrap", response_model=BootstrapResponse)
+def bootstrap_defaults(db: Session = Depends(get_db)) -> BootstrapResponse:
+    payload = bootstrap_service.ensure_defaults(db)
+    return BootstrapResponse.model_validate(payload)
 
 
 @router.get("/projects", response_model=List[Project])
@@ -705,6 +700,7 @@ def _validate_env_ref(db: Session, env_ref: EnvRef) -> models.EnvVersion:
             models.EnvVersion.env_id == env_ref.env_id,
             models.EnvVersion.version == env_ref.version,
         )
+        .order_by(models.EnvVersion.active.desc(), models.EnvVersion.id.desc())
         .first()
     )
     if not env_version:
@@ -1379,16 +1375,21 @@ from app.services.tuning import tuning_service
 
 @router.post("/tuning-jobs", response_model=TuningResponse, status_code=201)
 def create_tuning_job(payload: TuningRequest) -> TuningResponse:
-    group_id = tuning_service.start_tuning(
-        project_id=payload.project_id,
-        study_name=payload.study_name,
-        algo_spec=payload.algo_spec,
-        env_spec=payload.env_spec,
-        search_space=payload.search_space,
-        n_trials=payload.n_trials,
-        metric=payload.metric,
-        direction=payload.direction
-    )
+    try:
+        group_id = tuning_service.start_tuning(
+            project_id=payload.project_id,
+            study_name=payload.study_name,
+            algo_spec=payload.algo_spec,
+            env_spec=payload.env_spec,
+            search_space=payload.search_space,
+            n_trials=payload.n_trials,
+            metric=payload.metric,
+            direction=payload.direction
+        )
+    except ValueError as exc:
+        if str(exc) == "optuna_not_installed":
+            raise HTTPException(status_code=503, detail="optuna_not_installed")
+        raise
     return TuningResponse(group_id=group_id, message="Tuning started in background")
 
 @router.get("/tuning/{study_name}")
@@ -1396,7 +1397,10 @@ def get_tuning_study(study_name: str):
     """
     Returns trials and importance for a study.
     """
-    import optuna
+    try:
+        import optuna
+    except Exception:
+        raise HTTPException(status_code=503, detail="optuna_not_installed")
     from app.services.tuning import tuning_service
     
     try:
@@ -1492,6 +1496,7 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
             models.EnvVersion.env_id == payload.env.env_id,
             models.EnvVersion.version == payload.env.version,
         )
+        .order_by(models.EnvVersion.active.desc(), models.EnvVersion.id.desc())
         .first()
     )
     if not env_version:
@@ -1624,6 +1629,7 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
             "algo": algo_payload,
             "agent": payload.agent.model_dump(by_alias=True) if payload.agent else None,
             "train": payload.train.model_dump(by_alias=True),
+            "network": payload.network,
             "resources": payload.resources.model_dump(by_alias=True),
             "seedSet": payload.seed_set,
             "plugin": plugin_payload,
@@ -1655,7 +1661,16 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
     db.commit()
     db.refresh(job)
 
-    job_manager.submit(job.id)
+    try:
+        job_manager.submit(job.id)
+    except ValueError as exc:
+        if str(exc) == "job_queue_full":
+            job.status = "CANCELED"
+            job.message = "job_queue_full"
+            run.status = "CANCELED"
+            db.commit()
+            raise HTTPException(status_code=429, detail="job_queue_full")
+        raise
     return TrainJobResponse(run_id=run.id, job_id=job.id)
 
 
@@ -1717,6 +1732,233 @@ def get_run(run_id: str, db: Session = Depends(get_db)) -> Run:
     return Run.model_validate(run)
 
 
+@router.post("/runs/{run_id}/export-template", response_model=TemplateVersion, status_code=201)
+def export_run_template(
+    run_id: str,
+    payload: RunExportTemplateRequest,
+    db: Session = Depends(get_db),
+) -> TemplateVersion:
+    run = db.query(models.Run).filter(models.Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="run_not_found")
+
+    algo_version_id = None
+    if isinstance(run.config, dict):
+        algo_cfg = run.config.get("algo")
+        if isinstance(algo_cfg, dict):
+            algo_version_id = algo_cfg.get("algoVersionId")
+    if not algo_version_id and run.template_version_id:
+        template_version = (
+            db.query(models.TemplateVersion)
+            .filter(models.TemplateVersion.id == run.template_version_id)
+            .first()
+        )
+        if template_version:
+            algo_version_id = template_version.algo_version_id
+    if not algo_version_id:
+        raise HTTPException(status_code=400, detail="algo_version_missing_in_run")
+
+    def sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned = dict(cfg)
+        for key in [
+            "resources",
+            "autoEval",
+            "seedSet",
+            "resume",
+            "resumeFrom",
+            "resumePath",
+            "datasetPath",
+            "datasetFormat",
+            "modelPath",
+            "policySnapshots",
+            "policySnapshotId",
+            "protocolId",
+            "policyMeta",
+        ]:
+            cleaned.pop(key, None)
+        return cleaned
+
+    default_config = sanitize_config(run.config or {}) if isinstance(run.config, dict) else {}
+
+    template = None
+    if payload.template_id:
+        template = db.query(models.Template).filter(models.Template.id == payload.template_id).first()
+        if not template:
+            raise HTTPException(status_code=404, detail="template_not_found")
+        if template.archived:
+            raise HTTPException(status_code=400, detail="template_archived")
+        if template.project_id != run.project_id:
+            raise HTTPException(status_code=400, detail="template_project_mismatch")
+    else:
+        env_cfg = default_config.get("env") if isinstance(default_config.get("env"), dict) else {}
+        api_mode = env_cfg.get("apiMode") or env_cfg.get("api_mode")
+        algo_id = run.algo or ""
+        is_multi = str(api_mode).lower() == "pettingzoo" or algo_id in {
+            "mappo-marl",
+            "qmix-marl",
+            "vdn-marl",
+            "mappo-rnn-marl",
+            "qmix-rnn-marl",
+        }
+        template_name = payload.name or f"Exported {run.name}"
+        template = models.Template(
+            project_id=run.project_id,
+            name=template_name,
+            description=payload.description or f"Exported from run {run.id}",
+            type="Multi-Agent" if is_multi else "Single-Agent",
+            default_config=default_config,
+        )
+        db.add(template)
+        db.commit()
+        db.refresh(template)
+
+    version_label = payload.version or f"export-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+    version = models.TemplateVersion(
+        template_id=template.id,
+        algo_version_id=algo_version_id,
+        version=version_label,
+        default_config=default_config,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    return TemplateVersion.model_validate(version)
+
+
+@router.get("/runs/groups/{group_id}", response_model=RunGroupSummary)
+def get_run_group_summary(group_id: str, db: Session = Depends(get_db)) -> RunGroupSummary:
+    runs = (
+        db.query(models.Run)
+        .filter(models.Run.group_id == group_id)
+        .order_by(models.Run.created.asc())
+        .all()
+    )
+    if not runs:
+        raise HTTPException(status_code=404, detail="group_not_found")
+
+    status_counts: Dict[str, int] = {}
+    metrics_bucket: Dict[str, List[float]] = {}
+    best_run_for_metric: Dict[str, str] = {}
+    best_value_for_metric: Dict[str, float] = {}
+    items: List[RunGroupItem] = []
+
+    def last_metric_value(values: Any) -> Optional[float]:
+        if not isinstance(values, list) or not values:
+            return None
+        last = values[-1]
+        if isinstance(last, dict):
+            return last.get("value")
+        return None
+
+    for run in runs:
+        metrics_service.sync_run_metrics(db, run)
+        status_counts[run.status] = status_counts.get(run.status, 0) + 1
+
+        seed_value: Optional[int] = None
+        if isinstance(run.config, dict):
+            seed_set = run.config.get("seedSet")
+            if isinstance(seed_set, list) and seed_set:
+                seed_value = seed_set[0]
+            elif run.config.get("seed") is not None:
+                try:
+                    seed_value = int(run.config.get("seed"))
+                except Exception:
+                    seed_value = None
+
+        final_metrics: Dict[str, float] = {}
+        if isinstance(run.metrics, dict):
+            for key, values in run.metrics.items():
+                value = last_metric_value(values)
+                if value is None:
+                    continue
+                final_metrics[key] = float(value)
+                metrics_bucket.setdefault(key, []).append(float(value))
+                # Track best run by max value
+                current_best_value = best_value_for_metric.get(key)
+                if current_best_value is None or float(value) > current_best_value:
+                    best_value_for_metric[key] = float(value)
+                    best_run_for_metric[key] = run.id
+
+        items.append(
+            RunGroupItem(
+                id=run.id,
+                name=run.name,
+                status=run.status,
+                created=run.created,
+                algo=run.algo,
+                env=run.env,
+                seed=seed_value,
+                metrics=final_metrics,
+            )
+        )
+
+    import statistics
+    import math
+
+    metric_summaries: Dict[str, RunGroupMetricSummary] = {}
+    t_critical_95 = {
+        1: 12.706,
+        2: 4.303,
+        3: 3.182,
+        4: 2.776,
+        5: 2.571,
+        6: 2.447,
+        7: 2.365,
+        8: 2.306,
+        9: 2.262,
+        10: 2.228,
+        11: 2.201,
+        12: 2.179,
+        13: 2.160,
+        14: 2.145,
+        15: 2.131,
+        16: 2.120,
+        17: 2.110,
+        18: 2.101,
+        19: 2.093,
+        20: 2.086,
+        21: 2.080,
+        22: 2.074,
+        23: 2.069,
+        24: 2.064,
+        25: 2.060,
+        26: 2.056,
+        27: 2.052,
+        28: 2.048,
+        29: 2.045,
+        30: 2.042,
+    }
+    for key, values in metrics_bucket.items():
+        n = len(values)
+        if n == 0:
+            continue
+        mean = statistics.mean(values)
+        std = statistics.pstdev(values) if n > 1 else 0.0
+        df = max(n - 1, 1)
+        t_val = t_critical_95.get(df, 1.96)
+        margin = t_val * (std / math.sqrt(n)) if n > 1 else 0.0
+        ci_low = float(mean - margin)
+        ci_high = float(mean + margin)
+        metric_summaries[key] = RunGroupMetricSummary(
+            mean=float(mean),
+            std=float(std),
+            min=float(min(values)),
+            max=float(max(values)),
+            n=n,
+            best_run_id=best_run_for_metric.get(key),
+            ci_low=ci_low,
+            ci_high=ci_high,
+        )
+
+    return RunGroupSummary(
+        group_id=group_id,
+        total_runs=len(runs),
+        status_counts=status_counts,
+        metrics=metric_summaries,
+        runs=items,
+    )
+
+
 @router.delete("/runs/{run_id}", status_code=204)
 def delete_run(run_id: str, db: Session = Depends(get_db)) -> Response:
     run = db.query(models.Run).filter(models.Run.id == run_id).first()
@@ -1727,8 +1969,8 @@ def delete_run(run_id: str, db: Session = Depends(get_db)) -> Response:
     db.query(models.Job).filter(models.Job.run_id == run_id).delete()
     # Delete associated checkpoints
     db.query(models.Checkpoint).filter(models.Checkpoint.run_id == run_id).delete()
-    # Delete associated artifacts
-    db.query(models.Artifact).filter(models.Artifact.run_id == run_id).delete()
+    # Delete associated artifacts (DB + object storage)
+    artifact_service.delete_run_artifacts(db, run_id)
     
     # Delete run
     db.delete(run)
@@ -1746,8 +1988,9 @@ def delete_runs_batch(payload: List[str], db: Session = Depends(get_db)) -> dict
     db.query(models.Job).filter(models.Job.run_id.in_(run_ids)).delete(synchronize_session=False)
     # Delete associated checkpoints
     db.query(models.Checkpoint).filter(models.Checkpoint.run_id.in_(run_ids)).delete(synchronize_session=False)
-    # Delete associated artifacts
-    db.query(models.Artifact).filter(models.Artifact.run_id.in_(run_ids)).delete(synchronize_session=False)
+    # Delete associated artifacts (DB + object storage)
+    for run_id in run_ids:
+        artifact_service.delete_run_artifacts(db, run_id)
     # Delete associated eval results
     db.query(models.EvalResult).filter(models.EvalResult.run_id.in_(run_ids)).delete(synchronize_session=False)
     
@@ -2472,7 +2715,7 @@ def submit_eval_job(payload: EvalJobRequest, db: Session = Depends(get_db)) -> E
         name=f"eval-{payload.protocol_id}-{datetime.utcnow().strftime('%H%M%S')}",
         type="EVAL",
         status="PENDING",
-        algo="sb3-eval", # Use the real evaluator
+        algo=settings.eval_algo_name,
         env=payload.protocol_id,
         config={
             "protocolId": payload.protocol_id, 
@@ -2501,8 +2744,8 @@ def submit_eval_job(payload: EvalJobRequest, db: Session = Depends(get_db)) -> E
             # We also need to inject the algo entrypoint info so the Runner knows what to load
             # The runner looks at `config.algo.entrypoint`.
             "algo": {
-                "entrypoint": "algorithms.sb3_eval:evaluate",
-                "name": "SB3 Evaluator"
+                "entrypoint": settings.eval_entrypoint,
+                "name": settings.eval_algo_name
             }
         },
         metrics={"returnMean": [], "winRate": [], "entropy": []},
@@ -2524,7 +2767,16 @@ def submit_eval_job(payload: EvalJobRequest, db: Session = Depends(get_db)) -> E
     run.config = {**(run.config or {}), "evalResultId": result.id}
     db.commit()
 
-    job_manager.submit(job.id)
+    try:
+        job_manager.submit(job.id)
+    except ValueError as exc:
+        if str(exc) == "job_queue_full":
+            job.status = "CANCELED"
+            job.message = "job_queue_full"
+            run.status = "CANCELED"
+            db.commit()
+            raise HTTPException(status_code=429, detail="job_queue_full")
+        raise
     return EvalJobResponse(run_id=run.id, job_id=job.id, eval_result_id=result.id)
 
 
@@ -2550,7 +2802,7 @@ def submit_matrix_job(payload: MatrixJobRequest, db: Session = Depends(get_db)) 
         name=f"matrix-{payload.protocol_id}-{datetime.utcnow().strftime('%H%M%S')}",
         type="MATRIX",
         status="PENDING",
-        algo="matrix",
+        algo=settings.matrix_algo_name,
         env=payload.protocol_id,
         config={
             "protocolId": payload.protocol_id,
@@ -2558,6 +2810,10 @@ def submit_matrix_job(payload: MatrixJobRequest, db: Session = Depends(get_db)) 
             "gamesPerPair": payload.games_per_pair,
             "poolId": pool_id,
             "metric": payload.metric,
+            "algo": {
+                "entrypoint": settings.matrix_entrypoint,
+                "name": settings.matrix_algo_name,
+            },
         },
         metrics={"returnMean": [], "winRate": [], "entropy": []},
     )
@@ -2582,7 +2838,16 @@ def submit_matrix_job(payload: MatrixJobRequest, db: Session = Depends(get_db)) 
     run.config = {**(run.config or {}), "matrixId": matrix_result.id}
     db.commit()
 
-    job_manager.submit(job.id)
+    try:
+        job_manager.submit(job.id)
+    except ValueError as exc:
+        if str(exc) == "job_queue_full":
+            job.status = "CANCELED"
+            job.message = "job_queue_full"
+            run.status = "CANCELED"
+            db.commit()
+            raise HTTPException(status_code=429, detail="job_queue_full")
+        raise
     return MatrixJobResponse(matrix_id=matrix_result.id, job_id=job.id)
 
 
@@ -2685,6 +2950,9 @@ async def stream_run_ws(websocket: WebSocket, run_id: str) -> None:
 
     db = SessionLocal()
     try:
+        if not check_ws_token(websocket, db):
+            await websocket.close(code=1008)
+            return
         run = db.query(models.Run).filter(models.Run.id == run_id).first()
         if not run:
             await websocket.close(code=1008)
@@ -2754,7 +3022,8 @@ def download_artifact_archive(run_id: str, db: Session = Depends(get_db)) -> Str
     if not artifacts:
         raise HTTPException(status_code=404, detail="artifacts_not_found")
 
-    buffer = io.BytesIO()
+    import tempfile
+    buffer = tempfile.SpooledTemporaryFile(max_size=20 * 1024 * 1024)
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for artifact in artifacts:
             if artifact.type != "file" or not artifact.object_key:
@@ -2819,6 +3088,46 @@ def list_datasets(db: Session = Depends(get_db)) -> List[Dataset]:
 def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db)) -> Dataset:
     dataset = dataset_service.create_dataset(db, payload)
     return Dataset.model_validate(dataset)
+
+
+@router.post("/datasets/upload", response_model=Dataset, status_code=201)
+def upload_dataset(
+    name: str = Form(...),
+    format: str = Form("jsonl"),
+    description: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Dataset:
+    dataset = dataset_service.create_dataset_from_upload(db, name, description, format, file)
+    return Dataset.model_validate(dataset)
+
+
+@router.get("/datasets/{dataset_id}/download")
+def download_dataset(dataset_id: str, db: Session = Depends(get_db)):
+    dataset = dataset_service.get_dataset(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="dataset_not_found")
+
+    url = dataset_service.resolve_download_url(dataset)
+    if url:
+        return RedirectResponse(url=url)
+
+    # Fall back to local file path.
+    path = Path(dataset.path).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="dataset_file_missing")
+    return FileResponse(path)
+
+
+@router.get("/datasets/{dataset_id}/preview", response_model=DatasetPreview)
+def preview_dataset(dataset_id: str, db: Session = Depends(get_db)) -> DatasetPreview:
+    dataset = dataset_service.get_dataset(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="dataset_not_found")
+    preview = dataset_service.build_preview(dataset)
+    return DatasetPreview.model_validate(preview)
 
 
 @router.post("/admin/webhooks", response_model=Webhook, status_code=201)

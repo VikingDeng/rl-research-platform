@@ -36,6 +36,15 @@ export type MatrixResult = ApiTypes.MatrixResult;
 export type OpponentPool = ApiTypes.OpponentPoolSummary;
 export type Plugin = ApiTypes.Plugin;
 export type PluginVersion = ApiTypes.PluginVersion;
+export type Dataset = {
+  id: string;
+  name: string;
+  description?: string;
+  path: string;
+  format: string;
+  sizeBytes: number;
+  createdAt: string;
+};
 export type ArtifactFile = ApiTypes.ArtifactFile;
 export type LogPage = ApiTypes.LogPage;
 export type EvalResult = ApiTypes.EvalResult;
@@ -47,3 +56,40 @@ export type RegisteredModel = ApiTypes.RegisteredModel;
 export type ModelVersion = ApiTypes.ModelVersion;
 export type SystemResources = ApiTypes.SystemResources;
 export type GpuInfo = ApiTypes.GpuInfo;
+export type RunGroupSummary = {
+  groupId: string;
+  totalRuns: number;
+  statusCounts: Record<string, number>;
+  metrics: Record<string, { mean: number; std: number; min: number; max: number; n: number; bestRunId?: string; ciLow?: number; ciHigh?: number }>;
+  runs: Array<{
+    id: string;
+    name: string;
+    status: string;
+    created: string;
+    algo: string;
+    env: string;
+    seed?: number;
+    metrics: Record<string, number>;
+  }>;
+};
+
+export type BootstrapResponse = {
+  created: {
+    projects: number;
+    envs: number;
+    envVersions: number;
+    algos: number;
+    algoVersions: number;
+    templates: number;
+    templateVersions: number;
+  };
+  defaults: {
+    projectId: string;
+    envId: string;
+    envVersion: string;
+    algoId: string;
+    algoVersionId: string;
+    templateId: string;
+    templateVersionId: string;
+  };
+};

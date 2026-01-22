@@ -1,22 +1,29 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, Lock, ArrowRight } from 'lucide-react';
+import { api } from '../services/api';
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
   const [token, setToken] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    // Mock authentication
-    setTimeout(() => {
-        localStorage.setItem('auth_token', token || 'mock_token');
-        localStorage.setItem('user_role', 'RESEARCHER');
-        setIsLoading(false);
-        navigate('/');
-    }, 800);
+    setError(null);
+    try {
+      const resp = await api.login({ email: token || 'token', password: token });
+      localStorage.setItem('auth_token', resp.token || '');
+      localStorage.setItem('user_role', 'RESEARCHER');
+      navigate('/');
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      setError(`Login failed: ${detail}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -73,6 +80,9 @@ export const Login: React.FC = () => {
                 )}
               </button>
             </div>
+            {error && (
+              <div className="text-sm text-red-600">{error}</div>
+            )}
           </form>
 
           <div className="mt-6">

@@ -1,12 +1,16 @@
 import json
 import os
 import sys
-import gymnasium as gym
-from stable_baselines3 import PPO, SAC, DQN
-from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.monitor import Monitor
-from gymnasium.wrappers import RecordVideo
+import re
 from pathlib import Path
+
+import gymnasium as gym
+import torch.nn as nn
+from gymnasium.wrappers import RecordVideo
+from stable_baselines3 import A2C, DDPG, DQN, PPO, SAC, TD3
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 class MetricsCallback(BaseCallback):
     """
@@ -41,6 +45,37 @@ class MetricsCallback(BaseCallback):
         with open(self.metrics_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload) + "\n")
 
+def _parse_steps_from_name(path: str) -> int:
+    match = re.search(r"_(\d+)_steps\\.zip$", path)
+    if match:
+        try:
+            return int(match.group(1))
+        except Exception:
+            return 0
+    return 0
+
+def _resolve_resume_path(config: dict, checkpoint_dir: str) -> tuple[str | None, int]:
+    resume_path = None
+    resume_steps = 0
+    if isinstance(config, dict):
+        resume_path = config.get("resumePath")
+        if resume_path and os.path.exists(str(resume_path)):
+            return str(resume_path), resume_steps
+        resume_flag = bool(config.get("resume")) or str(config.get("resumeFrom", "")).lower() in {"latest", "true"}
+        if resume_flag:
+            candidates = sorted(Path(checkpoint_dir).glob("model_*_steps.zip"))
+            if candidates:
+                best = max(candidates, key=lambda p: _parse_steps_from_name(p.name))
+                resume_steps = _parse_steps_from_name(best.name)
+                return str(best), resume_steps
+            latest = Path(checkpoint_dir) / "model_latest.zip"
+            if latest.exists():
+                return str(latest), resume_steps
+            final = Path(checkpoint_dir) / "model_final.zip"
+            if final.exists():
+                return str(final), resume_steps
+    return None, resume_steps
+
 def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None, env_config=None):
     """
     SB3 Training Entrypoint.
@@ -53,6 +88,7 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     """
     metrics_path = metrics_path or os.environ.get("METRICS_PATH")
     checkpoint_dir = checkpoint_dir or os.environ.get("CHECKPOINT_DIR", "./checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
     
     # 1. Parse Config
     env_cfg = config.get("env", {})
@@ -62,8 +98,23 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     train_cfg = config.get("train", {})
     total_steps = int(train_cfg.get("totalEnvSteps", 10000))
     lr = float(train_cfg.get("learningRate", 3e-4))
+    checkpoint_every = int(train_cfg.get("checkpointEvery", max(1000, total_steps // 10)))
     
-    algo_name = config.get("algo", {}).get("name", "PPO").upper()
+    algo_info = config.get("algo", {}) or {}
+    raw_name = algo_info.get("name") or algo_info.get("algoId") or "PPO"
+    algo_name = str(raw_name).upper()
+    if algo_name in {"SB3-SAC", "SAC"}:
+        algo_name = "SAC"
+    if algo_name in {"SB3-DQN", "DQN"}:
+        algo_name = "DQN"
+    if algo_name in {"SB3-PPO", "PPO"}:
+        algo_name = "PPO"
+    if algo_name in {"SB3-A2C", "A2C"}:
+        algo_name = "A2C"
+    if algo_name in {"SB3-TD3", "TD3"}:
+        algo_name = "TD3"
+    if algo_name in {"SB3-DDPG", "DDPG"}:
+        algo_name = "DDPG"
     
     # 2. Setup Environment
     # We enable video recording for the evaluation phase or periodically
@@ -99,33 +150,72 @@ def train(config, metrics_path=None, checkpoint_dir=None, run_id=None, env=None,
     model_cls = {
         "PPO": PPO,
         "SAC": SAC,
-        "DQN": DQN
+        "DQN": DQN,
+        "A2C": A2C,
+        "TD3": TD3,
+        "DDPG": DDPG,
     }.get(algo_name, PPO)
     
     print(f"Starting SB3 {algo_name} on {env_id} for {total_steps} steps...")
     
-    model = model_cls(
-        "MlpPolicy", 
-        vec_env, 
-        verbose=1, 
-        learning_rate=lr,
-        tensorboard_log=None
-    )
+    network_cfg = config.get("network", {}) or {}
+    hidden = network_cfg.get("hidden")
+    activation = str(network_cfg.get("activation", "tanh")).lower()
+    activation_fn = {
+        "tanh": nn.Tanh,
+        "relu": nn.ReLU,
+        "gelu": nn.GELU,
+        "elu": nn.ELU,
+        "leaky_relu": nn.LeakyReLU,
+    }.get(activation, nn.Tanh)
+    policy_kwargs = {}
+    if hidden:
+        policy_kwargs["net_arch"] = [int(h) for h in hidden]
+        policy_kwargs["activation_fn"] = activation_fn
+
+    resume_path, resume_steps = _resolve_resume_path(config, checkpoint_dir)
+    if resume_path:
+        print(f"[SB3] Resuming from {resume_path}")
+        model = model_cls.load(resume_path, env=vec_env)
+    else:
+        model = model_cls(
+            "MlpPolicy",
+            vec_env,
+            verbose=1,
+            learning_rate=lr,
+            tensorboard_log=None,
+            policy_kwargs=policy_kwargs if policy_kwargs else None,
+        )
     
     # 4. Train
-    callback = MetricsCallback(metrics_path)
-    model.learn(total_timesteps=total_steps, callback=callback)
+    callbacks = [MetricsCallback(metrics_path)]
+    if checkpoint_every and checkpoint_every > 0:
+        callbacks.append(
+            CheckpointCallback(
+                save_freq=checkpoint_every,
+                save_path=checkpoint_dir,
+                name_prefix="model",
+                save_replay_buffer=False,
+            )
+        )
+    already_steps = getattr(model, "num_timesteps", 0) or resume_steps
+    remaining_steps = max(total_steps - int(already_steps), 0)
+    if remaining_steps > 0:
+        model.learn(total_timesteps=remaining_steps, callback=callbacks, reset_num_timesteps=False)
+    else:
+        print("[SB3] Target steps already reached, skipping training.")
     
     # 5. Save Final Checkpoint
     final_ckpt = os.path.join(checkpoint_dir, f"model_final.zip")
     model.save(final_ckpt)
     
     # Write a json wrapper for the checkpoint so the platform sees it
+    final_step = int(getattr(model, "num_timesteps", total_steps))
     ckpt_json = os.path.join(checkpoint_dir, f"ckpt_{total_steps}.json")
     with open(ckpt_json, "w") as f:
         json.dump({
             "run_id": run_id,
-            "step": total_steps,
+            "step": final_step,
             "metrics": {},
             "path": final_ckpt,
             "format": "sb3_zip"
@@ -281,4 +371,3 @@ def train_offline(config, metrics_path=None, checkpoint_dir=None, run_id=None, e
         import traceback
         traceback.print_exc()
         sys.exit(1)
-

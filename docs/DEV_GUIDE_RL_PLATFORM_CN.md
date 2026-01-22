@@ -2,6 +2,22 @@
 
 本指南详细说明了如何扩展平台功能、添加新环境、新算法，以及如何利用 Git 工作流进行高效科研。
 
+## 0. 一键启动说明
+
+推荐使用 `start-linux.sh` / `start-mac.sh` 一键启动。脚本会自动完成：
+
+* 前端构建 + OpenAPI 客户端生成
+* 后端/Runner 依赖安装
+* Miniconda + OrbitZoo + Orekit 数据准备
+* 常用环境扩展安装（Box2D/MuJoCo/MiniGrid/PettingZoo）
+* 数据库初始化 + 默认/综合 MARL 环境注入
+* 后端测试运行
+
+如需跳过耗时步骤，可在启动时设置环境变量：
+```bash
+SEED_MARL_ENVS=0 RUN_TESTS=0 ./start-linux.sh
+```
+
 ## 1. 添加新环境
 
 ### 方法一：Web UI 注册 (推荐)

@@ -1,4 +1,8 @@
 import os
+if __name__ != "__main__":
+    import pytest
+    pytest.skip("manual_strong_test is a manual integration script", allow_module_level=True)
+
 import sys
 import shutil
 import time

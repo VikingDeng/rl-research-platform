@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 import importlib
 import os
+import hashlib
+import platform
+from datetime import datetime, timezone
+import shutil
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,6 +52,10 @@ def _normalize_env_config(env_cfg: Dict[str, Any]) -> Dict[str, Any]:
         normalized["api_mode"] = normalized["apiMode"]
     if "scenarioSchema" in normalized and "scenario_schema" not in normalized:
         normalized["scenario_schema"] = normalized["scenarioSchema"]
+    if "maxCycles" in normalized and "max_cycles" not in normalized:
+        normalized["max_cycles"] = normalized["maxCycles"]
+    if "continuousActions" in normalized and "continuous_actions" not in normalized:
+        normalized["continuous_actions"] = normalized["continuousActions"]
     return normalized
 
 
@@ -61,6 +69,31 @@ def load_hooks(spec_path: str) -> Dict[str, Callable[..., Any]]:
 
 
 import subprocess
+
+
+def _safe_run(cmd: list[str], cwd: Optional[Path] = None) -> str:
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            text=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
 
 def _setup_git_repo(git_config: Dict[str, str], work_dir: Path) -> Path:
     repo_url = git_config.get("repo")
@@ -85,6 +118,82 @@ def _setup_git_repo(git_config: Dict[str, str], work_dir: Path) -> Path:
 
 from utils.monitor import SystemMonitor
 
+def _capture_env_snapshot(output_dir: Path, config: Dict[str, Any], repo_path: Optional[Path]) -> None:
+    snapshot: Dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "python_version": sys.version,
+        "executable": sys.executable,
+        "platform": platform.platform(),
+        "config_sha256": hashlib.sha256(
+            json.dumps(config or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest(),
+        "env": {
+            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "RUNTIME_PACKAGES": os.environ.get("RUNTIME_PACKAGES"),
+            "RUNTIME_CACHE_KEY": os.environ.get("RUNTIME_CACHE_KEY"),
+            "ALGO_STORE_DIR": os.environ.get("ALGO_STORE_DIR"),
+            "PLUGIN_SPEC_PATH": os.environ.get("PLUGIN_SPEC_PATH"),
+        },
+    }
+
+    if shutil.which("nvidia-smi"):
+        gpu_info = _safe_run(
+            ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"]
+        )
+        if gpu_info:
+            snapshot["gpu"] = gpu_info.splitlines()
+
+    if repo_path:
+        snapshot["git"] = {
+            "root": str(repo_path),
+            "head": _safe_run(["git", "rev-parse", "HEAD"], cwd=repo_path),
+            "status": _safe_run(["git", "status", "--porcelain"], cwd=repo_path),
+        }
+        diff_text = _safe_run(["git", "diff"], cwd=repo_path)
+        if diff_text:
+            _write_text(output_dir / "git_diff.patch", diff_text + "\n")
+        status_text = snapshot["git"].get("status") or ""
+        if status_text:
+            _write_text(output_dir / "git_status.txt", status_text + "\n")
+
+    freeze = _safe_run([sys.executable, "-m", "pip", "freeze"])
+    if freeze:
+        _write_text(output_dir / "requirements_freeze.txt", freeze + "\n")
+
+    _write_text(output_dir / "env_snapshot.json", json.dumps(snapshot, indent=2))
+
+
+def _capture_run_fingerprint(output_dir: Path) -> None:
+    fingerprint: Dict[str, str] = {}
+    candidates = [
+        output_dir / "metrics.jsonl",
+        output_dir / "config.json",
+    ]
+    candidates.extend((output_dir / "checkpoints").glob("*.json"))
+    candidates.extend((output_dir / "eval").glob("*.json"))
+    candidates.extend((output_dir / "matrix").glob("*.json"))
+    candidates.extend((output_dir / "matrix").glob("*.csv"))
+    candidates.extend((output_dir / "videos").glob("*.mp4"))
+    candidates.extend(output_dir.glob("replay_buffer.*"))
+
+    for path in candidates:
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size > 100 * 1024 * 1024:
+                continue
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(8192), b""):
+                    digest.update(chunk)
+            fingerprint[path.relative_to(output_dir).as_posix()] = digest.hexdigest()
+        except Exception:
+            continue
+
+    if fingerprint:
+        _write_text(output_dir / "run_fingerprint.json", json.dumps(fingerprint, indent=2))
+
+
 def run_with_config(
     config: Dict[str, Any],
     run_id: str,
@@ -97,10 +206,13 @@ def run_with_config(
         monitor = SystemMonitor(metrics_path)
         monitor.start()
 
+    repo_path: Optional[Path] = None
+    output_dir = Path(metrics_path).parent
+
     try:
         # Git Integration
         if isinstance(config, dict) and config.get("git"):
-            repo_path = _setup_git_repo(config["git"], Path(metrics_path).parent)
+            repo_path = _setup_git_repo(config["git"], output_dir)
             sys.path.insert(0, str(repo_path))
             print(f"[Runner] Added {repo_path} to sys.path")
 
@@ -127,13 +239,15 @@ def run_with_config(
         context: Dict[str, Any] = {
             "config": config,
             "run_id": run_id,
-            "output_dir": str(Path(metrics_path).parent),
+            "output_dir": str(output_dir),
             "metrics_path": metrics_path,
             "checkpoint_dir": checkpoint_dir,
             "plugin_spec": plugin_spec,
         }
         if seed is not None:
             context["seed"] = seed
+
+        _capture_env_snapshot(output_dir, config, repo_path)
 
         env_obj: Optional[Any] = None
         if isinstance(config, dict):
@@ -152,14 +266,18 @@ def run_with_config(
                             "scenario_schema", "wrappers"
                         }
                         
-                        # Only filter if the target function accepts **kwargs (like gym.make)
-                        # because if it doesn't, _call_with_kwargs already filters by signature.
-                        # But gymnasium.make takes **kwargs and passes them to Env, which might fail.
-                        filtered_env_kwargs = {k: v for k, v in env_kwargs.items() if k not in system_keys}
-                        
-                        # But we MUST keep 'id' if we added it for gym.make
-                        if "id" in env_kwargs:
-                            filtered_env_kwargs["id"] = env_kwargs["id"]
+                        signature = inspect.signature(env_fn)
+                        params = signature.parameters
+                        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+                        # Only filter system keys if target accepts **kwargs (e.g., gym.make),
+                        # otherwise allow explicit params like map_set/map_sets to pass through.
+                        if accepts_kwargs:
+                            filtered_env_kwargs = {k: v for k, v in env_kwargs.items() if k not in system_keys}
+                            if "id" in env_kwargs:
+                                filtered_env_kwargs["id"] = env_kwargs["id"]
+                        else:
+                            filtered_env_kwargs = env_kwargs
 
                         env_obj = _call_with_kwargs(env_fn, filtered_env_kwargs)
                         context["env"] = env_obj
@@ -211,6 +329,10 @@ def run_with_config(
         if "on_end" in hooks:
             hooks["on_end"](context, {"status": "success"})
     finally:
+        try:
+            _capture_run_fingerprint(output_dir)
+        except Exception:
+            pass
         if monitor:
             monitor.stop()
 

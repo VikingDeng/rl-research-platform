@@ -15,6 +15,159 @@ const BASE_STEPS = [
 
 const isSystemTemplate = (tmpl: Template) => tmpl.name === 'Quick Run';
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const mergeDeep = (base: any, override: any): any => {
+  if (!isPlainObject(base)) return isPlainObject(override) ? { ...override } : override ?? base;
+  const result: Record<string, any> = { ...base };
+  if (!isPlainObject(override)) return result;
+  Object.entries(override).forEach(([key, value]) => {
+    if (isPlainObject(value) && isPlainObject(result[key])) {
+      result[key] = mergeDeep(result[key], value);
+    } else {
+      result[key] = value;
+    }
+  });
+  return result;
+};
+
+const parseArrayInput = (value: any) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // fall through to comma parsing
+  }
+  return trimmed
+    .split(',')
+    .map(item => item.trim())
+    .filter(item => item.length > 0)
+    .map(item => {
+      const numeric = Number(item);
+      return Number.isNaN(numeric) ? item : numeric;
+    });
+};
+
+const DEFAULT_TRAIN_FIELDS = [
+  { key: 'totalEnvSteps', label: 'Total Env Steps', type: 'number' },
+  { key: 'rolloutLen', label: 'Rollout Length', type: 'number' },
+  { key: 'batchSize', label: 'Batch Size', type: 'number' },
+  { key: 'lr', label: 'Learning Rate', type: 'number' },
+  { key: 'entropyCoef', label: 'Entropy Coef', type: 'number' },
+  { key: 'gamma', label: 'Gamma', type: 'number' },
+  { key: 'gaeLambda', label: 'GAE Lambda', type: 'number' },
+] as const;
+
+const DEFAULT_NETWORK_FIELDS = [
+  { key: 'hidden', label: 'Hidden Layers', type: 'array' },
+  { key: 'activation', label: 'Activation', type: 'string', options: ['tanh', 'relu', 'gelu', 'elu', 'leaky_relu'] },
+] as const;
+
+const DEFAULT_ENV_FIELDS = [
+  { key: 'maxCycles', label: 'Max Cycles', type: 'number' },
+  { key: 'continuousActions', label: 'Continuous Actions', type: 'boolean' },
+] as const;
+
+const extractSectionFieldSpecs = (
+  schema: Record<string, unknown> | undefined,
+  sectionKey: string,
+  fallback: Array<{ key: string; label: string; type: string }>,
+) => {
+  if (!schema || !isPlainObject(schema)) return [...fallback];
+  const sectionSchema = isPlainObject((schema as any).properties?.[sectionKey])
+    ? (schema as any).properties[sectionKey]
+    : null;
+  const sectionProps = isPlainObject(sectionSchema?.properties) ? sectionSchema?.properties : null;
+  if (!sectionProps) return [...fallback];
+  const specs = Object.entries(sectionProps).map(([key, spec]) => {
+    const resolved = isPlainObject(spec) ? spec : {};
+    const type = typeof resolved.type === 'string' ? resolved.type : 'string';
+    const label = typeof resolved.title === 'string' ? resolved.title : key;
+    const options = Array.isArray(resolved.enum) ? resolved.enum : undefined;
+    return { key, label, type, options };
+  });
+  return specs.length > 0 ? specs : [...fallback];
+};
+
+const validateAgainstSchema = (schema: any, value: any, path = ''): string[] => {
+  if (!schema || !isPlainObject(schema)) return [];
+  const errors: string[] = [];
+
+  const pushError = (message: string) => {
+    if (errors.length < 8) errors.push(message);
+  };
+
+  const expectedType = schema.type;
+  if (expectedType) {
+    const typeOk =
+      (expectedType === 'object' && isPlainObject(value)) ||
+      (expectedType === 'array' && Array.isArray(value)) ||
+      (expectedType === 'string' && typeof value === 'string') ||
+      (expectedType === 'number' && typeof value === 'number') ||
+      (expectedType === 'integer' && Number.isInteger(value)) ||
+      (expectedType === 'boolean' && typeof value === 'boolean');
+    if (!typeOk) {
+      pushError(`${path || 'config'}: expected ${expectedType}`);
+      return errors;
+    }
+  }
+
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    pushError(`${path || 'config'}: must be one of ${schema.enum.join(', ')}`);
+  }
+
+  if (typeof value === 'number') {
+    if (typeof schema.minimum === 'number' && value < schema.minimum) {
+      pushError(`${path || 'config'}: must be >= ${schema.minimum}`);
+    }
+    if (typeof schema.maximum === 'number' && value > schema.maximum) {
+      pushError(`${path || 'config'}: must be <= ${schema.maximum}`);
+    }
+  }
+
+  if (isPlainObject(value)) {
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    required.forEach((key: string) => {
+      if (value[key] === undefined) {
+        pushError(`${path ? `${path}.` : ''}${key}: required`);
+      }
+    });
+    const properties = isPlainObject(schema.properties) ? schema.properties : {};
+    Object.entries(properties).forEach(([key, subschema]) => {
+      if (value[key] !== undefined) {
+        errors.push(
+          ...validateAgainstSchema(
+            subschema,
+            value[key],
+            path ? `${path}.${key}` : key,
+          ),
+        );
+      }
+    });
+  }
+
+  if (Array.isArray(value) && schema.items) {
+    value.forEach((item, idx) => {
+      errors.push(...validateAgainstSchema(schema.items, item, `${path}[${idx}]`));
+    });
+  }
+
+  return errors;
+};
+
+type DatasetRecord = {
+  id: string;
+  name: string;
+  format: string;
+  path: string;
+  createdAt: string;
+};
+
 export const CreateJob: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,6 +181,7 @@ export const CreateJob: React.FC = () => {
   const [envVersionsEnvId, setEnvVersionsEnvId] = useState('');
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [evalProtocols, setEvalProtocols] = useState<EvalProtocol[]>([]);
+  const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
   const [algos, setAlgos] = useState<Algo[]>([]);
   const [algoVersions, setAlgoVersions] = useState<Record<string, AlgoVersion[]>>({});
   const [algoVersionIndex, setAlgoVersionIndex] = useState<
@@ -44,11 +198,16 @@ export const CreateJob: React.FC = () => {
   const [launchMode, setLaunchMode] = useState<'template' | 'quick'>('template');
   const [selectedAlgoId, setSelectedAlgoId] = useState('');
   const [selectedAlgoVersionId, setSelectedAlgoVersionId] = useState('');
+  const [selectedDatasetId, setSelectedDatasetId] = useState('');
   const [configOverride, setConfigOverride] = useState('');
+  const [parsedOverride, setParsedOverride] = useState<Record<string, any>>({});
+  const [configParseError, setConfigParseError] = useState<string | null>(null);
+  const [configSchemaErrors, setConfigSchemaErrors] = useState<string[]>([]);
   const [configTouched, setConfigTouched] = useState(false);
   const [selectedPlugins, setSelectedPlugins] = useState<string[]>([]);
   const [gpuCount, setGpuCount] = useState(1);
   const [priority, setPriority] = useState(2);
+  const [timeoutSec, setTimeoutSec] = useState(0);
   const [seedCount, setSeedCount] = useState(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [autoEvalEnabled, setAutoEvalEnabled] = useState(false);
@@ -107,11 +266,12 @@ export const CreateJob: React.FC = () => {
   };
 
   useEffect(() => {
-    Promise.all([api.getProjects(), api.getEnvs(), api.getPlugins(), api.getProtocols()]).then(([ps, es, pls, eps]) => {
+    Promise.all([api.getProjects(), api.getEnvs(), api.getPlugins(), api.getProtocols(), api.getDatasets()]).then(([ps, es, pls, eps, ds]) => {
       setProjects(ps);
       setEnvs(es);
       setPlugins(pls);
       setEvalProtocols(eps);
+      setDatasets((ds as DatasetRecord[]) || []);
 
       const state = (location.state ?? {}) as any;
       const savedProject = localStorage.getItem('last_project_id');
@@ -227,6 +387,64 @@ export const CreateJob: React.FC = () => {
     setSelectedAlgoVersionId(sorted[0]?.id || '');
   }, [selectedAlgoId, algoVersions]);
 
+  const algoVersionById = useMemo(() => {
+    const map = new Map<string, AlgoVersion>();
+    Object.values(algoVersions).forEach(list => {
+      list.forEach(version => map.set(version.id, version));
+    });
+    return map;
+  }, [algoVersions]);
+
+  const activeAlgoVersion = useMemo(() => {
+    if (launchMode === 'quick') {
+      return algoVersionById.get(selectedAlgoVersionId) || null;
+    }
+    const templateVersion = templateVersions.find(v => v.id === selectedTemplateVersionId);
+    if (!templateVersion?.algoVersionId) return null;
+    return algoVersionById.get(templateVersion.algoVersionId) || null;
+  }, [launchMode, selectedAlgoVersionId, selectedTemplateVersionId, templateVersions, algoVersionById]);
+
+  const activeEnvVersion = useMemo(
+    () => envVersions.find(v => v.version === selectedEnvVersion) || null,
+    [envVersions, selectedEnvVersion],
+  );
+
+  const baseConfig = useMemo(() => {
+    if (launchMode === 'template') {
+      if (!selectedTemplate || !selectedTemplateVersionId) return {};
+      return resolveTemplateDefaultConfig(selectedTemplate, selectedTemplateVersionId);
+    }
+    if (!selectedAlgoId || !selectedAlgoVersionId) return {};
+    return resolveAlgoDefaultConfig(selectedAlgoId, selectedAlgoVersionId);
+  }, [launchMode, selectedTemplate, selectedTemplateVersionId, selectedAlgoId, selectedAlgoVersionId, templates, templateVersions, algoVersions]);
+
+  const resolvedConfig = useMemo(() => mergeDeep(baseConfig || {}, parsedOverride || {}), [baseConfig, parsedOverride]);
+
+  const trainFieldSpecs = useMemo(
+    () => extractSectionFieldSpecs(activeAlgoVersion?.configSchema as Record<string, unknown> | undefined, 'train', DEFAULT_TRAIN_FIELDS as any),
+    [activeAlgoVersion],
+  );
+
+  const algoFieldSpecs = useMemo(
+    () => extractSectionFieldSpecs(activeAlgoVersion?.configSchema as Record<string, unknown> | undefined, 'algo', []),
+    [activeAlgoVersion],
+  );
+
+  const networkFieldSpecs = useMemo(
+    () => extractSectionFieldSpecs(activeAlgoVersion?.configSchema as Record<string, unknown> | undefined, 'network', DEFAULT_NETWORK_FIELDS as any),
+    [activeAlgoVersion],
+  );
+
+  const envFieldSpecs = useMemo(
+    () =>
+      extractSectionFieldSpecs(
+        activeAlgoVersion?.configSchema as Record<string, unknown> | undefined,
+        'env',
+        (activeEnvVersion?.apiMode === 'pettingzoo' ? DEFAULT_ENV_FIELDS : []) as any,
+      ),
+    [activeAlgoVersion, activeEnvVersion],
+  );
+
   useEffect(() => {
     if (forkSource) return;
     if (configTouched) return;
@@ -251,6 +469,47 @@ export const CreateJob: React.FC = () => {
     forkSource,
     configTouched,
   ]);
+
+  useEffect(() => {
+    if (!configOverride || configOverride.trim().length === 0) {
+      setParsedOverride({});
+      setConfigParseError(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(configOverride);
+      setParsedOverride(isPlainObject(parsed) ? parsed : {});
+      setConfigParseError(null);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'Invalid JSON';
+      setParsedOverride({});
+      setConfigParseError(detail);
+    }
+  }, [configOverride]);
+
+  useEffect(() => {
+    const datasetId = (parsedOverride as any)?.datasetId;
+    if (datasetId && datasetId !== selectedDatasetId) {
+      setSelectedDatasetId(datasetId);
+    }
+    if (!datasetId && selectedDatasetId) {
+      setSelectedDatasetId('');
+    }
+  }, [parsedOverride, selectedDatasetId]);
+
+  useEffect(() => {
+    if (configParseError) {
+      setConfigSchemaErrors([]);
+      return;
+    }
+    const schema = activeAlgoVersion?.configSchema;
+    if (!schema || !isPlainObject(schema) || Object.keys(schema).length === 0) {
+      setConfigSchemaErrors([]);
+      return;
+    }
+    const errors = validateAgainstSchema(schema, resolvedConfig);
+    setConfigSchemaErrors(errors);
+  }, [activeAlgoVersion, resolvedConfig, configParseError]);
 
   useEffect(() => {
     if (launchMode === 'template' && selectedTemplate) {
@@ -310,31 +569,26 @@ export const CreateJob: React.FC = () => {
 
   // Detect sweep config
   useEffect(() => {
-      try {
-          const config = JSON.parse(configOverride);
-          let combinations = 1;
-          let foundList = false;
-          
-          const checkSweep = (obj: any) => {
-              for (const key in obj) {
-                  if (Array.isArray(obj[key]) && isSweepMode) {
-                      combinations *= obj[key].length;
-                      foundList = true;
-                  } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-                      checkSweep(obj[key]);
-                  }
-              }
-          };
-          
-          if (isSweepMode) {
-            checkSweep(config);
-          }
-          setSweepCombinations(foundList ? combinations : 1);
+      const config = parsedOverride || {};
+      let combinations = 1;
+      let foundList = false;
 
-      } catch (e) {
-          // ignore invalid json
+      const checkSweep = (obj: any) => {
+          for (const key in obj) {
+              if (Array.isArray(obj[key]) && isSweepMode) {
+                  combinations *= obj[key].length;
+                  foundList = true;
+              } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+                  checkSweep(obj[key]);
+              }
+          }
+      };
+
+      if (isSweepMode) {
+        checkSweep(config);
       }
-  }, [configOverride, isSweepMode]);
+      setSweepCombinations(foundList ? combinations : 1);
+  }, [parsedOverride, isSweepMode]);
 
   const buildSweepTrainConfigs = (parsedConfig: any) => {
     const train = parsedConfig?.train && typeof parsedConfig.train === 'object' ? parsedConfig.train : {};
@@ -347,6 +601,9 @@ export const CreateJob: React.FC = () => {
       'gamma',
       'gaeLambda',
     ]);
+    const extraTrain = Object.fromEntries(
+      Object.entries(train).filter(([key]) => !allowedSweepKeys.has(key)),
+    );
     const baseTrain = {
       totalEnvSteps: Number(train?.totalEnvSteps ?? 100000),
       rolloutLen: Number(train?.rolloutLen ?? 10),
@@ -360,7 +617,7 @@ export const CreateJob: React.FC = () => {
       key => allowedSweepKeys.has(key) && Array.isArray(train[key]),
     );
     if (!isSweepMode || sweepKeys.length === 0) {
-      return [baseTrain];
+      return [{ ...baseTrain, ...extraTrain }];
     }
     let combos: Array<Record<string, any>> = [{}];
     sweepKeys.forEach(key => {
@@ -375,6 +632,7 @@ export const CreateJob: React.FC = () => {
     });
     return combos.map(combo => ({
       ...baseTrain,
+      ...extraTrain,
       ...Object.fromEntries(
         Object.entries(combo).map(([key, value]) => [key, typeof value === 'number' ? value : Number(value)]),
       ),
@@ -405,6 +663,126 @@ export const CreateJob: React.FC = () => {
       defaultConfig: algoVersion.defaultConfig || {},
     });
     return created.id;
+  };
+
+  const updateConfigOverride = (updater: (draft: Record<string, any>) => Record<string, any>) => {
+    let current: Record<string, any> = {};
+    try {
+      current = JSON.parse(configOverride || '{}');
+    } catch {
+      current = {};
+    }
+    const next = updater(current) || current;
+    setConfigOverride(JSON.stringify(next, null, 2));
+    setConfigTouched(true);
+  };
+
+  const updateDatasetOverride = (datasetId: string) => {
+    updateConfigOverride(current => {
+      const next = { ...current };
+      if (!datasetId) {
+        delete next.datasetId;
+        return next;
+      }
+      next.datasetId = datasetId;
+      return next;
+    });
+  };
+
+  const updateTrainOverride = (key: string, value: any, type?: string) => {
+    updateConfigOverride(current => {
+      const next = { ...current };
+      if (!isPlainObject(next.train)) {
+        next.train = {};
+      }
+      if (value === '' || value === null || value === undefined) {
+        delete next.train[key];
+        return next;
+      }
+      if (type === 'number' || type === 'integer') {
+        const numeric = Number(value);
+        next.train[key] = Number.isNaN(numeric) ? value : numeric;
+      } else if (type === 'boolean') {
+        next.train[key] = Boolean(value);
+      } else if (type === 'array') {
+        next.train[key] = parseArrayInput(value);
+      } else {
+        next.train[key] = value;
+      }
+      return next;
+    });
+  };
+
+  const updateAlgoOverride = (key: string, value: any, type?: string) => {
+    updateConfigOverride(current => {
+      const next = { ...current };
+      if (!isPlainObject(next.algo)) {
+        next.algo = {};
+      }
+      if (value === '' || value === null || value === undefined) {
+        delete next.algo[key];
+        return next;
+      }
+      if (type === 'number' || type === 'integer') {
+        const numeric = Number(value);
+        next.algo[key] = Number.isNaN(numeric) ? value : numeric;
+      } else if (type === 'boolean') {
+        next.algo[key] = Boolean(value);
+      } else if (type === 'array') {
+        next.algo[key] = parseArrayInput(value);
+      } else {
+        next.algo[key] = value;
+      }
+      return next;
+    });
+  };
+
+  const updateNetworkOverride = (key: string, value: any, type?: string) => {
+    updateConfigOverride(current => {
+      const next = { ...current };
+      if (!isPlainObject(next.network)) {
+        next.network = {};
+      }
+      if (value === '' || value === null || value === undefined) {
+        delete next.network[key];
+        return next;
+      }
+      if (type === 'number' || type === 'integer') {
+        const numeric = Number(value);
+        next.network[key] = Number.isNaN(numeric) ? value : numeric;
+      } else if (type === 'boolean') {
+        next.network[key] = Boolean(value);
+      } else if (type === 'array') {
+        next.network[key] = parseArrayInput(value);
+      } else {
+        next.network[key] = value;
+      }
+      return next;
+    });
+  };
+
+  const updateEnvOverride = (key: string, value: any, type?: string) => {
+    updateConfigOverride(current => {
+      const next = { ...current };
+      if (!isPlainObject(next.env)) {
+        next.env = {};
+      }
+      if (value === '' || value === null || value === undefined) {
+        delete next.env[key];
+        return next;
+      }
+      if (type === 'number' || type === 'integer') {
+        const numeric = Number(value);
+        next.env[key] = Number.isNaN(numeric) ? value : numeric;
+      } else if (type === 'boolean') {
+        next.env[key] = Boolean(value);
+      } else if (type === 'array') {
+        next.env[key] = parseArrayInput(value);
+      } else {
+        next.env[key] = value;
+      }
+      return next;
+    });
   };
 
   const handleNext = async () => {
@@ -458,12 +836,7 @@ export const CreateJob: React.FC = () => {
       return;
     }
     const envVersion = selectedEnvVersion || envs.find(e => e.id === selectedEnv)?.versions?.[0] || '1.0.0';
-    let parsedConfig: any = {};
-    try {
-      parsedConfig = JSON.parse(configOverride || '{}');
-    } catch {
-      parsedConfig = {};
-    }
+    const parsedConfig: any = parsedOverride || {};
     const trainConfigs = buildSweepTrainConfigs(parsedConfig);
     const plugin = selectedPlugins.length
       ? plugins.find(p => p.id === selectedPlugins[0])
@@ -478,6 +851,23 @@ export const CreateJob: React.FC = () => {
     
     // Extract algo overrides
     const algoOverride = parsedConfig?.algo && typeof parsedConfig.algo === 'object' ? parsedConfig.algo : {};
+    const networkOverride = parsedConfig?.network && typeof parsedConfig.network === 'object' ? parsedConfig.network : undefined;
+    const rawEnvOverride = parsedConfig?.env && typeof parsedConfig.env === 'object' ? parsedConfig.env : {};
+    const {
+      envId: _envId,
+      env_id: _envIdAlt,
+      version: _envVersion,
+      mapSet: _mapSet,
+      map_set: _mapSetAlt,
+      mapSets: _mapSets,
+      entrypoint: _entrypoint,
+      package: _pkg,
+      apiMode: _apiMode,
+      api_mode: _apiModeAlt,
+      scenarioSchema: _scenarioSchema,
+      scenario_schema: _scenarioSchemaAlt,
+      ...envOverride
+    } = isPlainObject(rawEnvOverride) ? rawEnvOverride : {};
     // Extract dataset overrides (if any)
     const datasetId = parsedConfig?.datasetId || undefined;
 
@@ -511,14 +901,15 @@ export const CreateJob: React.FC = () => {
           const res = await api.submitTrainJob({
             projectId: selectedProject,
             templateVersionId: templateVersionId!,
-            env: { envId: selectedEnv, version: envVersion, mapSet: selectedMap },
+            env: { envId: selectedEnv, version: envVersion, mapSet: selectedMap, ...envOverride },
             algo: { 
                 algoId: algoInfo!.algoId, 
                 algoVersionId: algoVersionId!,
                 ...algoOverride 
             },
             train: config,
-            resources: { gpus: gpuCount, priority },
+            ...(networkOverride ? { network: networkOverride } : {}),
+            resources: { gpus: gpuCount, priority, ...(timeoutSec > 0 ? { timeoutSec } : {}) },
             seedSet: [seed],
             ...(autoEval ? { autoEval } : {}),
             ...(plugin ? { plugin: { pluginId: plugin.id, version: plugin.version } } : {}),
@@ -583,6 +974,7 @@ export const CreateJob: React.FC = () => {
   }, [projects.length, templates, envs.length, algos.length, launchMode, navigate, selectedProject]);
 
   const missingSetup = setupChecklist.filter(item => !item.ready);
+  const hasConfigError = Boolean(configParseError) || configSchemaErrors.length > 0;
 
   const togglePlugin = (id: string) => {
       if (selectedPlugins.includes(id)) {
@@ -601,6 +993,7 @@ export const CreateJob: React.FC = () => {
       return !!selectedTemplate && !!selectedTemplateVersionId;
     }
     if (currentStep === 2) return !!selectedEnv && !!selectedEnvVersion && !!selectedMap;
+    if (currentStep === 3) return !hasConfigError;
     return true;
   };
 
@@ -999,13 +1392,21 @@ export const CreateJob: React.FC = () => {
                             <textarea 
                                 value={configOverride}
                                 onChange={(e) => { setConfigOverride(e.target.value); setConfigTouched(true); }}
-                                className={`w-full h-64 lg:h-full p-4 font-mono text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none ${
+                                className={`w-full h-64 lg:h-full p-4 font-mono text-sm border rounded-lg focus:ring-2 focus:outline-none resize-none ${
                                     isSweepMode ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-300'
-                                }`}
+                                } ${hasConfigError ? 'border-red-400 focus:ring-red-200' : 'focus:ring-blue-500'}`}
                                 spellCheck={false}
                             />
                             <span className="absolute top-2 right-2 text-xs text-gray-400 bg-white px-2 py-1 rounded border border-gray-200">JSON</span>
                         </div>
+                        {configParseError && (
+                          <div className="mt-2 text-xs text-red-600">JSON error: {configParseError}</div>
+                        )}
+                        {!configParseError && configSchemaErrors.length > 0 && (
+                          <div className="mt-2 text-xs text-amber-600">
+                            Schema check: {configSchemaErrors.slice(0, 3).join(' • ')}
+                          </div>
+                        )}
                          <p className="text-xs text-gray-500 mt-2">
                              {isSweepMode 
                                 ? "Sweep Mode: Use arrays for parameters you want to sweep. E.g., \"lr\": [0.001, 0.0005]" 
@@ -1015,6 +1416,284 @@ export const CreateJob: React.FC = () => {
 
                     {/* Plugins & Features */}
                     <div className="space-y-6">
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">Guided Train Overrides</h3>
+                            <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                {trainFieldSpecs.map(spec => {
+                                  const trainConfig = (resolvedConfig as any)?.train || {};
+                                  const rawValue = trainConfig?.[spec.key];
+                                  const value =
+                                    rawValue === undefined || rawValue === null
+                                      ? ''
+                                      : typeof rawValue === 'number'
+                                      ? String(rawValue)
+                                      : String(rawValue);
+                                  return (
+                                    <div key={spec.key} className="flex items-center justify-between gap-3">
+                                      <label className="text-xs font-medium text-gray-600">{spec.label}</label>
+                                      {spec.options ? (
+                                        <select
+                                          value={value}
+                                          onChange={e => updateTrainOverride(spec.key, e.target.value, spec.type)}
+                                          className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                        >
+                                          <option value="">(default)</option>
+                                          {spec.options.map(opt => (
+                                            <option key={String(opt)} value={String(opt)}>
+                                              {String(opt)}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      ) : spec.type === 'boolean' ? (
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(rawValue)}
+                                          onChange={e => updateTrainOverride(spec.key, e.target.checked, spec.type)}
+                                          className="h-4 w-4"
+                                        />
+                                      ) : spec.type === 'number' || spec.type === 'integer' ? (
+                                        <input
+                                          type="number"
+                                          value={value}
+                                          onChange={e => updateTrainOverride(spec.key, e.target.value, spec.type)}
+                                          className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                          placeholder="(default)"
+                                        />
+                                      ) : (
+                                        <input
+                                          type="text"
+                                          value={value}
+                                          onChange={e => updateTrainOverride(spec.key, e.target.value, spec.type)}
+                                          className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                          placeholder="(default)"
+                                        />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                <div className="text-[11px] text-gray-500">
+                                  For sweeps or nested overrides, edit JSON directly.
+                                </div>
+                            </div>
+                        </div>
+                        {algoFieldSpecs.length > 0 && (
+                          <div>
+                              <h3 className="text-sm font-bold text-gray-700 mb-2">Algorithm Overrides</h3>
+                              <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                  {algoFieldSpecs.map(spec => {
+                                    const algoConfig = (resolvedConfig as any)?.algo || {};
+                                    const rawValue = algoConfig?.[spec.key];
+                                    const value =
+                                      rawValue === undefined || rawValue === null
+                                        ? ''
+                                        : typeof rawValue === 'number'
+                                        ? String(rawValue)
+                                        : String(rawValue);
+                                    return (
+                                      <div key={spec.key} className="flex items-center justify-between gap-3">
+                                        <label className="text-xs font-medium text-gray-600">{spec.label}</label>
+                                        {spec.options ? (
+                                          <select
+                                            value={value}
+                                            onChange={e => updateAlgoOverride(spec.key, e.target.value, spec.type)}
+                                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                          >
+                                            <option value="">(default)</option>
+                                            {spec.options.map(opt => (
+                                              <option key={String(opt)} value={String(opt)}>
+                                                {String(opt)}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : spec.type === 'boolean' ? (
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(rawValue)}
+                                            onChange={e => updateAlgoOverride(spec.key, e.target.checked, spec.type)}
+                                            className="h-4 w-4"
+                                          />
+                                        ) : spec.type === 'number' || spec.type === 'integer' ? (
+                                          <input
+                                            type="number"
+                                            value={value}
+                                            onChange={e => updateAlgoOverride(spec.key, e.target.value, spec.type)}
+                                            className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                            placeholder="(default)"
+                                          />
+                                        ) : (
+                                          <input
+                                            type="text"
+                                            value={value}
+                                            onChange={e => updateAlgoOverride(spec.key, e.target.value, spec.type)}
+                                            className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                            placeholder="(default)"
+                                          />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                  <div className="text-[11px] text-gray-500">
+                                    Algorithm-specific overrides are optional.
+                                  </div>
+                              </div>
+                          </div>
+                        )}
+                        {networkFieldSpecs.length > 0 && (
+                          <div>
+                              <h3 className="text-sm font-bold text-gray-700 mb-2">Network Overrides</h3>
+                              <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                  {networkFieldSpecs.map(spec => {
+                                    const networkConfig = (resolvedConfig as any)?.network || {};
+                                    const rawValue = networkConfig?.[spec.key];
+                                    const value =
+                                      rawValue === undefined || rawValue === null
+                                        ? ''
+                                        : typeof rawValue === 'number'
+                                        ? String(rawValue)
+                                        : String(rawValue);
+                                    return (
+                                      <div key={spec.key} className="flex items-center justify-between gap-3">
+                                        <label className="text-xs font-medium text-gray-600">{spec.label}</label>
+                                        {spec.options ? (
+                                          <select
+                                            value={value}
+                                            onChange={e => updateNetworkOverride(spec.key, e.target.value, spec.type)}
+                                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                          >
+                                            <option value="">(default)</option>
+                                            {spec.options.map(opt => (
+                                              <option key={String(opt)} value={String(opt)}>
+                                                {String(opt)}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : spec.type === 'boolean' ? (
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(rawValue)}
+                                            onChange={e => updateNetworkOverride(spec.key, e.target.checked, spec.type)}
+                                            className="h-4 w-4"
+                                          />
+                                        ) : spec.type === 'number' || spec.type === 'integer' ? (
+                                          <input
+                                            type="number"
+                                            value={value}
+                                            onChange={e => updateNetworkOverride(spec.key, e.target.value, spec.type)}
+                                            className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                            placeholder="(default)"
+                                          />
+                                        ) : (
+                                          <input
+                                            type="text"
+                                            value={value}
+                                            onChange={e => updateNetworkOverride(spec.key, e.target.value, spec.type)}
+                                            className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                            placeholder="(default)"
+                                          />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                  <div className="text-[11px] text-gray-500">
+                                    Network overrides apply to policy/critic architecture settings. Arrays accept comma-separated or JSON (e.g. 64,64 or [64,64]).
+                                  </div>
+                              </div>
+                          </div>
+                        )}
+                        {envFieldSpecs.length > 0 && (
+                          <div>
+                              <h3 className="text-sm font-bold text-gray-700 mb-2">Env Overrides</h3>
+                              <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                  {envFieldSpecs.map(spec => {
+                                    const envConfig = (resolvedConfig as any)?.env || {};
+                                    const rawValue = envConfig?.[spec.key];
+                                    const value =
+                                      rawValue === undefined || rawValue === null
+                                        ? ''
+                                        : typeof rawValue === 'number'
+                                        ? String(rawValue)
+                                        : String(rawValue);
+                                    return (
+                                      <div key={spec.key} className="flex items-center justify-between gap-3">
+                                        <label className="text-xs font-medium text-gray-600">{spec.label}</label>
+                                        {spec.options ? (
+                                          <select
+                                            value={value}
+                                            onChange={e => updateEnvOverride(spec.key, e.target.value, spec.type)}
+                                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                          >
+                                            <option value="">(default)</option>
+                                            {spec.options.map(opt => (
+                                              <option key={String(opt)} value={String(opt)}>
+                                                {String(opt)}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : spec.type === 'boolean' ? (
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(rawValue)}
+                                            onChange={e => updateEnvOverride(spec.key, e.target.checked, spec.type)}
+                                            className="h-4 w-4"
+                                          />
+                                        ) : spec.type === 'number' || spec.type === 'integer' ? (
+                                          <input
+                                            type="number"
+                                            value={value}
+                                            onChange={e => updateEnvOverride(spec.key, e.target.value, spec.type)}
+                                            className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                            placeholder="(default)"
+                                          />
+                                        ) : (
+                                          <input
+                                            type="text"
+                                            value={value}
+                                            onChange={e => updateEnvOverride(spec.key, e.target.value, spec.type)}
+                                            className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
+                                            placeholder="(default)"
+                                          />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                  <div className="text-[11px] text-gray-500">
+                                    Use these for env-specific knobs (e.g., PettingZoo maxCycles/continuousActions).
+                                  </div>
+                              </div>
+                          </div>
+                        )}
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">Dataset (Offline RL)</h3>
+                            <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Dataset</label>
+                                <select
+                                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                  value={selectedDatasetId}
+                                  onChange={(e) => {
+                                    const next = e.target.value;
+                                    setSelectedDatasetId(next);
+                                    updateDatasetOverride(next);
+                                  }}
+                                >
+                                  <option value="">No dataset</option>
+                                  {datasets.map(ds => (
+                                    <option key={ds.id} value={ds.id}>
+                                      {ds.name} ({ds.format})
+                                    </option>
+                                  ))}
+                                </select>
+                                {datasets.length === 0 && (
+                                  <p className="text-xs text-gray-500 mt-2">
+                                    No datasets registered yet. Add one in the Dataset Registry.
+                                  </p>
+                                )}
+                                <p className="text-[11px] text-gray-500 mt-2">
+                                  Selecting a dataset injects <code className="font-mono">datasetId</code> into the config.
+                                </p>
+                              </div>
+                            </div>
+                        </div>
                         <div>
                             <h3 className="text-sm font-bold text-gray-700 mb-2">Features</h3>
                             <div 
@@ -1163,6 +1842,19 @@ export const CreateJob: React.FC = () => {
                     </div>
 
                     <div className="space-y-4">
+                         <label className="block text-sm font-medium text-gray-700">Job Timeout (seconds)</label>
+                         <input
+                            type="number"
+                            value={timeoutSec}
+                            onChange={(e) => setTimeoutSec(Number(e.target.value))}
+                            className="w-full p-2 border border-gray-300 rounded-md"
+                            min={0}
+                            step={60}
+                        />
+                         <p className="text-xs text-gray-500">0 uses the platform default timeout.</p>
+                    </div>
+
+                    <div className="space-y-4">
                          <label className="block text-sm font-medium text-gray-700">Random Seeds</label>
                          <input 
                             type="number" 
@@ -1214,7 +1906,13 @@ export const CreateJob: React.FC = () => {
                             ? evalProtocols.find(p => p.id === autoEvalProtocolId)?.name || autoEvalProtocolId || 'Enabled'
                             : 'Off'}
                         </span></li>
+                        <li>Dataset: <span className="font-mono text-gray-900">
+                          {selectedDatasetId
+                            ? datasets.find(d => d.id === selectedDatasetId)?.name || selectedDatasetId
+                            : 'None'}
+                        </span></li>
                         <li>Job Type: <span className={`font-bold ${isSweepMode ? 'text-purple-600' : 'text-gray-900'}`}>{isSweepMode ? 'Hyperparameter Sweep' : 'Single Run'}</span></li>
+                        <li>Timeout: <span className="font-mono text-gray-900">{timeoutSec > 0 ? `${timeoutSec}s` : 'Default'}</span></li>
                         <li>Total Jobs: <span className="font-bold text-gray-900">
                             {sweepCombinations} Configs × {seedCount} Seeds = {sweepCombinations * seedCount} Trials
                         </span></li>

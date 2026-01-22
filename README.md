@@ -59,11 +59,33 @@ npm install && npm run build
 ```bash
 # 1. Grant execution permissions
 chmod +x start-linux.sh
+chmod +x start-mac.sh
 
-# 2. Start the platform (Uses Python venv + SQLite)
+# 2. Start the platform (one-click setup + tests)
+# Linux:
 ./start-linux.sh
+# macOS:
+./start-mac.sh
 ```
 Access at: **http://localhost:8000**
+
+---
+
+### What the start scripts do
+The `start-*.sh` scripts are fully automated and will:
+
+* Build the frontend + generate OpenAPI clients
+* Create venv and install backend/runner dependencies
+* Install Miniconda (user-space) + OrbitZoo + Orekit data
+* Install common RL env extras (Box2D/MuJoCo/MiniGrid/PettingZoo)
+* Initialize DB, seed default + comprehensive MARL envs
+* Run backend tests
+* Start TensorBoard + backend
+
+You can skip heavy steps if needed:
+```bash
+SEED_MARL_ENVS=0 RUN_TESTS=0 ./start-linux.sh
+```
 
 ---
 
@@ -78,7 +100,8 @@ rl-research-platform/
 │   └── portal-frontend/      # React Frontend (Vite)
 ├── scripts/
 │   ├── seed-full.sh          # Database Seeding (Default Envs/Algos)
-│   └── start-linux.sh        # Unified Startup Script
+│   ├── start-linux.sh        # Unified Startup Script (Linux)
+│   └── start-mac.sh          # Unified Startup Script (macOS)
 ├── docs/                     # Documentation
 └── requirements.txt          # Top-level deps
 ```

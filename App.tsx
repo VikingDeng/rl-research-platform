@@ -20,6 +20,7 @@ import { DatasetRegistry } from './pages/DatasetRegistry';
 import { TuningDashboard } from './pages/TuningDashboard';
 import { Workspaces } from './pages/Workspaces';
 import { Login } from './pages/Login';
+import { GroupSummary } from './pages/GroupSummary';
 import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider } from './components/Toast.tsx';
 
@@ -52,6 +53,7 @@ const App: React.FC = () => {
                     <Route path="/models" element={<ModelRegistry />} />
                     <Route path="/create-job" element={<CreateJob />} />
                     <Route path="/runs/:id" element={<RunDetail />} />
+                    <Route path="/groups/:groupId" element={<GroupSummary />} />
                     
                     {/* Analysis */}
                     <Route path="/matrix" element={<MatrixView />} />

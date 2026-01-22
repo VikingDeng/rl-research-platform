@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { Project, Run, JobStatus } from '../types';
+import { Project, Run, JobStatus, BootstrapResponse } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { Play, Cpu, Activity, Clock, ArrowRight, Plus, FolderOpen, Trash2, Calendar, X, GitFork } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -13,6 +13,12 @@ export const Dashboard: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(false);
+  const [bootstrapDefaults, setBootstrapDefaults] = useState<BootstrapResponse['defaults'] | null>(null);
+  const [envCount, setEnvCount] = useState(0);
+  const [algoCount, setAlgoCount] = useState(0);
+  const [templateCount, setTemplateCount] = useState(0);
+  const [datasetCount, setDatasetCount] = useState(0);
   
   // New Project Form State
   const [newProjectName, setNewProjectName] = useState('');
@@ -20,14 +26,55 @@ export const Dashboard: React.FC = () => {
   const [newProjectGitRepo, setNewProjectGitRepo] = useState('');
   const [newProjectGitBranch, setNewProjectGitBranch] = useState('main');
 
-  useEffect(() => {
+  const loadData = () => {
     api.getProjects().then(setProjects);
     api.getRuns().then(setRuns);
+    api.getEnvs().then(items => setEnvCount(items.length));
+    api.getAlgos({ includeArchived: true }).then(items => setAlgoCount(items.length));
+    api.getTemplates().then(items => setTemplateCount(items.length));
+    api.getDatasets().then(items => setDatasetCount(items.length)).catch(() => setDatasetCount(0));
+  };
+
+  useEffect(() => {
+    loadData();
     const state = location.state as { openCreateProject?: boolean } | null;
     if (state?.openCreateProject) {
       setIsModalOpen(true);
     }
   }, [location.state]);
+
+  const handleBootstrap = async () => {
+    setBootstrapping(true);
+    try {
+      const res = await api.bootstrapDefaults();
+      setBootstrapDefaults(res.defaults);
+      showToast('Default envs/algos/templates initialized.', 'success');
+      loadData();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      showToast(`Bootstrap failed: ${detail}`, 'error');
+    } finally {
+      setBootstrapping(false);
+    }
+  };
+
+  const handleQuickstart = async () => {
+    try {
+      const defaults = bootstrapDefaults || (await api.bootstrapDefaults()).defaults;
+      setBootstrapDefaults(defaults);
+      loadData();
+      navigate('/create-job', {
+        state: {
+          projectId: defaults.projectId,
+          templateId: defaults.templateId,
+          envId: defaults.envId,
+        },
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      showToast(`Quickstart failed: ${detail}`, 'error');
+    }
+  };
 
   const handleCreateProject = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,6 +119,14 @@ export const Dashboard: React.FC = () => {
 
   const activeJobs = runs.filter(r => r.status === JobStatus.RUNNING).length;
   const totalGpus = runs.reduce((acc, r) => r.status === JobStatus.RUNNING ? acc + r.gpu : acc, 0);
+  const showQuickstart = projects.length === 0;
+  const setupChecklist = [
+    { id: 'project', label: 'Project', ready: projects.length > 0, action: () => setIsModalOpen(true) },
+    { id: 'env', label: 'Environment', ready: envCount > 0, action: () => navigate('/registries/environments', { state: { openCreate: true } }) },
+    { id: 'algo', label: 'Algorithm', ready: algoCount > 0, action: () => navigate('/registries/algorithms') },
+    { id: 'template', label: 'Template', ready: templateCount > 0, action: () => navigate('/registries/templates', { state: { projectId: projects[0]?.id, openCreate: true } }) },
+  ];
+  const missingSetup = setupChecklist.filter(item => !item.ready);
 
   // Get recent runs (sorted by created date desc)
   const recentRuns = [...runs].sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()).slice(0, 5);
@@ -95,6 +150,69 @@ export const Dashboard: React.FC = () => {
             </span>
         </div>
       </div>
+
+      {showQuickstart && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Quickstart in 2 minutes</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Initialize default envs/algos/templates, then launch a demo training job.
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={handleBootstrap}
+              disabled={bootstrapping}
+              className="px-4 py-2 rounded-lg bg-white border border-blue-200 text-blue-700 font-medium hover:bg-blue-50 disabled:opacity-60"
+            >
+              {bootstrapping ? 'Initializing...' : 'Initialize Defaults'}
+            </button>
+            <button
+              onClick={handleQuickstart}
+              disabled={bootstrapping}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-60"
+            >
+              Start Demo Run
+            </button>
+          </div>
+        </div>
+      )}
+
+      {missingSetup.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
+            <Activity className="w-4 h-4 text-blue-500" />
+            Setup checklist
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            {setupChecklist.map(item => (
+              <div
+                key={item.id}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg border ${
+                  item.ready ? 'bg-green-50 border-green-200 text-green-800' : 'bg-gray-50 border-gray-200 text-gray-700'
+                }`}
+              >
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <span className={`inline-flex w-2 h-2 rounded-full ${item.ready ? 'bg-green-500' : 'bg-gray-400'}`} />
+                  {item.label}
+                </div>
+                {!item.ready && (
+                  <button
+                    type="button"
+                    onClick={item.action}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    Add
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 text-xs text-gray-500">
+            Datasets: <span className="font-mono text-gray-800">{datasetCount}</span> registered.
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

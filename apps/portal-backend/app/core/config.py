@@ -16,10 +16,13 @@ class Settings(BaseSettings):
     local_executor_gpu_count: int = 4
     local_executor_steps: int = 5
     local_executor_step_interval: float = 0.2
-    local_executor_mode: str = "fake"
+    local_executor_mode: str = "real"
     executor_mode: str = "local"
+    job_max_workers: int = 4
+    job_queue_max_size: int = 100
+    job_default_timeout_sec: int = 0
     determined_master_url: Optional[str] = None
-    determined_mock: bool = True
+    determined_mock: bool = False
     determined_token: Optional[str] = None
     determined_project_id: int = 1
     determined_image: Optional[str] = None
@@ -34,6 +37,11 @@ class Settings(BaseSettings):
     algo_store_dir: str = ".local/algos"
     runtime_pip_index_url: Optional[str] = None
     runtime_pip_extra_args: Optional[str] = None
+    runner_python: Optional[str] = None
+    eval_entrypoint: str = "algorithms.sb3_eval:evaluate"
+    eval_algo_name: str = "SB3 Evaluator"
+    matrix_entrypoint: str = "algorithms.matrix_eval:run"
+    matrix_algo_name: str = "Matrix Evaluator"
 
     class Config:
         env_file = ".env"
