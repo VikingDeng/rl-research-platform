@@ -43,6 +43,7 @@ pip install play3d==0.1.5
 echo "Installing OrbitZoo extra deps"
 pip install tensorboardX
 pip install "msgpack<2.0.0" shellingham
+pip install numba
 
 echo "Installing runner requirements inside OrbitZoo env"
 pip install -r "$RUNNER_REQ"
