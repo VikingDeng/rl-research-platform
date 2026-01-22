@@ -44,7 +44,28 @@ pip install --no-deps "ray[rllib]==2.9.0" "dm-tree" "lz4" "scipy" "typer"
 
 if [ -n "$ORBITZOO_REPO" ]; then
   echo "Installing OrbitZoo from $ORBITZOO_REPO"
-  pip install -e "$ORBITZOO_REPO"
+  if [ -f "$ORBITZOO_REPO/setup.py" ] || [ -f "$ORBITZOO_REPO/pyproject.toml" ]; then
+    pip install -e "$ORBITZOO_REPO"
+  else
+    echo "OrbitZoo repo has no setup.py/pyproject.toml. Falling back to .pth path injection."
+    python - <<'PY'
+import os
+from pathlib import Path
+import site
+
+repo = Path(os.environ.get("ORBITZOO_REPO", "")).resolve()
+if not repo.exists():
+    raise SystemExit(f"ORBITZOO_REPO not found: {repo}")
+
+candidate = repo / "src"
+target_path = candidate if candidate.exists() else repo
+site_dir = Path(site.getsitepackages()[0])
+site_dir.mkdir(parents=True, exist_ok=True)
+pth_file = site_dir / "orbitzoo.pth"
+pth_file.write_text(str(target_path) + "\n", encoding="utf-8")
+print(f"[OrbitZoo] Added {target_path} to {pth_file}")
+PY
+  fi
 else
   echo "ORBITZOO_REPO not set. Export it to your OrbitZoo repo path."
   exit 1
