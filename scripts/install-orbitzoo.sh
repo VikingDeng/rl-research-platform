@@ -90,6 +90,91 @@ if str(target_path) not in existing:
 else:
     print(f"[OrbitZoo] Path already present in {pth_file}")
 PY
+    python - <<'PY'
+import os
+from pathlib import Path
+import site
+import textwrap
+import importlib
+
+repo = Path(os.environ.get("ORBITZOO_REPO", "")).resolve()
+site_dir = Path(site.getsitepackages()[0])
+site_dir.mkdir(parents=True, exist_ok=True)
+
+def _import_ok(name: str) -> bool:
+    try:
+        importlib.import_module(name)
+        return True
+    except Exception:
+        return False
+
+def _write_shim(module_name: str, repo_path: Path) -> None:
+    shim_path = site_dir / f"{module_name}.py"
+    shim_code = f"""
+# Auto-generated OrbitZoo shim
+import importlib.util
+import sys
+from pathlib import Path
+
+REPO_PATH = Path(r\"{repo_path}\").resolve()
+SRC_PATH = REPO_PATH / \"src\"
+
+def _find_candidate():
+    if not SRC_PATH.exists():
+        return None
+    best = None
+    best_score = -1
+    patterns = (\"def make_env\", \"class OrbitZoo\", \"OrbitZoo(\")
+    for path in SRC_PATH.rglob(\"*.py\"):
+        name = path.name.lower()
+        score = 0
+        if \"orbit\" in name:
+            score += 3
+        if \"zoo\" in name:
+            score += 2
+        if \"env\" in name:
+            score += 1
+        try:
+            text = path.read_text(encoding=\"utf-8\", errors=\"ignore\")
+        except Exception:
+            continue
+        if any(p in text for p in patterns):
+            score += 4
+        if score > best_score:
+            best_score = score
+            best = path
+    return best
+
+def _load_module(path: Path):
+    spec = importlib.util.spec_from_file_location(\"orbitzoo_impl\", str(path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f\"Failed to load OrbitZoo module from {{path}}\")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+candidate = _find_candidate()
+if candidate is None:
+    raise ImportError(\"OrbitZoo shim could not locate a Python module in src/\")
+
+_mod = _load_module(candidate)
+
+# Export common entrypoints if they exist
+make_env = getattr(_mod, \"make_env\", None) or getattr(_mod, \"make\", None)
+OrbitZoo = getattr(_mod, \"OrbitZoo\", None)
+if make_env is None and callable(OrbitZoo):
+    def make_env(*args, **kwargs):
+        return OrbitZoo(*args, **kwargs)
+
+__all__ = [name for name in (\"make_env\", \"OrbitZoo\") if globals().get(name) is not None]
+"""
+    shim_path.write_text(textwrap.dedent(shim_code), encoding="utf-8")
+
+if not _import_ok("orbitzoo"):
+    _write_shim("orbitzoo", repo)
+if not _import_ok("orbit_zoo"):
+    _write_shim("orbit_zoo", repo)
+PY
   fi
 else
   echo "ORBITZOO_REPO not set. Export it to your OrbitZoo repo path."
