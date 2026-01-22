@@ -132,7 +132,7 @@ def _setup_orekit():
             orekit.initVM()
         except Exception:
             pass
-        from orekit.pyhelpers import setup_orekit_data_path  # type: ignore
+        from orekit import pyhelpers as _pyhelpers  # type: ignore
         data_dir = os.environ.get(\"ORBITZOO_OREKIT_DATA_DIR\") or os.environ.get(\"OREKIT_DATA_PATH\")
         data_zip = os.environ.get(\"ORBITZOO_OREKIT_DATA_ZIP\")
         if not data_zip:
@@ -164,16 +164,36 @@ def _setup_orekit():
             found = _find_data(default_root)
             if found:
                 data_dir = str(found)
+        resolved_path = None
         if data_dir:
             data_path = Path(data_dir)
             found = _find_data(data_path)
             if found:
-                setup_orekit_data_path(str(found))
-                os.environ[\"OREKIT_DATA_PATH\"] = str(found)
-                return
-        if data_zip and Path(data_zip).exists():
-            setup_orekit_data_path(str(Path(data_zip)))
-            os.environ[\"OREKIT_DATA_PATH\"] = str(Path(data_zip))
+                resolved_path = str(found)
+        if not resolved_path and data_zip and Path(data_zip).exists():
+            resolved_path = str(Path(data_zip))
+
+        real_setup = _pyhelpers.setup_orekit_data_path
+        def _guarded_setup(path: str = \"\"):
+            target = resolved_path or (path if path else None)
+            if target:
+                os.environ[\"OREKIT_DATA_PATH\"] = str(target)
+                return real_setup(str(target))
+            return None
+        _pyhelpers.setup_orekit_data_path = _guarded_setup
+
+        try:
+            real_curdir = _pyhelpers.setup_orekit_data_curdir
+            def _guarded_curdir(path: str = \"\"):
+                if resolved_path:
+                    return _guarded_setup(resolved_path)
+                return real_curdir(path) if path else real_curdir()
+            _pyhelpers.setup_orekit_data_curdir = _guarded_curdir
+        except Exception:
+            pass
+
+        if resolved_path:
+            _guarded_setup(resolved_path)
     except Exception:
         pass
 
