@@ -7,6 +7,7 @@ RUNNER_REQ="$BACKEND_DIR/runner/requirements.txt"
 SETUP_DIR="$ROOT_DIR/.local/setup"
 OREKIT_DIR="$ROOT_DIR/.local/orbitzoo"
 OREKIT_PATH_FILE="$SETUP_DIR/orbitzoo_orekit_path"
+OREKIT_ZIP_FILE="$SETUP_DIR/orbitzoo_orekit_zip"
 
 if ! command -v conda >/dev/null 2>&1; then
   echo "conda not found. Install Anaconda/Miniconda first."
@@ -134,6 +135,14 @@ def _setup_orekit():
         from orekit.pyhelpers import setup_orekit_data_path  # type: ignore
         data_dir = os.environ.get(\"ORBITZOO_OREKIT_DATA_DIR\") or os.environ.get(\"OREKIT_DATA_PATH\")
         data_zip = os.environ.get(\"ORBITZOO_OREKIT_DATA_ZIP\")
+        if not data_zip:
+            for candidate in (
+                REPO_PATH.parent / \"orekit-data.zip\",
+                REPO_PATH.parent / \"orekit-data\" / \"orekit-data.zip\",
+            ):
+                if candidate.exists():
+                    data_zip = str(candidate)
+                    break
         def _looks_like_data(root: Path) -> bool:
             return (root / \"Earth-Orientation-Parameters\").exists() and (root / \"TimeScales\").exists()
 
@@ -159,9 +168,11 @@ def _setup_orekit():
             found = _find_data(data_path)
             if found:
                 setup_orekit_data_path(str(found))
+                os.environ[\"OREKIT_DATA_PATH\"] = str(found)
                 return
         if data_zip and Path(data_zip).exists():
             setup_orekit_data_path(str(Path(data_zip)))
+            os.environ[\"OREKIT_DATA_PATH\"] = str(Path(data_zip))
     except Exception:
         pass
 
@@ -245,6 +256,8 @@ else
   cp -f "$ORBITZOO_OREKIT_DATA_ZIP" "$DEST_ZIP"
 fi
 export ORBITZOO_OREKIT_DATA_ZIP="$DEST_ZIP"
+mkdir -p "$SETUP_DIR"
+echo "$DEST_ZIP" > "$OREKIT_ZIP_FILE"
 if command -v unzip >/dev/null 2>&1; then
   unzip -o "$OREKIT_DIR/orekit-data.zip" -d "$OREKIT_DIR/orekit-data" >/dev/null
 else
@@ -341,6 +354,9 @@ fi
 
 if [ -f "$SETUP_DIR/orbitzoo_orekit_path" ]; then
   export ORBITZOO_OREKIT_DATA_DIR="$(cat "$SETUP_DIR/orbitzoo_orekit_path")"
+fi
+if [ -f "$OREKIT_ZIP_FILE" ]; then
+  export ORBITZOO_OREKIT_DATA_ZIP="$(cat "$OREKIT_ZIP_FILE")"
 fi
 
 python - <<'PY'
