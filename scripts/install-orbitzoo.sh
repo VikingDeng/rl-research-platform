@@ -62,8 +62,17 @@ target_path = candidate if candidate.exists() else repo
 site_dir = Path(site.getsitepackages()[0])
 site_dir.mkdir(parents=True, exist_ok=True)
 pth_file = site_dir / "orbitzoo.pth"
-pth_file.write_text(str(target_path) + "\n", encoding="utf-8")
-print(f"[OrbitZoo] Added {target_path} to {pth_file}")
+
+existing = []
+if pth_file.exists():
+    existing = [line.strip() for line in pth_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+if str(target_path) not in existing:
+    existing.append(str(target_path))
+    pth_file.write_text("\n".join(existing) + "\n", encoding="utf-8")
+    print(f"[OrbitZoo] Added {target_path} to {pth_file}")
+else:
+    print(f"[OrbitZoo] Path already present in {pth_file}")
 PY
   fi
 else
@@ -81,7 +90,12 @@ if [ ! -f "$ORBITZOO_OREKIT_DATA_ZIP" ]; then
 fi
 
 mkdir -p "$OREKIT_DIR"
-cp -f "$ORBITZOO_OREKIT_DATA_ZIP" "$OREKIT_DIR/orekit-data.zip"
+DEST_ZIP="$OREKIT_DIR/orekit-data.zip"
+if [ "$ORBITZOO_OREKIT_DATA_ZIP" = "$DEST_ZIP" ]; then
+  echo "orekit-data.zip already in place. Skipping copy."
+else
+  cp -f "$ORBITZOO_OREKIT_DATA_ZIP" "$DEST_ZIP"
+fi
 if command -v unzip >/dev/null 2>&1; then
   unzip -o "$OREKIT_DIR/orekit-data.zip" -d "$OREKIT_DIR/orekit-data" >/dev/null
 else
