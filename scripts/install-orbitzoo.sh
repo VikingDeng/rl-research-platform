@@ -144,7 +144,8 @@ def _setup_orekit():
                     data_zip = str(candidate)
                     break
         def _looks_like_data(root: Path) -> bool:
-            return (root / \"Earth-Orientation-Parameters\").exists() and (root / \"TimeScales\").exists()
+            # Some bundles omit TimeScales; EOP is the most reliable marker.
+            return (root / \"Earth-Orientation-Parameters\").exists()
 
         def _find_data(root: Path):
             if not root.exists():
@@ -152,7 +153,7 @@ def _setup_orekit():
             if _looks_like_data(root):
                 return root
             # walk a few levels for a folder containing required dirs
-            for candidate in root.rglob(\"TimeScales\"):
+            for candidate in root.rglob(\"Earth-Orientation-Parameters\"):
                 parent = candidate.parent
                 if _looks_like_data(parent):
                     return parent
@@ -282,14 +283,15 @@ root = Path(os.environ.get("OREKIT_DIR", ".")).resolve()
 extract_root = root / "orekit-data"
 
 def looks_like_data(base: Path) -> bool:
-    return (base / "Earth-Orientation-Parameters").exists() and (base / "TimeScales").exists()
+    # Some orekit-data bundles omit TimeScales; EOP is the minimum reliable marker.
+    return (base / "Earth-Orientation-Parameters").exists()
 
 def find_data_dir(base: Path):
     if not base.exists():
         return None
     if looks_like_data(base):
         return base
-    for child in base.rglob("TimeScales"):
+    for child in base.rglob("Earth-Orientation-Parameters"):
         parent = child.parent
         if looks_like_data(parent):
             return parent
@@ -327,14 +329,14 @@ except Exception as exc:
     print(f"[OrbitZoo] orekit data download failed: {exc}")
 
 def looks_like_data(base: Path) -> bool:
-    return (base / "Earth-Orientation-Parameters").exists() and (base / "TimeScales").exists()
+    return (base / "Earth-Orientation-Parameters").exists()
 
 def find_data_dir(base: Path):
     if not base.exists():
         return None
     if looks_like_data(base):
         return base
-    for child in base.rglob("TimeScales"):
+    for child in base.rglob("Earth-Orientation-Parameters"):
         parent = child.parent
         if looks_like_data(parent):
             return parent
