@@ -293,6 +293,52 @@ else:
     print("[OrbitZoo] Warning: orekit data directory not found after extraction.")
 PY
 
+# If orekit data still missing, download via orekit helper (requires network).
+if [ ! -f "$SETUP_DIR/orbitzoo_orekit_path" ]; then
+  echo "[OrbitZoo] Downloading orekit data via orekit.pyhelpers..."
+  OREKIT_DIR="$OREKIT_DIR" SETUP_DIR="$SETUP_DIR" python - <<'PY'
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("OREKIT_DIR", ".")).resolve()
+os.chdir(root)
+try:
+    import orekit  # type: ignore
+    try:
+        orekit.initVM()
+    except Exception:
+        pass
+    from orekit.pyhelpers import download_orekit_data_curdir  # type: ignore
+    download_orekit_data_curdir()
+except Exception as exc:
+    print(f"[OrbitZoo] orekit data download failed: {exc}")
+
+def looks_like_data(base: Path) -> bool:
+    return (base / "Earth-Orientation-Parameters").exists() and (base / "TimeScales").exists()
+
+def find_data_dir(base: Path):
+    if not base.exists():
+        return None
+    if looks_like_data(base):
+        return base
+    for child in base.rglob("TimeScales"):
+        parent = child.parent
+        if looks_like_data(parent):
+            return parent
+    return None
+
+data_dir = find_data_dir(root / "orekit-data") or find_data_dir(root)
+if data_dir:
+    setup_dir = Path(os.environ.get("SETUP_DIR", root / ".setup"))
+    setup_dir.mkdir(parents=True, exist_ok=True)
+    path_file = setup_dir / "orbitzoo_orekit_path"
+    path_file.write_text(str(data_dir), encoding="utf-8")
+    print(f"[OrbitZoo] Orekit data dir: {data_dir}")
+else:
+    print("[OrbitZoo] Warning: orekit data directory still not found.")
+PY
+fi
+
 if [ -f "$SETUP_DIR/orbitzoo_orekit_path" ]; then
   export ORBITZOO_OREKIT_DATA_DIR="$(cat "$SETUP_DIR/orbitzoo_orekit_path")"
 fi
