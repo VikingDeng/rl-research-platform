@@ -38,6 +38,9 @@ fi
 echo "Installing play3d"
 pip install play3d==0.1.5
 
+echo "Installing OrbitZoo extra deps"
+pip install tensorboardX
+
 echo "Installing runner requirements inside OrbitZoo env"
 pip install -r "$RUNNER_REQ"
 pip install --no-deps "ray[rllib]==2.9.0" "dm-tree" "lz4" "scipy" "typer"
