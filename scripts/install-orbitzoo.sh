@@ -432,6 +432,14 @@ if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ] && [ -n "$ORBITZOO_REPO" ]; then
   fi
 fi
 
+# Mirror into platform repo path expected by some OrbitZoo builds.
+PLATFORM_OREKIT_DIR="$ROOT_DIR/apps/portal-backend/src/dynamics/orekit"
+PLATFORM_OREKIT_LINK="$PLATFORM_OREKIT_DIR/orekit-data"
+if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ] && [ ! -e "$PLATFORM_OREKIT_LINK" ]; then
+  mkdir -p "$PLATFORM_OREKIT_DIR"
+  ln -s "$ORBITZOO_OREKIT_DATA_DIR" "$PLATFORM_OREKIT_LINK" || true
+fi
+
 # Validate orekit data load (best-effort)
 if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ] || [ -n "$ORBITZOO_OREKIT_DATA_ZIP" ]; then
   echo "[OrbitZoo] Validating orekit data load..."
