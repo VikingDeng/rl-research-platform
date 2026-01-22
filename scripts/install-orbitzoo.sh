@@ -133,7 +133,10 @@ def _setup_orekit():
             orekit.initVM()
         except Exception:
             pass
-        from orekit import pyhelpers as _pyhelpers  # type: ignore
+        try:
+            from orekit import pyhelpers as _pyhelpers  # type: ignore
+        except Exception:
+            _pyhelpers = None
         data_dir = os.environ.get(\"ORBITZOO_OREKIT_DATA_DIR\") or os.environ.get(\"OREKIT_DATA_PATH\")
         data_zip = os.environ.get(\"ORBITZOO_OREKIT_DATA_ZIP\")
         if not data_zip:
@@ -178,28 +181,35 @@ def _setup_orekit():
                 resolved_path = str(found)
         if not resolved_path and data_zip and Path(data_zip).exists():
             resolved_path = str(Path(data_zip))
-
-        real_setup = _pyhelpers.setup_orekit_data_path
-        def _guarded_setup(path: str = \"\"):
-            target = resolved_path or (path if path else None)
-            if target:
-                os.environ[\"OREKIT_DATA_PATH\"] = str(target)
-                return real_setup(str(target))
-            return None
-        _pyhelpers.setup_orekit_data_path = _guarded_setup
-
-        try:
-            real_curdir = _pyhelpers.setup_orekit_data_curdir
-            def _guarded_curdir(path: str = \"\"):
-                if resolved_path:
-                    return _guarded_setup(resolved_path)
-                return real_curdir(path) if path else real_curdir()
-            _pyhelpers.setup_orekit_data_curdir = _guarded_curdir
-        except Exception:
-            pass
+        def _register_data(path: str):
+            try:
+                from org.orekit.data import DataProvidersManager, DirectoryCrawler, ZipJarCrawler  # type: ignore
+                from java.io import File  # type: ignore
+                manager = DataProvidersManager.getInstance()
+                if str(path).lower().endswith('.zip'):
+                    manager.addProvider(ZipJarCrawler(File(str(path))))
+                else:
+                    manager.addProvider(DirectoryCrawler(File(str(path))))
+                return True
+            except Exception:
+                return False
 
         if resolved_path:
-            _guarded_setup(resolved_path)
+            os.environ[\"OREKIT_DATA_PATH\"] = str(resolved_path)
+            _register_data(resolved_path)
+            if _pyhelpers and hasattr(_pyhelpers, \"setup_orekit_data_path\"):
+                try:
+                    _pyhelpers.setup_orekit_data_path(str(resolved_path))
+                except Exception:
+                    pass
+            elif _pyhelpers and hasattr(_pyhelpers, \"setup_orekit_data_curdir\"):
+                try:
+                    cwd = os.getcwd()
+                    os.chdir(str(resolved_path))
+                    _pyhelpers.setup_orekit_data_curdir()
+                    os.chdir(cwd)
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -299,6 +309,11 @@ dest.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(zip_path, "r") as zf:
     zf.extractall(dest)
 PY
+fi
+
+# Some tools expect a "orekit-data" folder name.
+if [ -d "$OREKIT_DIR/orekit-data/orekit-data-main" ] && [ ! -e "$OREKIT_DIR/orekit-data/orekit-data" ]; then
+  ln -s "orekit-data-main" "$OREKIT_DIR/orekit-data/orekit-data" || true
 fi
 
 OREKIT_DIR="$OREKIT_DIR" SETUP_DIR="$SETUP_DIR" python - <<'PY'
@@ -411,10 +426,24 @@ try:
         orekit.initVM()
     except Exception:
         pass
-    from orekit import pyhelpers  # type: ignore
     data_path = os.environ.get("OREKIT_DATA_PATH") or os.environ.get("ORBITZOO_OREKIT_DATA_DIR") or os.environ.get("ORBITZOO_OREKIT_DATA_ZIP")
     if data_path:
-        pyhelpers.setup_orekit_data_path(data_path)
+        try:
+            from org.orekit.data import DataProvidersManager, DirectoryCrawler, ZipJarCrawler  # type: ignore
+            from java.io import File  # type: ignore
+            manager = DataProvidersManager.getInstance()
+            if str(data_path).lower().endswith('.zip'):
+                manager.addProvider(ZipJarCrawler(File(str(data_path))))
+            else:
+                manager.addProvider(DirectoryCrawler(File(str(data_path))))
+        except Exception:
+            pass
+        try:
+            from orekit import pyhelpers  # type: ignore
+            if hasattr(pyhelpers, "setup_orekit_data_path"):
+                pyhelpers.setup_orekit_data_path(data_path)
+        except Exception:
+            pass
     from org.orekit.frames import FramesFactory  # type: ignore
     from org.orekit.utils import IERSConventions  # type: ignore
     FramesFactory.getITRF(IERSConventions.IERS_2010, True)
