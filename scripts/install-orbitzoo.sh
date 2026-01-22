@@ -42,6 +42,7 @@ pip install play3d==0.1.5
 
 echo "Installing OrbitZoo extra deps"
 pip install tensorboardX
+pip install "msgpack<2.0.0" shellingham
 
 echo "Installing runner requirements inside OrbitZoo env"
 pip install -r "$RUNNER_REQ"
@@ -144,8 +145,13 @@ def _setup_orekit():
                     data_zip = str(candidate)
                     break
         def _looks_like_data(root: Path) -> bool:
-            # Some bundles omit TimeScales; EOP is the most reliable marker.
-            return (root / \"Earth-Orientation-Parameters\").exists()
+            # Require EOP + UTC-TAI history (fixes IERS UTC-TAI missing errors)
+            if not (root / \"Earth-Orientation-Parameters\").exists():
+                return False
+            for candidate in root.rglob(\"UTC-TAI.history\"):
+                if candidate.is_file():
+                    return True
+            return False
 
         def _find_data(root: Path):
             if not root.exists():
@@ -303,8 +309,12 @@ root = Path(os.environ.get("OREKIT_DIR", ".")).resolve()
 extract_root = root / "orekit-data"
 
 def looks_like_data(base: Path) -> bool:
-    # Some orekit-data bundles omit TimeScales; EOP is the minimum reliable marker.
-    return (base / "Earth-Orientation-Parameters").exists()
+    if not (base / "Earth-Orientation-Parameters").exists():
+        return False
+    for candidate in base.rglob("UTC-TAI.history"):
+        if candidate.is_file():
+            return True
+    return False
 
 def find_data_dir(base: Path):
     if not base.exists():
@@ -349,7 +359,12 @@ except Exception as exc:
     print(f"[OrbitZoo] orekit data download failed: {exc}")
 
 def looks_like_data(base: Path) -> bool:
-    return (base / "Earth-Orientation-Parameters").exists()
+    if not (base / "Earth-Orientation-Parameters").exists():
+        return False
+    for candidate in base.rglob("UTC-TAI.history"):
+        if candidate.is_file():
+            return True
+    return False
 
 def find_data_dir(base: Path):
     if not base.exists():
@@ -381,10 +396,57 @@ if [ -f "$OREKIT_ZIP_FILE" ]; then
   export ORBITZOO_OREKIT_DATA_ZIP="$(cat "$OREKIT_ZIP_FILE")"
 fi
 
+if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ]; then
+  export OREKIT_DATA_PATH="$ORBITZOO_OREKIT_DATA_DIR"
+fi
+
+# Validate orekit data load (best-effort)
+if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ] || [ -n "$ORBITZOO_OREKIT_DATA_ZIP" ]; then
+  echo "[OrbitZoo] Validating orekit data load..."
+  python - <<'PY' || true
+import os
+try:
+    import orekit  # type: ignore
+    try:
+        orekit.initVM()
+    except Exception:
+        pass
+    from orekit import pyhelpers  # type: ignore
+    data_path = os.environ.get("OREKIT_DATA_PATH") or os.environ.get("ORBITZOO_OREKIT_DATA_DIR") or os.environ.get("ORBITZOO_OREKIT_DATA_ZIP")
+    if data_path:
+        pyhelpers.setup_orekit_data_path(data_path)
+    from org.orekit.frames import FramesFactory  # type: ignore
+    from org.orekit.utils import IERSConventions  # type: ignore
+    FramesFactory.getITRF(IERSConventions.IERS_2010, True)
+    print("[OrbitZoo] Orekit data OK")
+except Exception as exc:
+    print(f"[OrbitZoo] Orekit data validation failed: {exc}")
+PY
+fi
+
+# Persist Orekit paths for future shell sessions
+if [ -n "$CONDA_PREFIX" ]; then
+  ACTIVATE_DIR="$CONDA_PREFIX/etc/conda/activate.d"
+  DEACTIVATE_DIR="$CONDA_PREFIX/etc/conda/deactivate.d"
+  mkdir -p "$ACTIVATE_DIR" "$DEACTIVATE_DIR"
+  cat > "$ACTIVATE_DIR/orbitzoo_env.sh" <<EOF
+export ORBITZOO_OREKIT_DATA_DIR="${ORBITZOO_OREKIT_DATA_DIR:-}"
+export ORBITZOO_OREKIT_DATA_ZIP="${ORBITZOO_OREKIT_DATA_ZIP:-}"
+export OREKIT_DATA_PATH="${OREKIT_DATA_PATH:-}"
+EOF
+  cat > "$DEACTIVATE_DIR/orbitzoo_env.sh" <<'EOF'
+unset ORBITZOO_OREKIT_DATA_DIR
+unset ORBITZOO_OREKIT_DATA_ZIP
+unset OREKIT_DATA_PATH
+EOF
+fi
+
 python - <<'PY'
 import importlib
 import sys
 import traceback
+import os
+from pathlib import Path
 ok = False
 errors = {}
 for name in ("orbitzoo", "orbit_zoo"):
@@ -403,6 +465,12 @@ if not ok:
     for entry in sys.path:
         print(entry)
     raise SystemExit(1)
+else:
+    data_dir = os.environ.get("OREKIT_DATA_PATH")
+    if data_dir and Path(data_dir).exists():
+        print(f"[OrbitZoo] OREKIT_DATA_PATH={data_dir}")
+    else:
+        print("[OrbitZoo] Warning: OREKIT_DATA_PATH not set.")
 PY
 
 mkdir -p "$SETUP_DIR"
