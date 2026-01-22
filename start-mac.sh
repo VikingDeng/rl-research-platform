@@ -18,6 +18,7 @@ SETUP_DIR="$ROOT_DIR/.local/setup"
 EXTRAS_MARKER="$SETUP_DIR/rl_extras_installed"
 ORBIT_MARKER="$SETUP_DIR/orbitzoo_installed"
 ORBIT_PY_FILE="$SETUP_DIR/orbitzoo_python"
+ORBIT_OREKIT_FILE="$SETUP_DIR/orbitzoo_orekit_path"
 OREKIT_CACHE="$ROOT_DIR/.local/orbitzoo/orekit-data.zip"
 ORBITZOO_ROOT="$ROOT_DIR/.local/orbitzoo"
 ORBITZOO_REPO_DEFAULT="$ORBITZOO_ROOT/orbit_zoo"
@@ -143,12 +144,15 @@ else
     export ORBITZOO_REPO="${ORBITZOO_REPO:-$ORBITZOO_REPO_DEFAULT}"
 fi
 
-export ORBITZOO_OREKIT_DATA_DIR="${ORBITZOO_OREKIT_DATA_DIR:-$ORBITZOO_OREKIT_DIR_DEFAULT}"
-export OREKIT_DATA_PATH="${OREKIT_DATA_PATH:-$ORBITZOO_OREKIT_DATA_DIR}"
-
 if [ -f "$ORBIT_PY_FILE" ]; then
     export RUNNER_PYTHON="$(cat "$ORBIT_PY_FILE")"
 fi
+if [ -f "$ORBIT_OREKIT_FILE" ]; then
+    export ORBITZOO_OREKIT_DATA_DIR="$(cat "$ORBIT_OREKIT_FILE")"
+fi
+
+export ORBITZOO_OREKIT_DATA_DIR="${ORBITZOO_OREKIT_DATA_DIR:-$ORBITZOO_OREKIT_DIR_DEFAULT}"
+export OREKIT_DATA_PATH="${OREKIT_DATA_PATH:-$ORBITZOO_OREKIT_DATA_DIR}"
 
 # 1.7 Install extra environments into runner python (one-time)
 if [ ! -f "$EXTRAS_MARKER" ]; then

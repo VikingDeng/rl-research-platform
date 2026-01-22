@@ -6,6 +6,7 @@ BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
 RUNNER_REQ="$BACKEND_DIR/runner/requirements.txt"
 SETUP_DIR="$ROOT_DIR/.local/setup"
 OREKIT_DIR="$ROOT_DIR/.local/orbitzoo"
+OREKIT_PATH_FILE="$SETUP_DIR/orbitzoo_orekit_path"
 
 if ! command -v conda >/dev/null 2>&1; then
   echo "conda not found. Install Anaconda/Miniconda first."
@@ -132,12 +133,36 @@ def _setup_orekit():
             pass
         from orekit.pyhelpers import setup_orekit_data_path  # type: ignore
         data_dir = os.environ.get(\"ORBITZOO_OREKIT_DATA_DIR\") or os.environ.get(\"OREKIT_DATA_PATH\")
+        data_zip = os.environ.get(\"ORBITZOO_OREKIT_DATA_ZIP\")
+        def _find_data(root: Path):
+            if not root.exists():
+                return None
+            marker = root / \"Earth-Orientation-Parameters\"
+            if marker.exists():
+                return root
+            for candidate in root.glob(\"*\"):
+                if candidate.is_dir():
+                    marker = candidate / \"Earth-Orientation-Parameters\"
+                    if marker.exists():
+                        return candidate
+            # one more level deep
+            for candidate in root.glob(\"*/*\"):
+                if candidate.is_dir():
+                    marker = candidate / \"Earth-Orientation-Parameters\"
+                    if marker.exists():
+                        return candidate
+            return None
+
         if not data_dir:
-            default_dir = REPO_PATH.parent / \"orekit-data\"
-            if default_dir.exists():
-                data_dir = str(default_dir)
+            default_root = REPO_PATH.parent / \"orekit-data\"
+            found = _find_data(default_root)
+            if found:
+                data_dir = str(found)
         if data_dir and Path(data_dir).exists():
             setup_orekit_data_path(str(data_dir))
+            return
+        if data_zip and Path(data_zip).exists():
+            setup_orekit_data_path(str(Path(data_zip)))
     except Exception:
         pass
 
@@ -220,6 +245,7 @@ if [ "$ORBITZOO_OREKIT_DATA_ZIP" = "$DEST_ZIP" ]; then
 else
   cp -f "$ORBITZOO_OREKIT_DATA_ZIP" "$DEST_ZIP"
 fi
+export ORBITZOO_OREKIT_DATA_ZIP="$DEST_ZIP"
 if command -v unzip >/dev/null 2>&1; then
   unzip -o "$OREKIT_DIR/orekit-data.zip" -d "$OREKIT_DIR/orekit-data" >/dev/null
 else
@@ -234,6 +260,38 @@ dest.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(zip_path, "r") as zf:
     zf.extractall(dest)
 PY
+fi
+
+OREKIT_DIR="$OREKIT_DIR" SETUP_DIR="$SETUP_DIR" python - <<'PY'
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("OREKIT_DIR", ".")).resolve()
+extract_root = root / "orekit-data"
+
+def find_data_dir(base: Path):
+    if not base.exists():
+        return None
+    if (base / "Earth-Orientation-Parameters").exists():
+        return base
+    for child in base.iterdir():
+        if child.is_dir() and (child / "Earth-Orientation-Parameters").exists():
+            return child
+    return None
+
+data_dir = find_data_dir(extract_root) or find_data_dir(root)
+if data_dir:
+    setup_dir = Path(os.environ.get("SETUP_DIR", root / ".setup"))
+    setup_dir.mkdir(parents=True, exist_ok=True)
+    path_file = setup_dir / "orbitzoo_orekit_path"
+    path_file.write_text(str(data_dir), encoding="utf-8")
+    print(f"[OrbitZoo] Orekit data dir: {data_dir}")
+else:
+    print("[OrbitZoo] Warning: orekit data directory not found after extraction.")
+PY
+
+if [ -f "$SETUP_DIR/orbitzoo_orekit_path" ]; then
+  export ORBITZOO_OREKIT_DATA_DIR="$(cat "$SETUP_DIR/orbitzoo_orekit_path")"
 fi
 
 python - <<'PY'
