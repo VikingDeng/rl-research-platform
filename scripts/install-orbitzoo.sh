@@ -57,8 +57,24 @@ repo = Path(os.environ.get("ORBITZOO_REPO", "")).resolve()
 if not repo.exists():
     raise SystemExit(f"ORBITZOO_REPO not found: {repo}")
 
+override = os.environ.get("ORBITZOO_PY_PATH")
 candidate = repo / "src"
-target_path = candidate if candidate.exists() else repo
+target_path = None
+if override:
+    target_path = Path(override).resolve()
+elif candidate.exists():
+    # Prefer src only if it contains a real package (dir with __init__.py)
+    pkg_dirs = [p for p in candidate.iterdir() if p.is_dir() and (p / "__init__.py").exists()]
+    if pkg_dirs:
+        target_path = candidate
+    else:
+        target_path = repo
+else:
+    target_path = repo
+
+if not target_path.exists():
+    raise SystemExit(f"ORBITZOO_PY_PATH not found: {target_path}")
+
 site_dir = Path(site.getsitepackages()[0])
 site_dir.mkdir(parents=True, exist_ok=True)
 pth_file = site_dir / "orbitzoo.pth"
@@ -114,16 +130,26 @@ fi
 
 python - <<'PY'
 import importlib
+import sys
+import traceback
 ok = False
+errors = {}
 for name in ("orbitzoo", "orbit_zoo"):
     try:
         importlib.import_module(name)
         ok = True
         break
     except Exception:
-        pass
+        errors[name] = traceback.format_exc()
 if not ok:
-    raise SystemExit("OrbitZoo import failed after installation.")
+    print("OrbitZoo import failed after installation.")
+    for name, err in errors.items():
+        print(f"--- import {name} error ---")
+        print(err)
+    print("sys.path:")
+    for entry in sys.path:
+        print(entry)
+    raise SystemExit(1)
 PY
 
 mkdir -p "$SETUP_DIR"
