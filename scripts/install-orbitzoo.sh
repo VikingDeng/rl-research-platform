@@ -185,7 +185,14 @@ def _setup_orekit():
             try:
                 from org.orekit.data import DataProvidersManager, DirectoryCrawler, ZipJarCrawler  # type: ignore
                 from java.io import File  # type: ignore
-                manager = DataProvidersManager.getInstance()
+                # Orekit Python binding exposes a singleton via getInstance() or getDefault()
+                manager = None
+                if hasattr(DataProvidersManager, "getInstance"):
+                    manager = DataProvidersManager.getInstance()
+                elif hasattr(DataProvidersManager, "getDefault"):
+                    manager = DataProvidersManager.getDefault()
+                if manager is None:
+                    return False
                 if str(path).lower().endswith('.zip'):
                     manager.addProvider(ZipJarCrawler(File(str(path))))
                 else:
@@ -201,7 +208,7 @@ def _setup_orekit():
                 try:
                     _pyhelpers.setup_orekit_data_path(str(resolved_path))
                 except Exception:
-                    pass
+                    _register_data(str(resolved_path))
             elif _pyhelpers and hasattr(_pyhelpers, \"setup_orekit_data_curdir\"):
                 try:
                     cwd = os.getcwd()
@@ -415,6 +422,16 @@ if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ]; then
   export OREKIT_DATA_PATH="$ORBITZOO_OREKIT_DATA_DIR"
 fi
 
+# Mirror Orekit data into OrbitZoo expected path if needed.
+if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ] && [ -n "$ORBITZOO_REPO" ]; then
+  TARGET_DIR="$ORBITZOO_REPO/src/dynamics/orekit"
+  TARGET_LINK="$TARGET_DIR/orekit-data"
+  if [ ! -e "$TARGET_LINK" ]; then
+    mkdir -p "$TARGET_DIR"
+    ln -s "$ORBITZOO_OREKIT_DATA_DIR" "$TARGET_LINK" || true
+  fi
+fi
+
 # Validate orekit data load (best-effort)
 if [ -n "$ORBITZOO_OREKIT_DATA_DIR" ] || [ -n "$ORBITZOO_OREKIT_DATA_ZIP" ]; then
   echo "[OrbitZoo] Validating orekit data load..."
@@ -431,11 +448,16 @@ try:
         try:
             from org.orekit.data import DataProvidersManager, DirectoryCrawler, ZipJarCrawler  # type: ignore
             from java.io import File  # type: ignore
-            manager = DataProvidersManager.getInstance()
-            if str(data_path).lower().endswith('.zip'):
-                manager.addProvider(ZipJarCrawler(File(str(data_path))))
-            else:
-                manager.addProvider(DirectoryCrawler(File(str(data_path))))
+            manager = None
+            if hasattr(DataProvidersManager, "getInstance"):
+                manager = DataProvidersManager.getInstance()
+            elif hasattr(DataProvidersManager, "getDefault"):
+                manager = DataProvidersManager.getDefault()
+            if manager:
+                if str(data_path).lower().endswith('.zip'):
+                    manager.addProvider(ZipJarCrawler(File(str(data_path))))
+                else:
+                    manager.addProvider(DirectoryCrawler(File(str(data_path))))
         except Exception:
             pass
         try:
