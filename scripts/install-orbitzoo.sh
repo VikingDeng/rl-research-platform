@@ -28,8 +28,13 @@ echo "Activating conda env: $ENV_NAME"
 . "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
 
-echo "Installing box2d-py and swig via conda-forge to avoid build errors..."
-conda install -y -c conda-forge swig box2d-py
+echo "Installing build dependencies (swig) via pip..."
+# Install swig via pip first, which provides the binary in the env's bin
+pip install swig
+
+echo "Installing box2d-py explicitly..."
+# Install box2d-py now that swig is available
+pip install box2d-py
 
 TORCH_SPEC="${ORBITZOO_TORCH_SPEC:-torch==2.4.1+cu121 torchvision torchaudio}"
 TORCH_INDEX="${ORBITZOO_TORCH_INDEX:-https://download.pytorch.org/whl/cu121}"
