@@ -20,7 +20,7 @@ if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
   echo "Conda env $ENV_NAME already exists. Reusing."
 else
   echo "Creating conda env: $ENV_NAME"
-  conda create -y -n "$ENV_NAME" python=3.10 numpy=1.24.4 orekit=12.2 pettingzoo=1.24.3 pygame=2.6.0 -c conda-forge
+  conda create -y -n "$ENV_NAME" python=3.10 numpy=1.24.4 orekit=12.2 pettingzoo=1.24.3 pygame=2.6.0 swig -c conda-forge
 fi
 
 echo "Activating conda env: $ENV_NAME"
