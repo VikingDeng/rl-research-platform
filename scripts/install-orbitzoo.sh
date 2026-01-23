@@ -255,21 +255,38 @@ def _load_module(path: Path):
     spec.loader.exec_module(module)
     return module
 
-_setup_orekit()
-candidate = _find_candidate()
-if candidate is None:
-    raise ImportError(\"OrbitZoo shim could not locate a Python module in src/\")
+_MOD = None
 
-_mod = _load_module(candidate)
+def _get_mod():
+    global _MOD
+    if _MOD is None:
+        _setup_orekit()
+        candidate = _find_candidate()
+        if candidate is None:
+             raise ImportError(\"OrbitZoo shim could not locate a Python module in src/\")
+        _MOD = _load_module(candidate)
+    return _MOD
 
-# Export common entrypoints if they exist
-make_env = getattr(_mod, \"make_env\", None) or getattr(_mod, \"make\", None)
-OrbitZoo = getattr(_mod, \"OrbitZoo\", None)
-if make_env is None and callable(OrbitZoo):
-    def make_env(*args, **kwargs):
-        return OrbitZoo(*args, **kwargs)
+def make_env(*args, **kwargs):
+    mod = _get_mod()
+    factory = getattr(mod, \"make_env\", None) or getattr(mod, \"make\", None)
+    cls = getattr(mod, \"OrbitZoo\", None)
+    if factory:
+        return factory(*args, **kwargs)
+    if callable(cls):
+        return cls(*args, **kwargs)
+    raise ImportError(\"OrbitZoo module has no make_env or OrbitZoo\")
 
-__all__ = [name for name in (\"make_env\", \"OrbitZoo\") if globals().get(name) is not None]
+class OrbitZoo:
+    def __new__(cls, *args, **kwargs):
+        mod = _get_mod()
+        real_cls = getattr(mod, \"OrbitZoo\", None)
+        if real_cls:
+            return real_cls(*args, **kwargs)
+        raise ImportError(\"OrbitZoo class not found in implementation\")
+
+make = make_env
+__all__ = [\"make_env\", \"OrbitZoo\", \"make\"]
 """
     shim_path.write_text(textwrap.dedent(shim_code), encoding="utf-8")
 
