@@ -32,6 +32,14 @@ if ! command -v swig >/dev/null 2>&1; then
   echo "swig not found in env. Installing via conda-forge..."
   conda install -y swig -c conda-forge
 fi
+echo "Swig version:"
+swig -version || echo "Swig command failed"
+
+# Fallback: install swig via pip if conda failed or if it's still missing
+if ! command -v swig >/dev/null 2>&1; then
+    echo "Swig still missing. Trying pip install swig..."
+    pip install swig
+fi
 
 TORCH_SPEC="${ORBITZOO_TORCH_SPEC:-torch==2.4.1+cu121 torchvision torchaudio}"
 TORCH_INDEX="${ORBITZOO_TORCH_INDEX:-https://download.pytorch.org/whl/cu121}"
