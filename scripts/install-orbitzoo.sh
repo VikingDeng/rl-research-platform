@@ -28,6 +28,11 @@ echo "Activating conda env: $ENV_NAME"
 . "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
 
+if ! command -v swig >/dev/null 2>&1; then
+  echo "swig not found in env. Installing via conda-forge..."
+  conda install -y swig -c conda-forge
+fi
+
 TORCH_SPEC="${ORBITZOO_TORCH_SPEC:-torch==2.4.1+cu121 torchvision torchaudio}"
 TORCH_INDEX="${ORBITZOO_TORCH_INDEX:-https://download.pytorch.org/whl/cu121}"
 echo "Installing torch: $TORCH_SPEC"
