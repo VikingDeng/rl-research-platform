@@ -28,13 +28,29 @@ echo "Activating conda env: $ENV_NAME"
 . "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
 
-echo "Installing build dependencies (swig) via pip..."
-# Install swig via pip first, which provides the binary in the env's bin
-pip install swig
+echo "--- Fixing box2d-py build dependencies ---"
+# 1. Install SWIG via Conda (reliable system-level binary)
+echo "Installing swig via conda-forge..."
+conda install -y -c conda-forge swig
 
-echo "Installing box2d-py explicitly..."
-# Install box2d-py now that swig is available
-pip install box2d-py
+# 2. Verify SWIG is in PATH
+SWIG_BIN="$(which swig)"
+echo "SWIG path: $SWIG_BIN"
+if [ -z "$SWIG_BIN" ]; then
+    echo "CRITICAL ERROR: swig not found in PATH after conda install."
+    echo "PATH is: $PATH"
+    exit 1
+fi
+swig -version
+
+# 3. Pre-install box2d-py with --no-build-isolation
+# This forces pip to use the active environment (with our swig) instead of a bare build env.
+echo "Pre-installing box2d-py with --no-build-isolation..."
+pip install box2d-py==2.3.5 --no-build-isolation || {
+    echo "box2d-py install failed. Trying to upgrade setuptools/wheel and retry..."
+    pip install --upgrade setuptools wheel
+    pip install box2d-py==2.3.5 --no-build-isolation
+}
 
 TORCH_SPEC="${ORBITZOO_TORCH_SPEC:-torch==2.4.1+cu121 torchvision torchaudio}"
 TORCH_INDEX="${ORBITZOO_TORCH_INDEX:-https://download.pytorch.org/whl/cu121}"
