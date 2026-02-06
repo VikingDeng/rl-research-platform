@@ -12,6 +12,7 @@ from app.db.session import engine, SessionLocal
 from app.db import models
 from alembic.config import Config
 from alembic import command
+from sqlalchemy import text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,9 +52,23 @@ ALGO_DEFS = [
     }
 ]
 
+def _ensure_sqlite_schema() -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info('eval_protocols')"))
+        cols = {row[1] for row in result}
+        for col, ctype in (("scenario_grid", "JSON"), ("opponent_sampling", "JSON")):
+            if col not in cols:
+                logger.info("Adding missing column eval_protocols.%s", col)
+                conn.execute(text(f"ALTER TABLE eval_protocols ADD COLUMN {col} {ctype}"))
+        conn.commit()
+
+
 def init_db():
     logger.info("Step 1: Creating tables...")
     Base.metadata.create_all(bind=engine)
+    _ensure_sqlite_schema()
     
     db = SessionLocal()
     try:

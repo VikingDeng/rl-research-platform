@@ -1,735 +1,4185 @@
-/* eslint-disable */
-// AUTO-GENERATED FROM docs/openapi_v1.yaml. DO NOT EDIT BY HAND.
-
-export interface ErrorResponse {
-  error: {
-    code: string;
-    message: string;
-    details?: Record<string, unknown>;
-  };
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface LoginResponse {
-  token: string;
-  tokenType?: string;
-  expiresAt?: string;
-}
-
-export interface User {
-  id: string;
-  email: string;
-  name?: string;
-  roles?: string[];
-}
-
-export interface ExecutorSettings {
-  mode: string;
-  localGpuCount: number;
-  localExecutorMode: string;
-  determinedMasterUrl?: string | null;
-  determinedConnected?: boolean | null;
-  determinedMock?: boolean | null;
-  scheduler?: string | null;
-}
-
-export interface StorageUsage {
-  artifactBytes: number;
-  dbBytes?: number | null;
-}
-
-export interface RetentionPolicy {
-  checkpointPolicy: string;
-}
-
-export interface SettingsResponse {
-  apiToken: string;
-  executor: ExecutorSettings;
-  storage: StorageUsage;
-  retention: RetentionPolicy;
-}
-
-export interface SettingsUpdate {
-  checkpointPolicy?: string;
-}
-
-export interface TokenRotateResponse {
-  apiToken: string;
-}
-
-export interface RetentionApplyResponse {
-  runsProcessed: number;
-  checkpointsRemoved: number;
-  artifactsRemoved: number;
-}
-
-export type JobStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELED';
-export type RunType = 'TRAIN' | 'EVAL' | 'MATRIX';
-export type TemplateType = 'Single-Agent' | 'Multi-Agent';
-export type PluginType = 'Algorithm' | 'Model' | 'Wrapper';
-
-export interface Project {
-  id: string;
-  name: string;
-  description?: string;
-  tags: string[];
-  createdAt?: string;
-  updatedAt: string;
-  activeRuns?: number;
-  totalRuns?: number;
-}
-
-export interface ProjectCreate {
-  name: string;
-  description?: string;
-  tags?: string[];
-}
-
-export interface ProjectUpdate {
-  name?: string;
-  description?: string;
-  tags?: string[];
-}
-
-export interface EnvSpec {
-  id: string;
-  versions: string[];
-  maps: string[];
-  archived: boolean;
-}
-
-export interface EnvSpecUpdate {
-  archived?: boolean;
-}
-
-export interface EnvMapSet {
-  id: string;
-  maps: string[];
-}
-
-export interface EnvVersion {
-  envId: string;
-  version: string;
-  apiMode: string;
-  entrypoint?: string;
-  package?: string;
-  active?: boolean;
-  frozen?: boolean;
-  defaultImageDigest?: string;
-  mapSets?: EnvMapSet[];
-  scenarioSchema?: Record<string, unknown>;
-}
-
-export interface EnvVersionCreate {
-  version: string;
-  apiMode: string;
-  entrypoint: string;
-  package?: string;
-  active?: boolean;
-  frozen?: boolean;
-  defaultImageDigest?: string;
-  mapSets?: EnvMapSet[];
-  scenarioSchema?: Record<string, unknown>;
-}
-
-export interface EnvVersionUpsert {
-  envId: string;
-  version: string;
-  apiMode: string;
-  entrypoint: string;
-  package?: string;
-  active?: boolean;
-  frozen?: boolean;
-  defaultImageDigest?: string;
-  mapSets?: EnvMapSet[];
-  scenarioSchema?: Record<string, unknown>;
-}
-
-export interface EnvVersionUpdate {
-  apiMode?: string;
-  entrypoint?: string;
-  package?: string;
-  active?: boolean;
-  frozen?: boolean;
-  defaultImageDigest?: string;
-  mapSets?: EnvMapSet[];
-  scenarioSchema?: Record<string, unknown>;
-}
-
-export interface Algo {
-  id: string;
-  name: string;
-  description?: string;
-  archived?: boolean;
-}
-
-export interface AlgoUpdate {
-  name?: string;
-  description?: string;
-  archived?: boolean;
-}
-
-export interface AlgoVersion {
-  id: string;
-  algoId: string;
-  version: string;
-  entrypoint: string;
-  package?: string;
-  artifactUri?: string;
-  configSchema?: Record<string, unknown>;
-  defaultConfig?: Record<string, unknown>;
-  resourceProfile?: Record<string, unknown>;
-  envConstraints?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  active: boolean;
-  frozen?: boolean;
-  createdAt?: string;
-}
-
-export interface AlgoVersionCreate {
-  version: string;
-  entrypoint: string;
-  package?: string;
-  artifactUri?: string;
-  configSchema?: Record<string, unknown>;
-  defaultConfig?: Record<string, unknown>;
-  resourceProfile?: Record<string, unknown>;
-  envConstraints?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  active?: boolean;
-  frozen?: boolean;
-}
-
-export interface AlgoVersionUpdate {
-  entrypoint?: string;
-  package?: string;
-  artifactUri?: string;
-  configSchema?: Record<string, unknown>;
-  defaultConfig?: Record<string, unknown>;
-  resourceProfile?: Record<string, unknown>;
-  envConstraints?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  active?: boolean;
-  frozen?: boolean;
-}
-
-export interface Template {
-  id: string;
-  projectId: string;
-  name: string;
-  description?: string;
-  type: TemplateType;
-  defaultConfig: Record<string, unknown>;
-  archived?: boolean;
-}
-
-export interface TemplateDetail extends Template {
-  versions?: TemplateVersion[];
-}
-
-export interface TemplateCreate {
-  name: string;
-  description?: string;
-  type: TemplateType;
-  defaultConfig?: Record<string, unknown>;
-}
-
-export interface TemplateUpdate {
-  name?: string;
-  description?: string;
-  defaultConfig?: Record<string, unknown>;
-  archived?: boolean;
-}
-
-export interface TemplateVersion {
-  id: string;
-  templateId: string;
-  algoVersionId?: string;
-  version: string;
-  defaultConfig?: Record<string, unknown>;
-  networkTemplate?: Record<string, unknown>;
-  envConstraints?: Record<string, unknown>;
-  wrappers?: string[];
-  createdAt?: string;
-  frozen?: boolean;
-}
-
-export interface TemplateVersionCreate {
-  version: string;
-  algoVersionId: string;
-  defaultConfig?: Record<string, unknown>;
-  networkTemplate?: Record<string, unknown>;
-  envConstraints?: Record<string, unknown>;
-  wrappers?: string[];
-}
-
-export interface Plugin {
-  id: string;
-  name: string;
-  version: string;
-  type: PluginType;
-  description?: string;
-  author?: string;
-  installed?: boolean;
-  archived?: boolean;
-}
-
-export interface PluginUpdate {
-  name?: string;
-  description?: string;
-  author?: string;
-  type?: PluginType;
-  installed?: boolean;
-  archived?: boolean;
-}
-
-export interface PluginVersion {
-  pluginId: string;
-  version: string;
-  wheelUri: string;
-  sha256: string;
-  manifest?: Record<string, unknown>;
-  frozen?: boolean;
-}
-
-export interface PluginVersionCreate {
-  pluginId: string;
-  version: string;
-  wheelUri: string;
-  sha256: string;
-  manifest?: Record<string, unknown>;
-}
-
-export interface MetricPoint {
-  step: number;
-  value: number;
-}
-
-export interface RunMetrics {
-  returnMean: MetricPoint[];
-  winRate: MetricPoint[];
-  entropy: MetricPoint[];
-}
-
-export interface GitInfo {
-  branch: string;
-  commit: string;
-  url: string;
-  isDirty: boolean;
-  diff?: string;
-}
-
-export interface Run {
-  id: string;
-  projectId: string;
-  name: string;
-  type: RunType;
-  status: JobStatus;
-  algo: string;
-  env: string;
-  duration?: string;
-  gpu?: number;
-  created: string;
-  config?: Record<string, unknown>;
-  git?: GitInfo;
-  metrics?: RunMetrics;
-}
-
-export interface CheckpointMetrics {
-  winRate: number;
-  returnMean: number;
-}
-
-export interface Checkpoint {
-  id: string;
-  runId: string;
-  step: number;
-  metrics: CheckpointMetrics;
-  path: string;
-  tags: string[];
-  createdAt: string;
-}
-
-export interface CheckpointTagRequest {
-  tag: string;
-}
-
-export interface Job {
-  id: string;
-  runId: string;
-  status: string;
-  priority?: number;
-  createdAt?: string;
-  updatedAt?: string;
-  message?: string;
-}
-
-export interface JobControlRequest {
-  reason?: string;
-}
-
-export interface TrainJobEnv {
-  envId: string;
-  version: string;
-  mapSet: string;
-  wrappers?: string[];
-  [key: string]: any;
-}
-
-export interface TrainJobAlgo {
-  algoId: string;
-  algoVersionId: string;
-  preset?: string;
-  [key: string]: any;
-}
-
-export interface TrainJobAgent {
-  policySharing?: string;
-  arch?: string;
-  recurrent?: boolean;
-}
-
-export interface TrainJobTrain {
-  totalEnvSteps: number;
-  rolloutLen: number;
-  batchSize: number;
-  lr: number;
-  entropyCoef?: number;
-  gamma?: number;
-  gaeLambda?: number;
-  [key: string]: any;
-}
-
-export interface ResourceSpec {
-  gpus: number;
-  cpus?: number;
-  memGb?: number;
-  priority?: number;
-}
-
-export interface PluginRef {
-  pluginId: string;
-  version: string;
-}
-
-export interface AutoEvalConfig {
-  protocolId: string;
-  triggerOn: string;
-}
-
-export interface TrainJobRequest {
-  projectId: string;
-  templateVersionId: string;
-  env: TrainJobEnv;
-  algo: TrainJobAlgo;
-  agent?: TrainJobAgent;
-  train: TrainJobTrain;
-  network?: Record<string, unknown>;
-  resources: ResourceSpec;
-  seedSet?: number[];
-  plugin?: PluginRef;
-  autoEval?: AutoEvalConfig;
-}
-
-export interface TrainJobResponse {
-  runId: string;
-  jobId: string;
-}
-
-export interface EnvRef {
-  envId: string;
-  version: string;
-  mapSet: string;
-}
-
-export interface OpponentPoolRef {
-  poolId: string;
-  version: string;
-}
-
-export interface EvalProtocolSummary {
-  id: string;
-  protocolKey?: string;
-  name: string;
-  version: string;
-  envId: string;
-  map: string;
-  evalSeeds: number[];
-  episodes: number;
-  scenarioGrid?: Record<string, unknown>;
-  opponentSampling?: Record<string, unknown>;
-  opponentPoolRef?: OpponentPoolRef;
-  frozen: boolean;
-  created?: string;
-}
-
-export interface EvalProtocol {
-  id: string;
-  protocolKey?: string;
-  name: string;
-  version: string;
-  env: EnvRef;
-  evalSeeds: number[];
-  episodesPerMatch: number;
-  timeoutSec?: number;
-  metrics?: string[];
-  scenarioGrid?: Record<string, unknown>;
-  opponentSampling?: Record<string, unknown>;
-  opponentPoolRef?: OpponentPoolRef;
-  frozen: boolean;
-  createdAt?: string;
-}
-
-export interface EvalProtocolCreate {
-  name: string;
-  version?: string;
-  env: EnvRef;
-  evalSeeds: number[];
-  episodesPerMatch: number;
-  timeoutSec?: number;
-  metrics?: string[];
-  scenarioGrid?: Record<string, unknown>;
-  opponentSampling?: Record<string, unknown>;
-  opponentPoolRef?: OpponentPoolRef;
-}
-
-export interface EvalProtocolVersionCreate {
-  version?: string;
-  name?: string;
-  env?: EnvRef;
-  evalSeeds?: number[];
-  episodesPerMatch?: number;
-  timeoutSec?: number;
-  metrics?: string[];
-  scenarioGrid?: Record<string, unknown>;
-  opponentSampling?: Record<string, unknown>;
-  opponentPoolRef?: OpponentPoolRef;
-}
-
-export interface EvalProtocolUpdate {
-  name?: string;
-  env?: EnvRef;
-  evalSeeds?: number[];
-  episodesPerMatch?: number;
-  timeoutSec?: number;
-  metrics?: string[];
-  scenarioGrid?: Record<string, unknown> | null;
-  opponentSampling?: Record<string, unknown> | null;
-  opponentPoolRef?: OpponentPoolRef;
-}
-
-export interface OpponentPoolSummary {
-  id: string;
-  poolKey?: string;
-  name: string;
-  version: string;
-  size: number;
-  env: string;
-  frozen: boolean;
-  created?: string;
-}
-
-export interface OpponentPool {
-  id: string;
-  poolKey?: string;
-  name: string;
-  version: string;
-  env: string;
-  size?: number;
-  frozen: boolean;
-  created?: string;
-  memberSnapshotIds?: string[];
-}
-
-export interface OpponentPoolCreate {
-  name: string;
-  env: string;
-  version?: string;
-  memberSnapshotIds?: string[];
-}
-
-export interface OpponentPoolVersionCreate {
-  version?: string;
-  memberSnapshotIds?: string[];
-}
-
-export interface OpponentPoolMembersUpdate {
-  snapshotIds: string[];
-  mode: 'append' | 'remove';
-}
-
-export interface EvalJobRequest {
-  policySnapshotId: string;
-  protocolId: string;
-  resources?: ResourceSpec;
-}
-
-export interface EvalJobResponse {
-  runId: string;
-  jobId: string;
-  evalResultId: string;
-}
-
-export interface MatrixJobRequest {
-  poolId?: string;
-  policySnapshotIds: string[];
-  protocolId: string;
-  gamesPerPair?: number;
-  metric?: string;
-  resources?: ResourceSpec;
-}
-
-export interface MatrixJobResponse {
-  matrixId: string;
-  jobId: string;
-}
-
-export interface EvalResult {
-  id: string;
-  runId?: string;
-  protocolId: string;
-  metrics?: Record<string, number>;
-  summary?: EvalResultSummary;
-  ci?: ConfidenceInterval;
-  createdAt?: string;
-  artifactUrl?: string;
-}
-
-export interface EvalResultSummary {
-  mean: number;
-  std: number;
-  n: number;
-}
-
-export interface ConfidenceInterval {
-  low: number;
-  high: number;
-  level: number;
-}
-
-export interface MatrixCell {
-  row: string;
-  col: string;
-  value: number;
-}
-
-export interface MatrixResult {
-  id: string;
-  protocolId?: string;
-  poolId?: string;
-  createdAt?: string;
-  cells: MatrixCell[];
-  labels?: string[];
-  matrix?: number[][];
-  meta?: MatrixMeta;
-  ranking?: RankingEntry[];
-  artifacts?: MatrixArtifacts;
-  summary?: Record<string, unknown>;
-  exportUrl?: string;
-}
-
-export interface MatrixMeta {
-  gamesPerPair?: number;
-  seeds?: number[];
-  metric?: string;
-}
-
-export interface RankingEntry {
-  id: string;
-  score: number;
-  ci?: ConfidenceInterval;
-}
-
-export interface MatrixArtifacts {
-  csvUri?: string;
-  jsonUri?: string;
-  heatmapUri?: string;
-}
-
-export interface RunMetricsResponse {
-  runId: string;
-  series: Record<string, MetricPoint[]>;
-}
-
-export interface LogPage {
-  lines: string[];
-  page: number;
-  pageSize: number;
-  hasMore: boolean;
-}
-
-export interface ArtifactFile {
-  id: string;
-  name: string;
-  path: string;
-  size?: string;
-  type: 'file' | 'folder';
-  lastModified: string;
-  createdAt?: string;
-  objectKey?: string;
-}
-
-export interface ArtifactDownloadResponse {
-  url: string;
-  expiresAt?: string;
-}
-
-export interface ReproBundleResponse {
-  url?: string;
-  manifest?: Record<string, unknown>;
-}
-
-export interface WebhookCreate {
-  url: string;
-  events: string[];
-  secret?: string;
-}
-
-export interface GpuInfo {
-  index: number;
-  name: string;
-  utilizationGpu: number;
-  utilizationMemory: number;
-  memoryTotal: number;
-  memoryUsed: number;
-  memoryFree: number;
-  temperature: number;
-}
-
-export interface SystemResources {
-  cpuPercent: number;
-  memoryPercent: number;
-  memoryTotal: number;
-  memoryUsed: number;
-  gpus: GpuInfo[];
-}
-
-export interface RegisteredModel {
-  id: string;
-  name: string;
-  description?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ModelVersion {
-  id: string;
-  modelId: string;
-  checkpointId: string;
-  version: number;
-  stage: string;
-  createdAt: string;
-}
-
-export interface ModelCreate {
-  name: string;
-  description?: string;
-}
-
-export interface ModelVersionCreate {
-  checkpointId: string;
+/**
+ * This file was auto-generated by openapi-typescript.
+ * Do not make direct changes to the file.
+ */
+
+export interface paths {
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login and receive an access token */
+        post: operations["postAuthLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current user profile */
+        get: operations["getAuthMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get system settings summary */
+        get: operations["getSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update settings */
+        patch: operations["patchSettings"];
+        trace?: never;
+    };
+    "/settings/token/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate API token */
+        post: operations["postSettingsTokenRotate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/retention/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply checkpoint retention policy to all runs */
+        post: operations["postSettingsRetentionApply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List projects */
+        get: operations["getProjects"];
+        put?: never;
+        /** Create project */
+        post: operations["postProjects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get project by ID */
+        get: operations["getProjectsByProjectId"];
+        put?: never;
+        post?: never;
+        /** Delete project */
+        delete: operations["deleteProjectsByProjectId"];
+        options?: never;
+        head?: never;
+        /** Update project */
+        patch: operations["patchProjectsByProjectId"];
+        trace?: never;
+    };
+    "/envs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List environments */
+        get: operations["getEnvs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/envs/{env_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List environment versions */
+        get: operations["getEnvsByEnvIdVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/envs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register or update environment metadata */
+        post: operations["postAdminEnvs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/envs/{env_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Archive environment */
+        delete: operations["deleteAdminEnvs"];
+        options?: never;
+        head?: never;
+        /** Update environment metadata */
+        patch: operations["patchAdminEnvs"];
+        trace?: never;
+    };
+    "/admin/envs/{env_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add environment version */
+        post: operations["postAdminEnvsByEnvIdVersions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/envs/{env_id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update environment version */
+        patch: operations["patchAdminEnvsByEnvIdVersionsByVersion"];
+        trace?: never;
+    };
+    "/admin/envs/{env_id}/versions/{version}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze environment version */
+        post: operations["postAdminEnvVersionsFreeze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/algos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List registered algorithms */
+        get: operations["getAlgos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/algos/{algo_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List algorithm versions */
+        get: operations["getAlgoVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/algos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register or update algorithm */
+        post: operations["postAdminAlgos"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/algos/{algo_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Archive algorithm */
+        delete: operations["deleteAdminAlgos"];
+        options?: never;
+        head?: never;
+        /** Update algorithm metadata */
+        patch: operations["patchAdminAlgos"];
+        trace?: never;
+    };
+    "/admin/algos/{algo_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create algorithm version */
+        post: operations["postAdminAlgoVersions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/algos/{algo_id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update algorithm version */
+        patch: operations["patchAdminAlgoVersions"];
+        trace?: never;
+    };
+    "/admin/algos/{algo_id}/versions/{version}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze algorithm version */
+        post: operations["postAdminAlgoVersionsFreeze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List templates */
+        get: operations["getTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create template under project */
+        post: operations["postProjectsByProjectIdTemplates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get template by ID */
+        get: operations["getTemplatesByTemplateId"];
+        put?: never;
+        post?: never;
+        /** Archive template */
+        delete: operations["deleteTemplatesByTemplateId"];
+        options?: never;
+        head?: never;
+        /** Update template */
+        patch: operations["patchTemplatesByTemplateId"];
+        trace?: never;
+    };
+    "/templates/{template_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create template version */
+        post: operations["postTemplatesByTemplateIdVersions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates/{template_id}/versions/{version_id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze template version */
+        post: operations["postTemplateVersionsFreeze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List plugins */
+        get: operations["getPlugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register plugin version */
+        post: operations["postAdminPlugins"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/plugins/{plugin_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Archive plugin */
+        delete: operations["deleteAdminPlugins"];
+        options?: never;
+        head?: never;
+        /** Update plugin metadata */
+        patch: operations["patchAdminPlugins"];
+        trace?: never;
+    };
+    "/plugins/{plugin_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List plugin versions */
+        get: operations["getPluginsByPluginIdVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/plugins/{plugin_id}/versions/{version}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze plugin version */
+        post: operations["postAdminPluginVersionsFreeze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/train-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit training job */
+        post: operations["postTrainJobs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List runs */
+        get: operations["getRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get run by ID */
+        get: operations["getRunsByRunId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/export-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export run config to template version */
+        post: operations["postRunsByRunIdExportTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get run group summary */
+        get: operations["getRunsByGroupId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/job": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get job for run */
+        get: operations["getRunsByRunIdJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List run checkpoints */
+        get: operations["getRunsByRunIdCheckpoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/checkpoints/{ckpt_id}/tag": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tag a checkpoint */
+        post: operations["postRunsByRunIdCheckpointsByCkptIdTag"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get job status */
+        get: operations["getJobsByJobId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel job */
+        post: operations["postJobsByJobIdCancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause job */
+        post: operations["postJobsByJobIdPause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/{job_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume job */
+        post: operations["postJobsByJobIdResume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/eval-protocols": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List evaluation protocols */
+        get: operations["getEvalProtocols"];
+        put?: never;
+        /** Create evaluation protocol */
+        post: operations["postEvalProtocols"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/eval-protocols/{protocol_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get evaluation protocol */
+        get: operations["getEvalProtocolsByProtocolId"];
+        put?: never;
+        post?: never;
+        /** Delete evaluation protocol (all versions) */
+        delete: operations["deleteEvalProtocolsByProtocolId"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/eval-protocols/{protocol_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List evaluation protocol versions */
+        get: operations["getEvalProtocolsByProtocolIdVersions"];
+        put?: never;
+        /** Create evaluation protocol version */
+        post: operations["postEvalProtocolsByProtocolIdVersions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/eval-protocols/{protocol_id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze evaluation protocol */
+        post: operations["postEvalProtocolsByProtocolIdFreeze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/opponent-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List opponent pools */
+        get: operations["getOpponentPools"];
+        put?: never;
+        /** Create opponent pool */
+        post: operations["postOpponentPools"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/opponent-pools/{pool_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get opponent pool */
+        get: operations["getOpponentPoolsByPoolId"];
+        put?: never;
+        post?: never;
+        /** Delete opponent pool (all versions) */
+        delete: operations["deleteOpponentPoolsByPoolId"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/opponent-pools/{pool_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List opponent pool versions */
+        get: operations["getOpponentPoolsByPoolIdVersions"];
+        put?: never;
+        /** Create opponent pool version */
+        post: operations["postOpponentPoolsByPoolIdVersions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/opponent-pools/{pool_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add or remove opponent pool members */
+        post: operations["postOpponentPoolsByPoolIdMembers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/opponent-pools/{pool_id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze opponent pool */
+        post: operations["postOpponentPoolsByPoolIdFreeze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/eval-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit evaluation job */
+        post: operations["postEvalJobs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/matrix-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit matrix job */
+        post: operations["postMatrixJobs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/eval-results/{eval_result_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get evaluation result */
+        get: operations["getEvalResultsByEvalResultId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/matrix-results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List matrix results */
+        get: operations["getMatrixResults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/matrix-results/{matrix_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get matrix result */
+        get: operations["getMatrixResultsByMatrixId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Query run metrics */
+        get: operations["getRunsByRunIdMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Query run logs */
+        get: operations["getRunsByRunIdLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream run metrics and status (WebSocket)
+         * @description WebSocket endpoint that pushes metrics, job status, and checkpoint events.
+         */
+        get: operations["getRunsByRunIdStream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List run artifacts */
+        get: operations["getRunsByRunIdArtifacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/artifacts/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download all run artifacts as a zip archive */
+        get: operations["getRunsByRunIdArtifactsArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/artifacts/{artifact_id}/download_url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get artifact download URL */
+        get: operations["getArtifactsByArtifactIdDownloadUrl"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/repro-bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get reproducibility bundle */
+        get: operations["getRunsByRunIdReproBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List datasets */
+        get: operations["getDatasets"];
+        put?: never;
+        /** Register dataset by path */
+        post: operations["postDatasets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload dataset file */
+        post: operations["postDatasetsUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{dataset_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download dataset */
+        get: operations["getDatasetsByDatasetIdDownload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{dataset_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview dataset contents */
+        get: operations["getDatasetsByDatasetIdPreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create webhook subscription */
+        post: operations["postAdminWebhooks"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
+export type webhooks = Record<string, never>;
+export interface components {
+    schemas: {
+        ErrorResponse: {
+            error: {
+                code: string;
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        LoginRequest: {
+            /** Format: email */
+            email: string;
+            password: string;
+        };
+        LoginResponse: {
+            token: string;
+            /** @default Bearer */
+            tokenType: string;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        User: {
+            id: string;
+            email: string;
+            name?: string;
+            roles?: string[];
+        };
+        ExecutorSettings: {
+            mode: string;
+            localGpuCount: number;
+            localExecutorMode: string;
+            determinedMasterUrl?: string | null;
+            determinedConnected?: boolean | null;
+            determinedMock?: boolean | null;
+            scheduler?: string | null;
+        };
+        StorageUsage: {
+            artifactBytes: number;
+            dbBytes?: number | null;
+        };
+        RetentionPolicy: {
+            checkpointPolicy: string;
+        };
+        SettingsResponse: {
+            apiToken: string;
+            executor: components["schemas"]["ExecutorSettings"];
+            storage: components["schemas"]["StorageUsage"];
+            retention: components["schemas"]["RetentionPolicy"];
+        };
+        SettingsUpdate: {
+            checkpointPolicy?: string;
+        };
+        TokenRotateResponse: {
+            apiToken: string;
+        };
+        RetentionApplyResponse: {
+            runsProcessed: number;
+            checkpointsRemoved: number;
+            artifactsRemoved: number;
+        };
+        Project: {
+            id: string;
+            name: string;
+            description?: string;
+            tags: string[];
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt: string;
+            activeRuns?: number;
+            totalRuns?: number;
+        };
+        ProjectCreate: {
+            name: string;
+            description?: string;
+            tags?: string[];
+        };
+        ProjectUpdate: {
+            name?: string;
+            description?: string;
+            tags?: string[];
+        };
+        EnvSpec: {
+            id: string;
+            versions: string[];
+            maps: string[];
+            archived?: boolean;
+        };
+        EnvSpecUpdate: {
+            archived?: boolean;
+        };
+        EnvMapSet: {
+            id: string;
+            maps: string[];
+        };
+        EnvVersion: {
+            envId: string;
+            version: string;
+            apiMode: string;
+            /** @description Python entrypoint in module:function format. */
+            entrypoint?: string;
+            /** @description Python package specifier to install (e.g. smac==1.0.0). */
+            package?: string;
+            active?: boolean;
+            frozen?: boolean;
+            defaultImageDigest?: string;
+            mapSets?: components["schemas"]["EnvMapSet"][];
+            scenarioSchema?: {
+                [key: string]: unknown;
+            };
+        };
+        EnvVersionUpsert: {
+            envId: string;
+            version: string;
+            apiMode: string;
+            /** @description Python entrypoint in module:function format. */
+            entrypoint: string;
+            /** @description Python package specifier to install (e.g. smac==1.0.0). */
+            package?: string;
+            active?: boolean;
+            frozen?: boolean;
+            defaultImageDigest?: string;
+            mapSets?: components["schemas"]["EnvMapSet"][];
+            scenarioSchema?: {
+                [key: string]: unknown;
+            };
+        };
+        EnvVersionCreate: {
+            version: string;
+            apiMode: string;
+            /** @description Python entrypoint in module:function format. */
+            entrypoint: string;
+            /** @description Python package specifier to install (e.g. smac==1.0.0). */
+            package?: string;
+            active?: boolean;
+            frozen?: boolean;
+            defaultImageDigest?: string;
+            mapSets?: components["schemas"]["EnvMapSet"][];
+            scenarioSchema?: {
+                [key: string]: unknown;
+            };
+        };
+        EnvVersionUpdate: {
+            apiMode?: string;
+            entrypoint?: string;
+            package?: string;
+            active?: boolean;
+            frozen?: boolean;
+            defaultImageDigest?: string;
+            mapSets?: components["schemas"]["EnvMapSet"][];
+            scenarioSchema?: {
+                [key: string]: unknown;
+            };
+        };
+        Algo: {
+            id: string;
+            name: string;
+            description?: string;
+            archived?: boolean;
+        };
+        AlgoUpdate: {
+            name?: string;
+            description?: string;
+            archived?: boolean;
+        };
+        AlgoVersion: {
+            id: string;
+            algoId: string;
+            version: string;
+            entrypoint: string;
+            package?: string;
+            artifactUri?: string;
+            configSchema?: {
+                [key: string]: unknown;
+            };
+            defaultConfig?: {
+                [key: string]: unknown;
+            };
+            resourceProfile?: {
+                [key: string]: unknown;
+            };
+            envConstraints?: {
+                [key: string]: unknown;
+            };
+            metadata?: {
+                [key: string]: unknown;
+            };
+            active: boolean;
+            frozen?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        AlgoVersionCreate: {
+            version: string;
+            entrypoint: string;
+            package?: string;
+            artifactUri?: string;
+            configSchema?: {
+                [key: string]: unknown;
+            };
+            defaultConfig?: {
+                [key: string]: unknown;
+            };
+            resourceProfile?: {
+                [key: string]: unknown;
+            };
+            envConstraints?: {
+                [key: string]: unknown;
+            };
+            metadata?: {
+                [key: string]: unknown;
+            };
+            active?: boolean;
+            frozen?: boolean;
+        };
+        AlgoVersionUpdate: {
+            entrypoint?: string;
+            package?: string;
+            artifactUri?: string;
+            configSchema?: {
+                [key: string]: unknown;
+            };
+            defaultConfig?: {
+                [key: string]: unknown;
+            };
+            resourceProfile?: {
+                [key: string]: unknown;
+            };
+            envConstraints?: {
+                [key: string]: unknown;
+            };
+            metadata?: {
+                [key: string]: unknown;
+            };
+            active?: boolean;
+            frozen?: boolean;
+        };
+        /** @enum {string} */
+        TemplateType: "Single-Agent" | "Multi-Agent";
+        Template: {
+            id: string;
+            projectId: string;
+            name: string;
+            description?: string;
+            type: components["schemas"]["TemplateType"];
+            defaultConfig: {
+                [key: string]: unknown;
+            };
+            archived?: boolean;
+        };
+        TemplateDetail: components["schemas"]["Template"] & {
+            versions?: components["schemas"]["TemplateVersion"][];
+        };
+        TemplateCreate: {
+            name: string;
+            description?: string;
+            type: components["schemas"]["TemplateType"];
+            defaultConfig?: {
+                [key: string]: unknown;
+            };
+        };
+        TemplateUpdate: {
+            name?: string;
+            description?: string;
+            defaultConfig?: {
+                [key: string]: unknown;
+            };
+            archived?: boolean;
+        };
+        TemplateVersion: {
+            id: string;
+            templateId: string;
+            algoVersionId?: string;
+            version: string;
+            defaultConfig?: {
+                [key: string]: unknown;
+            };
+            networkTemplate?: {
+                [key: string]: unknown;
+            };
+            envConstraints?: {
+                [key: string]: unknown;
+            };
+            wrappers?: string[];
+            /** Format: date-time */
+            createdAt?: string;
+            frozen?: boolean;
+        };
+        TemplateVersionCreate: {
+            version: string;
+            algoVersionId: string;
+            defaultConfig?: {
+                [key: string]: unknown;
+            };
+            networkTemplate?: {
+                [key: string]: unknown;
+            };
+            envConstraints?: {
+                [key: string]: unknown;
+            };
+            wrappers?: string[];
+        };
+        /** @enum {string} */
+        PluginType: "Algorithm" | "Model" | "Wrapper";
+        Plugin: {
+            id: string;
+            name: string;
+            version: string;
+            type: components["schemas"]["PluginType"];
+            description?: string;
+            author?: string;
+            installed?: boolean;
+            archived?: boolean;
+        };
+        PluginUpdate: {
+            name?: string;
+            description?: string;
+            author?: string;
+            type?: components["schemas"]["PluginType"];
+            installed?: boolean;
+            archived?: boolean;
+        };
+        PluginVersion: {
+            pluginId: string;
+            version: string;
+            wheelUri: string;
+            sha256: string;
+            manifest?: {
+                [key: string]: unknown;
+            };
+            frozen?: boolean;
+        };
+        PluginVersionCreate: {
+            pluginId: string;
+            version: string;
+            wheelUri: string;
+            sha256: string;
+            manifest?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @enum {string} */
+        RunType: "TRAIN" | "EVAL" | "MATRIX";
+        /** @enum {string} */
+        JobStatus: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+        MetricPoint: {
+            step: number;
+            value: number;
+        };
+        RunMetrics: {
+            returnMean: components["schemas"]["MetricPoint"][];
+            winRate: components["schemas"]["MetricPoint"][];
+            entropy: components["schemas"]["MetricPoint"][];
+        };
+        GitInfo: {
+            branch: string;
+            commit: string;
+            url: string;
+            isDirty: boolean;
+            diff?: string;
+        };
+        Run: {
+            id: string;
+            projectId: string;
+            name: string;
+            type: components["schemas"]["RunType"];
+            status: components["schemas"]["JobStatus"];
+            algo: string;
+            env: string;
+            duration?: string;
+            gpu?: number;
+            /** Format: date-time */
+            created: string;
+            config: {
+                [key: string]: unknown;
+            };
+            git?: components["schemas"]["GitInfo"];
+            metrics: components["schemas"]["RunMetrics"];
+        };
+        RunGroupItem: {
+            id: string;
+            name: string;
+            status: components["schemas"]["JobStatus"];
+            /** Format: date-time */
+            created: string;
+            algo: string;
+            env: string;
+            seed?: number;
+            metrics: {
+                [key: string]: number;
+            };
+        };
+        RunGroupMetricSummary: {
+            mean: number;
+            std: number;
+            min: number;
+            max: number;
+            n: number;
+            bestRunId?: string;
+            ciLow?: number;
+            ciHigh?: number;
+        };
+        RunGroupSummary: {
+            groupId: string;
+            totalRuns: number;
+            statusCounts: {
+                [key: string]: number;
+            };
+            metrics: {
+                [key: string]: components["schemas"]["RunGroupMetricSummary"];
+            };
+            runs: components["schemas"]["RunGroupItem"][];
+        };
+        RunExportTemplateRequest: {
+            templateId?: string;
+            name?: string;
+            version?: string;
+            description?: string;
+        };
+        CheckpointMetrics: {
+            winRate: number;
+            returnMean: number;
+        };
+        Checkpoint: {
+            id: string;
+            runId: string;
+            step: number;
+            metrics: components["schemas"]["CheckpointMetrics"];
+            path: string;
+            tags: string[];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        CheckpointTagRequest: {
+            tag: string;
+        };
+        Job: {
+            id: string;
+            runId: string;
+            status: components["schemas"]["JobStatus"];
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+            message?: string;
+        };
+        JobControlRequest: {
+            reason?: string;
+        };
+        TrainJobEnv: {
+            envId: string;
+            version: string;
+            mapSet: string;
+            wrappers?: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        TrainJobAlgo: {
+            algoId: string;
+            algoVersionId: string;
+            preset?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        TrainJobAgent: {
+            policySharing?: string;
+            arch?: string;
+            recurrent?: boolean;
+        };
+        TrainJobTrain: {
+            totalEnvSteps: number;
+            rolloutLen: number;
+            batchSize: number;
+            lr: number;
+            entropyCoef?: number;
+            gamma?: number;
+            gaeLambda?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        ResourceSpec: {
+            gpus: number;
+            cpus?: number;
+            memGb?: number;
+        };
+        PluginRef: {
+            pluginId: string;
+            version: string;
+        };
+        AutoEvalConfig: {
+            protocolId: string;
+            triggerOn: string;
+        };
+        TrainJobRequest: {
+            projectId: string;
+            templateVersionId: string;
+            env: components["schemas"]["TrainJobEnv"];
+            algo: components["schemas"]["TrainJobAlgo"];
+            agent?: components["schemas"]["TrainJobAgent"];
+            train: components["schemas"]["TrainJobTrain"];
+            network?: {
+                [key: string]: unknown;
+            };
+            resources: components["schemas"]["ResourceSpec"];
+            seedSet?: number[];
+            plugin?: components["schemas"]["PluginRef"];
+            autoEval?: components["schemas"]["AutoEvalConfig"];
+        };
+        TrainJobResponse: {
+            runId: string;
+            jobId: string;
+        };
+        EnvRef: {
+            envId: string;
+            version: string;
+            mapSet: string;
+        };
+        OpponentPoolRef: {
+            poolId: string;
+            version: string;
+        };
+        EvalProtocolSummary: {
+            id: string;
+            protocolKey?: string;
+            name: string;
+            version: string;
+            envId: string;
+            map: string;
+            evalSeeds: number[];
+            episodes: number;
+            frozen: boolean;
+            /** Format: date-time */
+            created?: string;
+        };
+        EvalProtocol: {
+            id: string;
+            protocolKey?: string;
+            name: string;
+            version: string;
+            env: components["schemas"]["EnvRef"];
+            evalSeeds: number[];
+            episodesPerMatch: number;
+            timeoutSec?: number;
+            metrics?: string[];
+            opponentPoolRef?: components["schemas"]["OpponentPoolRef"];
+            frozen: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        EvalProtocolCreate: {
+            name: string;
+            version?: string;
+            env: components["schemas"]["EnvRef"];
+            evalSeeds: number[];
+            episodesPerMatch: number;
+            timeoutSec?: number;
+            metrics?: string[];
+            opponentPoolRef?: components["schemas"]["OpponentPoolRef"];
+        };
+        EvalProtocolVersionCreate: {
+            version?: string;
+            name?: string;
+            env?: components["schemas"]["EnvRef"];
+            evalSeeds?: number[];
+            episodesPerMatch?: number;
+            timeoutSec?: number;
+            metrics?: string[];
+            opponentPoolRef?: components["schemas"]["OpponentPoolRef"];
+        };
+        OpponentPoolSummary: {
+            id: string;
+            poolKey?: string;
+            name: string;
+            version: string;
+            size: number;
+            env: string;
+            frozen: boolean;
+            /** Format: date-time */
+            created?: string;
+        };
+        OpponentPool: {
+            id: string;
+            poolKey?: string;
+            name: string;
+            version: string;
+            env: string;
+            size?: number;
+            frozen: boolean;
+            /** Format: date-time */
+            created?: string;
+            memberSnapshotIds?: string[];
+        };
+        OpponentPoolCreate: {
+            name: string;
+            env: string;
+            version?: string;
+            memberSnapshotIds?: string[];
+        };
+        OpponentPoolVersionCreate: {
+            version?: string;
+            memberSnapshotIds?: string[];
+        };
+        OpponentPoolMembersUpdate: {
+            snapshotIds: string[];
+            /** @enum {string} */
+            mode: "append" | "remove";
+        };
+        EvalJobRequest: {
+            policySnapshotId: string;
+            protocolId: string;
+            resources?: components["schemas"]["ResourceSpec"];
+        };
+        EvalJobResponse: {
+            runId: string;
+            jobId: string;
+            evalResultId: string;
+        };
+        MatrixJobRequest: {
+            poolId?: string;
+            policySnapshotIds: string[];
+            protocolId: string;
+            gamesPerPair?: number;
+            metric?: string;
+            resources?: components["schemas"]["ResourceSpec"];
+        };
+        MatrixJobResponse: {
+            matrixId: string;
+            jobId: string;
+        };
+        EvalResult: {
+            id: string;
+            runId?: string;
+            protocolId: string;
+            metrics?: {
+                [key: string]: number;
+            };
+            summary?: components["schemas"]["EvalResultSummary"];
+            ci?: components["schemas"]["ConfidenceInterval"];
+            /** Format: date-time */
+            createdAt?: string;
+            artifactUrl?: string;
+        };
+        EvalResultSummary: {
+            mean?: number;
+            std?: number;
+            n?: number;
+        };
+        ConfidenceInterval: {
+            low?: number;
+            high?: number;
+            level?: number;
+        };
+        MatrixCell: {
+            row: string;
+            col: string;
+            value: number;
+        };
+        MatrixResult: {
+            id: string;
+            protocolId?: string;
+            poolId?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            cells: components["schemas"]["MatrixCell"][];
+            labels?: string[];
+            matrix?: number[][];
+            meta?: components["schemas"]["MatrixMeta"];
+            ranking?: components["schemas"]["RankingEntry"][];
+            artifacts?: components["schemas"]["MatrixArtifacts"];
+            summary?: {
+                [key: string]: unknown;
+            };
+            exportUrl?: string;
+        };
+        MatrixMeta: {
+            gamesPerPair?: number;
+            seeds?: number[];
+            metric?: string;
+        };
+        RankingEntry: {
+            id: string;
+            score: number;
+            ci?: components["schemas"]["ConfidenceInterval"];
+        };
+        MatrixArtifacts: {
+            csvUri?: string;
+            jsonUri?: string;
+            heatmapUri?: string;
+        };
+        RunMetricsResponse: {
+            runId: string;
+            series: {
+                [key: string]: components["schemas"]["MetricPoint"][];
+            };
+        };
+        LogPage: {
+            lines: string[];
+            page: number;
+            pageSize: number;
+            hasMore: boolean;
+        };
+        ArtifactFile: {
+            id: string;
+            name: string;
+            path: string;
+            size?: string;
+            /** @enum {string} */
+            type: "file" | "folder";
+            lastModified: string;
+            /** Format: date-time */
+            createdAt?: string;
+            objectKey?: string;
+        };
+        ArtifactDownloadResponse: {
+            /** Format: uri */
+            url: string;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        ReproBundleResponse: {
+            /** Format: uri */
+            url?: string;
+            manifest?: {
+                [key: string]: unknown;
+            };
+        };
+        DatasetCreate: {
+            name: string;
+            description?: string;
+            path: string;
+            /** @default jsonl */
+            format: string;
+        };
+        Dataset: {
+            id: string;
+            name: string;
+            description?: string;
+            path: string;
+            format: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        DatasetPreview: {
+            id: string;
+            available: boolean;
+            format: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            sha256?: string;
+            summary?: {
+                [key: string]: unknown;
+            };
+            sample?: unknown;
+            error?: string;
+        };
+        WebhookCreate: {
+            /** Format: uri */
+            url: string;
+            events: string[];
+            secret?: string;
+        };
+        Webhook: {
+            id: string;
+            /** Format: uri */
+            url: string;
+            events: string[];
+            active?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+    };
+    responses: {
+        /** @description Bad request */
+        BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Unauthorized */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Not found */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+    };
+    parameters: {
+        Page: number;
+        PageSize: number;
+        ProjectId: string;
+        RunId: string;
+        JobId: string;
+        EnvId: string;
+        TemplateId: string;
+        PluginId: string;
+        CheckpointId: string;
+        ProtocolId: string;
+        PoolId: string;
+        EvalResultId: string;
+        MatrixId: string;
+        ArtifactId: string;
+    };
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
+}
+export type $defs = Record<string, never>;
+export interface operations {
+    postAuthLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getAuthMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    patchSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postSettingsTokenRotate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenRotateResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postSettingsRetentionApply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionApplyResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getProjects: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getProjectsByProjectId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteProjectsByProjectId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchProjectsByProjectId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getEnvs: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+                includeArchived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvSpec"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getEnvsByEnvIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                env_id: components["parameters"]["EnvId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvVersion"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAdminEnvs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvVersionUpsert"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    deleteAdminEnvs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                env_id: components["parameters"]["EnvId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchAdminEnvs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                env_id: components["parameters"]["EnvId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvSpecUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvSpec"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAdminEnvsByEnvIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                env_id: components["parameters"]["EnvId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    patchAdminEnvsByEnvIdVersionsByVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                env_id: components["parameters"]["EnvId"];
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvVersionUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAdminEnvVersionsFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                env_id: components["parameters"]["EnvId"];
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvVersion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAlgos: {
+        parameters: {
+            query?: {
+                includeArchived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Algo"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getAlgoVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                algo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlgoVersion"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postAdminAlgos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Algo"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Algo"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    deleteAdminAlgos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                algo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchAdminAlgos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                algo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlgoUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Algo"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAdminAlgoVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                algo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlgoVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlgoVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchAdminAlgoVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                algo_id: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlgoVersionUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlgoVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAdminAlgoVersionsFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                algo_id: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlgoVersion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getTemplates: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+                projectId?: string;
+                includeArchived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Template"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postProjectsByProjectIdTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Template"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getTemplatesByTemplateId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteTemplatesByTemplateId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchTemplatesByTemplateId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Template"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postTemplatesByTemplateIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postTemplateVersionsFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: components["parameters"]["TemplateId"];
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVersion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getPlugins: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+                includeArchived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Plugin"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postAdminPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    deleteAdminPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchAdminPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Plugin"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getPluginsByPluginIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginVersion"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAdminPluginVersionsFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: components["parameters"]["PluginId"];
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginVersion"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postTrainJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainJobResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getRuns: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+                projectId?: string;
+                type?: components["schemas"]["RunType"];
+                status?: components["schemas"]["JobStatus"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getRunsByRunId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postRunsByRunIdExportTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunExportTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVersion"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByGroupId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunGroupSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByRunIdJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByRunIdCheckpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Checkpoint"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postRunsByRunIdCheckpointsByCkptIdTag: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+                ckpt_id: components["parameters"]["CheckpointId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckpointTagRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Checkpoint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getJobsByJobId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postJobsByJobIdCancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["JobControlRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postJobsByJobIdPause: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["JobControlRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postJobsByJobIdResume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["JobControlRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getEvalProtocols: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalProtocolSummary"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postEvalProtocols: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvalProtocolCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalProtocol"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getEvalProtocolsByProtocolId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                protocol_id: components["parameters"]["ProtocolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalProtocol"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteEvalProtocolsByProtocolId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                protocol_id: components["parameters"]["ProtocolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getEvalProtocolsByProtocolIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                protocol_id: components["parameters"]["ProtocolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalProtocolSummary"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postEvalProtocolsByProtocolIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                protocol_id: components["parameters"]["ProtocolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EvalProtocolVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalProtocol"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postEvalProtocolsByProtocolIdFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                protocol_id: components["parameters"]["ProtocolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalProtocol"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getOpponentPools: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpponentPoolSummary"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postOpponentPools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpponentPoolCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpponentPool"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getOpponentPoolsByPoolId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pool_id: components["parameters"]["PoolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpponentPool"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteOpponentPoolsByPoolId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pool_id: components["parameters"]["PoolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getOpponentPoolsByPoolIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pool_id: components["parameters"]["PoolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpponentPoolSummary"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postOpponentPoolsByPoolIdVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pool_id: components["parameters"]["PoolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["OpponentPoolVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpponentPool"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postOpponentPoolsByPoolIdMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pool_id: components["parameters"]["PoolId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpponentPoolMembersUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpponentPool"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postOpponentPoolsByPoolIdFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pool_id: components["parameters"]["PoolId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpponentPool"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postEvalJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvalJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalJobResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postMatrixJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatrixJobRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixJobResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getEvalResultsByEvalResultId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_result_id: components["parameters"]["EvalResultId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getMatrixResults: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+                runId?: string;
+                protocolId?: string;
+                poolId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixResult"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getMatrixResultsByMatrixId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                matrix_id: components["parameters"]["MatrixId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByRunIdMetrics: {
+        parameters: {
+            query?: {
+                /** @description Metric keys to fetch */
+                keys?: string[];
+                fromStep?: number;
+            };
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunMetricsResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByRunIdLogs: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                pageSize?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByRunIdStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching Protocols */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getRunsByRunIdArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFile"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByRunIdArtifactsArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getArtifactsByArtifactIdDownloadUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                artifact_id: components["parameters"]["ArtifactId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDownloadResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRunsByRunIdReproBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReproBundleResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getDatasets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dataset"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postDatasets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dataset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postDatasetsUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    name: string;
+                    description?: string;
+                    /** @default jsonl */
+                    format?: string;
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dataset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getDatasetsByDatasetIdDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to download URL */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getDatasetsByDatasetIdPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetPreview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAdminWebhooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
 }

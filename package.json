@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@openai/codex": "^0.89.0",
     "d3": "^7.9.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
@@ -17,9 +18,9 @@
     "recharts": "^3.6.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "@tailwindcss/postcss": "^4.1.18",
     "autoprefixer": "^10.4.23",
     "postcss": "^8.4.35",
     "tailwindcss": "^4.1.18",

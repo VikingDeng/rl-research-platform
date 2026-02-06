@@ -1,13 +1,14 @@
+import time
 import psutil
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from app.schemas.base import APIModel
 
 # Try importing pynvml
 try:
     import pynvml
-    pynvml.nvmlInit()
-    HAS_NVML = True
+    HAS_NVML = False
 except Exception:
+    pynvml = None
     HAS_NVML = False
 
 class GpuProcess(APIModel):
@@ -30,14 +31,48 @@ class GpuInfo(APIModel):
 
 class SystemResources(APIModel):
     cpu_percent: float
+    cpu_count: int
+    load_avg: Optional[List[float]] = None
     memory_percent: float
     memory_total: int
     memory_used: int
+    memory_available: int
+    swap_total: int
+    swap_used: int
+    swap_percent: float
+    disk_total: int
+    disk_used: int
+    disk_free: int
+    disk_percent: float
+    net_bytes_sent: int
+    net_bytes_recv: int
+    net_packets_sent: int
+    net_packets_recv: int
+    uptime_sec: int
     gpus: List[GpuInfo]
 
+def _ensure_nvml() -> None:
+    global HAS_NVML
+    if HAS_NVML or pynvml is None:
+        return
+    try:
+        pynvml.nvmlInit()
+        HAS_NVML = True
+    except Exception:
+        HAS_NVML = False
+
 def get_system_resources() -> SystemResources:
+    _ensure_nvml()
     cpu = psutil.cpu_percent(interval=None)
     mem = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    disk = psutil.disk_usage("/")
+    net = psutil.net_io_counters()
+    uptime_sec = int(time.time() - psutil.boot_time())
+    try:
+        load_avg = list(psutil.getloadavg())
+    except (AttributeError, OSError):
+        load_avg = None
     
     gpus = []
     if HAS_NVML:
@@ -103,8 +138,23 @@ def get_system_resources() -> SystemResources:
             
     return SystemResources(
         cpu_percent=cpu,
+        cpu_count=psutil.cpu_count(logical=True) or 0,
+        load_avg=load_avg,
         memory_percent=mem.percent,
         memory_total=mem.total,
         memory_used=mem.used,
+        memory_available=mem.available,
+        swap_total=swap.total,
+        swap_used=swap.used,
+        swap_percent=swap.percent,
+        disk_total=disk.total,
+        disk_used=disk.used,
+        disk_free=disk.free,
+        disk_percent=disk.percent,
+        net_bytes_sent=net.bytes_sent,
+        net_bytes_recv=net.bytes_recv,
+        net_packets_sent=net.packets_sent,
+        net_packets_recv=net.packets_recv,
+        uptime_sec=uptime_sec,
         gpus=gpus
     )

@@ -1,4 +1,4 @@
-#!/Users/weijian.deng/Desktop/rl-research-platform/apps/portal-backend/.venv/bin/python
+#!/home/dwj/rl-research-platform/apps/portal-backend/.venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

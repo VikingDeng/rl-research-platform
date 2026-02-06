@@ -17,10 +17,15 @@ async def csp_middleware(request: Request, call_next):
     response = await call_next(request)
     # Allow disabling CSP entirely for intranet use
     if os.getenv("DISABLE_CSP", "0") == "1":
-        if "Content-Security-Policy" in response.headers:
-            del response.headers["Content-Security-Policy"]
-        if "Content-Security-Policy-Report-Only" in response.headers:
-            del response.headers["Content-Security-Policy-Report-Only"]
+        # Strip CSP headers entirely.
+        for header in (
+            "Content-Security-Policy",
+            "Content-Security-Policy-Report-Only",
+            "X-Content-Security-Policy",
+            "X-WebKit-CSP",
+        ):
+            if header in response.headers:
+                del response.headers[header]
         return response
     # Permissive CSP (still allows eval/inline) if not disabled
     response.headers["Content-Security-Policy"] = (
@@ -65,10 +70,11 @@ print(f"[System] Assets Path: {FRONTEND_DIST / 'assets'}")
 
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    spa_headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
     @app.get("/")
     async def serve_spa_root():
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(FRONTEND_DIST / "index.html", headers=spa_headers)
     
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):
@@ -86,7 +92,7 @@ if FRONTEND_DIST.exists():
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
             
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(FRONTEND_DIST / "index.html", headers=spa_headers)
 else:
     print(f"[Warning] Frontend dist not found at {FRONTEND_DIST}. Running in API-only mode.")
 

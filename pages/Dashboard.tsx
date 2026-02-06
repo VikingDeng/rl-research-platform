@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { Project, Run, JobStatus, BootstrapResponse } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
+import { ClusterMonitor } from '../components/ClusterMonitor';
 import { Play, Cpu, Activity, Clock, ArrowRight, Plus, FolderOpen, Trash2, Calendar, X, GitFork } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
@@ -150,6 +151,8 @@ export const Dashboard: React.FC = () => {
             </span>
         </div>
       </div>
+
+      <ClusterMonitor />
 
       {showQuickstart && (
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">

@@ -81,7 +81,22 @@ export const ProjectDetail: React.FC = () => {
       });
   }
 
+  const handleDeleteProject = () => {
+      if (!project) return;
+      if (!window.confirm(`Delete project "${project.name}" and all related runs/jobs?`)) {
+          return;
+      }
+      api.deleteProject(project.id).then(() => {
+          showToast(`Deleted project "${project.name}".`, 'success');
+          navigate('/');
+      }).catch(err => {
+          const detail = err instanceof Error ? err.message : String(err);
+          showToast(`Failed to delete project: ${detail}`, 'error');
+      });
+  }
+
   if (!project) return <div>Loading...</div>;
+  const projectTags = Array.isArray(project.tags) ? project.tags : [];
 
   return (
     <div className="space-y-6 relative pb-20">
@@ -93,9 +108,9 @@ export const ProjectDetail: React.FC = () => {
         <div className="flex justify-between items-start">
             <div>
                 <h1 className="text-2xl font-bold text-gray-900 mb-2">{project.name}</h1>
-                <p className="text-gray-600 max-w-2xl">{project.description}</p>
+                <p className="text-gray-600 max-w-2xl">{project.description || 'No description provided.'}</p>
                 <div className="flex gap-2 mt-4">
-                    {project.tags.map(t => (
+                    {projectTags.map(t => (
                         <span key={t} className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium border border-gray-200">
                             #{t}
                         </span>
@@ -122,7 +137,7 @@ export const ProjectDetail: React.FC = () => {
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 uppercase font-semibold">Total Runs</div>
-                    <div className="text-xl font-bold text-gray-900">{project.totalRuns}</div>
+                    <div className="text-xl font-bold text-gray-900">{project.totalRuns ?? 0}</div>
                 </div>
             </div>
              <div className="flex items-center gap-3">
@@ -131,7 +146,7 @@ export const ProjectDetail: React.FC = () => {
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 uppercase font-semibold">Active Jobs</div>
-                    <div className="text-xl font-bold text-gray-900">{project.activeRuns}</div>
+                    <div className="text-xl font-bold text-gray-900">{project.activeRuns ?? 0}</div>
                 </div>
             </div>
              <div className="flex items-center gap-3">
@@ -140,7 +155,9 @@ export const ProjectDetail: React.FC = () => {
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 uppercase font-semibold">Last Updated</div>
-                    <div className="text-sm font-bold text-gray-900">{new Date(project.updatedAt).toLocaleDateString()}</div>
+                    <div className="text-sm font-bold text-gray-900">
+                        {project.updatedAt ? new Date(project.updatedAt).toLocaleDateString() : '-'}
+                    </div>
                 </div>
             </div>
         </div>

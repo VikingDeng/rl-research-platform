@@ -36,8 +36,24 @@ NC='\033[0m'
 echo -e "${GREEN}=== Starting RL Research Platform ===${NC}"
 
 # 0. Ensure Frontend Build (User-Space Node)
-# Check for index.html AND at least one asset file to ensure valid build
+# Check for index.html AND referenced assets to ensure valid build
+NEEDS_BUILD=0
 if [ ! -f "$FRONTEND_DIST/index.html" ] || [ -z "$(ls -A $FRONTEND_DIST/assets 2>/dev/null)" ]; then
+    NEEDS_BUILD=1
+else
+    MISSING_ASSETS=0
+    for asset in $(grep -o '/assets/[^"]*' "$FRONTEND_DIST/index.html"); do
+        if [ ! -f "$FRONTEND_DIST${asset}" ]; then
+            MISSING_ASSETS=1
+            break
+        fi
+    done
+    if [ "$MISSING_ASSETS" -eq 1 ]; then
+        NEEDS_BUILD=1
+    fi
+fi
+
+if [ "$NEEDS_BUILD" -eq 1 ]; then
     echo -e "${GREEN}[0/4] Frontend build invalid or missing. Setting up User-Space Node.js...${NC}"
     
     # Check/Install Node
@@ -89,6 +105,14 @@ cd "$BACKEND_DIR"
 # if [ ! -z "$CONDA_DEFAULT_ENV" ]; then
 #     echo "Using existing Conda environment: $CONDA_DEFAULT_ENV"
 # else
+    EXPECTED_VENV="$BACKEND_DIR/.venv"
+    if [ -d ".venv" ]; then
+        ACTUAL_VENV="$(grep -m1 '^VIRTUAL_ENV=' .venv/bin/activate 2>/dev/null | sed 's/^VIRTUAL_ENV=//; s/\"//g')"
+        if [ -z "$ACTUAL_VENV" ] || [ "$ACTUAL_VENV" != "$EXPECTED_VENV" ] || [ ! -x ".venv/bin/python" ]; then
+            echo "Existing .venv looks invalid for this machine. Rebuilding..."
+            rm -rf .venv
+        fi
+    fi
     if [ ! -d ".venv" ]; then
         python3 -m venv .venv
     fi
@@ -202,15 +226,21 @@ fi
 
 # 3. Start TensorBoard
 echo -e "${GREEN}[3/4] Starting TensorBoard...${NC}"
-python3 -m tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
+TB_BIN="$BACKEND_DIR/.venv/bin/tensorboard"
+if [ -x "$TB_BIN" ]; then
+    "$TB_BIN" --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
+else
+    python3 -m tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
+fi
 TB_PID=$!
 
 # 4. Start Backend
+BACKEND_PORT="${BACKEND_PORT:-8000}"
 echo -e "${GREEN}[4/4] Starting Backend & Frontend...${NC}"
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" &
 BACKEND_PID=$!
 
-echo -e "${GREEN}>>> Platform is Ready! http://localhost:8000 <<<${NC}"
+echo -e "${GREEN}>>> Platform is Ready! http://localhost:$BACKEND_PORT <<<${NC}"
 
 cleanup() {
     kill $TB_PID $BACKEND_PID 2>/dev/null || true

@@ -6,6 +6,19 @@ import { Cpu, HardDrive, Zap, Activity, Fan, Wind, Layers } from 'lucide-react';
 export const ClusterMonitor: React.FC = () => {
   const [resources, setResources] = useState<SystemResources | null>(null);
   const [expandedGpu, setExpandedGpu] = useState<number | null>(null);
+  const extra = resources as any;
+
+  const formatBytes = (value: number) => {
+    if (!value || value <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let idx = 0;
+    let val = value;
+    while (val >= 1024 && idx < units.length - 1) {
+      val /= 1024;
+      idx += 1;
+    }
+    return `${val.toFixed(1)} ${units[idx]}`;
+  };
 
   useEffect(() => {
     const fetch = () => api.getSystemResources().then(setResources).catch(() => null);
@@ -26,6 +39,7 @@ export const ClusterMonitor: React.FC = () => {
                 <div>
                     <div className="text-xs text-gray-500 uppercase font-semibold">CPU Usage</div>
                     <div className="text-xl font-bold text-gray-900">{resources.cpuPercent.toFixed(1)}%</div>
+                    <div className="text-xs text-gray-400">{extra?.cpu_count || 0} cores {extra?.load_avg ? `• load ${extra.load_avg.map((v: number) => v.toFixed(2)).join(', ')}` : ''}</div>
                 </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
@@ -36,6 +50,26 @@ export const ClusterMonitor: React.FC = () => {
                     <div className="text-xs text-gray-500 uppercase font-semibold">RAM Usage</div>
                     <div className="text-xl font-bold text-gray-900">{resources.memoryPercent.toFixed(1)}%</div>
                     <div className="text-xs text-gray-400">{(resources.memoryUsed / 1024 / 1024 / 1024).toFixed(1)} / {(resources.memoryTotal / 1024 / 1024 / 1024).toFixed(1)} GB</div>
+                </div>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+                <div className="p-3 bg-amber-50 text-amber-600 rounded-lg">
+                    <HardDrive className="w-6 h-6" />
+                </div>
+                <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">Disk Usage</div>
+                    <div className="text-xl font-bold text-gray-900">{(extra?.disk_percent ?? 0).toFixed(1)}%</div>
+                    <div className="text-xs text-gray-400">{formatBytes(extra?.disk_used || 0)} / {formatBytes(extra?.disk_total || 0)}</div>
+                </div>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
+                    <Activity className="w-6 h-6" />
+                </div>
+                <div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">Network IO</div>
+                    <div className="text-xs text-gray-400">Sent {formatBytes(extra?.net_bytes_sent || 0)}</div>
+                    <div className="text-xs text-gray-400">Recv {formatBytes(extra?.net_bytes_recv || 0)}</div>
                 </div>
             </div>
             

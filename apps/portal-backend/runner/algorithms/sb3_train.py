@@ -27,14 +27,27 @@ class MetricsCallback(BaseCallback):
         return True
 
     def _on_rollout_end(self) -> None:
-        # Access values from the logger
-        logs = self.logger.get_log_dict()
+        # Access values from the logger (API differs across SB3 versions)
+        if hasattr(self.logger, "get_log_dict"):
+            logs = self.logger.get_log_dict()
+        elif hasattr(self.logger, "name_to_value"):
+            logs = dict(self.logger.name_to_value)
+        else:
+            logs = {}
         if not logs:
             return
-            
+
+        # Make values JSON-serializable when possible.
+        safe_logs = {}
+        for key, value in logs.items():
+            try:
+                safe_logs[key] = float(value)
+            except Exception:
+                safe_logs[key] = value
+
         # Format for Platform
         # Key mapping: SB3 uses "train/loss", we might want simple names
-        flat_logs = {k.split("/")[-1]: v for k, v in logs.items()}
+        flat_logs = {k.split("/")[-1]: v for k, v in safe_logs.items()}
         
         # Add timestamp/step
         payload = {
