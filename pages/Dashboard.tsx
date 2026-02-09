@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '../services/api';
+import { api, isDemoMode, setDemoMode } from '../services/api';
 import { Project, Run, JobStatus, BootstrapResponse } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { ClusterMonitor } from '../components/ClusterMonitor';
@@ -49,7 +49,7 @@ export const Dashboard: React.FC = () => {
     try {
       const res = await api.bootstrapDefaults();
       setBootstrapDefaults(res.defaults);
-      showToast('Default envs/algos/templates initialized.', 'success');
+      showToast(isDemoMode ? 'Demo workspace reset and seeded.' : 'Default envs/algos/templates initialized.', 'success');
       loadData();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -136,7 +136,14 @@ export const Dashboard: React.FC = () => {
     <div className="space-y-8 relative">
       <div className="flex justify-between items-center">
         <div>
-           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+           <div className="flex items-center gap-3">
+             <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+             {isDemoMode && (
+               <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                 Demo Mode
+               </span>
+             )}
+           </div>
            <p className="text-gray-500 mt-1">Overview of your research projects and compute resources.</p>
         </div>
         <div className="flex gap-3">
@@ -168,7 +175,7 @@ export const Dashboard: React.FC = () => {
               disabled={bootstrapping}
               className="px-4 py-2 rounded-lg bg-white border border-blue-200 text-blue-700 font-medium hover:bg-blue-50 disabled:opacity-60"
             >
-              {bootstrapping ? 'Initializing...' : 'Initialize Defaults'}
+              {bootstrapping ? 'Initializing...' : isDemoMode ? 'Reset Demo Data' : 'Initialize Defaults'}
             </button>
             <button
               onClick={handleQuickstart}
@@ -176,6 +183,68 @@ export const Dashboard: React.FC = () => {
               className="px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-60"
             >
               Start Demo Run
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isDemoMode && (
+        <div className="bg-white border border-emerald-100 rounded-xl p-5 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Demo Highlights</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Preloaded chain includes run curves, matrix ranking, opponent pools, and replay videos.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => navigate('/runs/run_train_alpha')}
+                className="px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50"
+              >
+                Open Run Detail
+              </button>
+              <button
+                onClick={() => navigate('/matrix')}
+                className="px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50"
+              >
+                Open Matrix
+              </button>
+              <button
+                onClick={() => navigate('/registries/pools')}
+                className="px-3 py-2 rounded-lg border border-purple-200 text-purple-700 text-sm font-medium hover:bg-purple-50"
+              >
+                Open Opponent Pools
+              </button>
+              <button
+                onClick={() => {
+                  if (!window.confirm('Reset demo workspace and reseed all registries/runs?')) return;
+                  handleBootstrap();
+                }}
+                disabled={bootstrapping}
+                className="px-3 py-2 rounded-lg border border-amber-200 text-amber-700 text-sm font-medium hover:bg-amber-50 disabled:opacity-60"
+              >
+                Reset Demo Workspace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!isDemoMode && (
+        <div className="bg-white border border-blue-100 rounded-xl p-5 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Need full demo chain?</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Switch to preloaded demo data with run curves, matrix, opponent pools, and generated replay videos.
+              </p>
+            </div>
+            <button
+              onClick={() => setDemoMode(true)}
+              className="px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50"
+            >
+              Switch to Demo Data
             </button>
           </div>
         </div>

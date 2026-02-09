@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { api } from '../services/api';
-import { Project, Run, JobStatus } from '../types';
+import { api, isDemoMode } from '../services/api';
+import { Project, Run } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { Layers, Clock, Activity, ArrowLeft, Plus, BarChart2, CheckSquare, Square, Trash2 } from 'lucide-react';
 import { useToast } from '../components/Toast';
@@ -116,6 +116,11 @@ export const ProjectDetail: React.FC = () => {
                         </span>
                     ))}
                 </div>
+                {isDemoMode && (
+                    <span className="mt-3 inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                        Demo Mode
+                    </span>
+                )}
             </div>
             <div className="flex items-center gap-2">
                 <Link to="/create-job" className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center hover:bg-blue-700 shadow-sm">
@@ -173,17 +178,26 @@ export const ProjectDetail: React.FC = () => {
         <table className="w-full text-left">
             <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase tracking-wider">
                     <tr>
+                        <th className="px-6 py-3 w-10">
+                            <button onClick={toggleSelectAll} className="text-gray-400 hover:text-gray-600">
+                                {runs.length > 0 && selectedRunIds.size === runs.length
+                                  ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                                  : <Square className="w-4 h-4" />}
+                            </button>
+                        </th>
                         <th className="px-6 py-3">Run Name</th>
                         <th className="px-6 py-3">Group</th>
                         <th className="px-6 py-3">Status</th>
-                        <th className="px-6 py-3">Algorithm</th>
-                        <th className="px-6 py-3">Environment</th>
-                        <th className="px-6 py-3">Metrics</th>
+                        <th className="px-6 py-3">Algo / Env</th>
+                        <th className="px-6 py-3">Key Metrics</th>
                         <th className="px-6 py-3">Created</th>
+                        <th className="px-6 py-3">Actions</th>
                     </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {runs.map((run) => (
+              {runs.map((run) => {
+                const groupId = run.groupId || (run.config as any)?.groupId;
+                return (
                 <tr key={run.id} className={`hover:bg-gray-50 transition-colors ${selectedRunIds.has(run.id) ? 'bg-blue-50/30' : ''}`}>
                   <td className="px-6 py-4">
                       <button onClick={() => toggleSelect(run.id)} className="text-gray-400 hover:text-gray-600">
@@ -197,23 +211,26 @@ export const ProjectDetail: React.FC = () => {
                                 <span className="text-xs text-gray-400 font-mono">{run.id.slice(0,8)}</span>
                             </td>
                             <td className="px-6 py-4">
-                                {run.groupId ? (
+                                {groupId ? (
                                     <Link
-                                      to={`/groups/${run.groupId}`}
+                                      to={`/groups/${groupId}`}
                                       className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100 hover:bg-purple-100"
-                                      title={run.groupId}
+                                      title={groupId}
                                     >
-                                        {run.groupId.includes('sweep') ? 'Sweep' : 'Group'}
+                                        {groupId.includes('sweep') ? 'Sweep' : 'Group'}
                                     </Link>
                                 ) : <span className="text-gray-300">-</span>}
                             </td>
                             <td className="px-6 py-4">
                                 <StatusBadge status={run.status} type={run.type} />
                             </td>
-                  <td className="px-6 py-4"><StatusBadge status={run.status} /></td>
                   <td className="px-6 py-4 text-sm text-gray-600">
                     <div className="font-medium">{run.algo}</div>
                     <div className="text-xs text-gray-400">{run.env}</div>
+                  </td>
+                  <td className="px-6 py-4 text-xs text-gray-600">
+                    <div>Return: <span className="font-semibold text-gray-800">{run.metrics?.returnMean?.length ? run.metrics.returnMean[run.metrics.returnMean.length - 1].value.toFixed(2) : '-'}</span></div>
+                    <div>Win: <span className="font-semibold text-gray-800">{run.metrics?.winRate?.length ? `${(run.metrics.winRate[run.metrics.winRate.length - 1].value * 100).toFixed(1)}%` : '-'}</span></div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">{new Date(run.created).toLocaleDateString()}</td>
                   <td className="px-6 py-4 text-sm flex gap-3">
@@ -227,10 +244,11 @@ export const ProjectDetail: React.FC = () => {
                       </button>
                   </td>
                 </tr>
-              ))}
+                  );
+                })}
               {runs.length === 0 && (
                   <tr>
-                      <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                      <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
                           No runs found for this project.
                       </td>
                   </tr>

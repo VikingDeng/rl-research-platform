@@ -32,7 +32,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /mnt/rl_runs:/mnt/rl_runs
 
-  portal-backend:
+  rl-platform:
     environment:
       EXECUTOR_MODE: determined
       DETERMINED_MASTER_URL: http://determined-master:8080

@@ -38,8 +38,8 @@ export const ClusterMonitor: React.FC = () => {
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 uppercase font-semibold">CPU Usage</div>
-                    <div className="text-xl font-bold text-gray-900">{resources.cpuPercent.toFixed(1)}%</div>
-                    <div className="text-xs text-gray-400">{extra?.cpu_count || 0} cores {extra?.load_avg ? `• load ${extra.load_avg.map((v: number) => v.toFixed(2)).join(', ')}` : ''}</div>
+                    <div className="text-xl font-bold text-gray-900">{resources.cpuPercent.toFixed(0)}%</div>
+                    <div className="text-xs text-gray-400">{extra?.cpu_count || 0} cores {extra?.load_avg ? `• load ${extra.load_avg.map((v: number) => v.toFixed(1)).join(', ')}` : ''}</div>
                 </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
@@ -48,7 +48,7 @@ export const ClusterMonitor: React.FC = () => {
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 uppercase font-semibold">RAM Usage</div>
-                    <div className="text-xl font-bold text-gray-900">{resources.memoryPercent.toFixed(1)}%</div>
+                    <div className="text-xl font-bold text-gray-900">{resources.memoryPercent.toFixed(0)}%</div>
                     <div className="text-xs text-gray-400">{(resources.memoryUsed / 1024 / 1024 / 1024).toFixed(1)} / {(resources.memoryTotal / 1024 / 1024 / 1024).toFixed(1)} GB</div>
                 </div>
             </div>
@@ -58,7 +58,7 @@ export const ClusterMonitor: React.FC = () => {
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 uppercase font-semibold">Disk Usage</div>
-                    <div className="text-xl font-bold text-gray-900">{(extra?.disk_percent ?? 0).toFixed(1)}%</div>
+                    <div className="text-xl font-bold text-gray-900">{(extra?.disk_percent ?? 0).toFixed(0)}%</div>
                     <div className="text-xs text-gray-400">{formatBytes(extra?.disk_used || 0)} / {formatBytes(extra?.disk_total || 0)}</div>
                 </div>
             </div>
@@ -87,13 +87,13 @@ export const ClusterMonitor: React.FC = () => {
                             <div className="flex-1 min-w-0">
                                 <div className="flex justify-between items-center mb-1">
                                     <div className="text-xs text-gray-500 uppercase font-semibold truncate" title={gpu.name}>GPU {gpu.index}: {gpu.name.replace('NVIDIA ', '')}</div>
-                                    <div className="text-xs text-gray-400">{gpu.temperature}°C</div>
+                                    <div className="text-xs text-gray-400">{Math.round(gpu.temperature)}°C</div>
                                 </div>
                                 <div className="flex justify-between items-end">
-                                    <div className="text-xl font-bold text-gray-900">{gpu.utilizationGpu}%</div>
+                                    <div className="text-xl font-bold text-gray-900">{Math.round(gpu.utilizationGpu)}%</div>
                                     <div className="text-xs text-gray-500 mb-1 flex gap-2">
                                         {gpu.power_draw && <span className="flex items-center" title="Power Draw"><Zap className="w-3 h-3 mr-0.5"/> {(gpu.power_draw / 1000).toFixed(0)}W</span>}
-                                        {gpu.fan_speed && <span className="flex items-center" title="Fan Speed"><Wind className="w-3 h-3 mr-0.5"/> {gpu.fan_speed}%</span>}
+                                        {gpu.fan_speed && <span className="flex items-center" title="Fan Speed"><Wind className="w-3 h-3 mr-0.5"/> {Math.round(gpu.fan_speed)}%</span>}
                                     </div>
                                 </div>
                                 <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2 overflow-hidden">

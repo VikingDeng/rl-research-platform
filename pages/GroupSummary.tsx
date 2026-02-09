@@ -38,6 +38,10 @@ export const GroupSummary: React.FC = () => {
     }
   };
 
+  const isRateMetric = (metric: string) => /rate|ratio|prob|accuracy|win/i.test(metric);
+  const formatMetric = (metric: string, value: number) =>
+    isRateMetric(metric) ? `${(value * 100).toFixed(1)}%` : value.toFixed(2);
+
   if (loading) {
     return <div className="p-6 text-gray-500">Loading group summary...</div>;
   }
@@ -95,15 +99,15 @@ export const GroupSummary: React.FC = () => {
               <tr key={metric} className="hover:bg-gray-50">
                 <td className="px-6 py-4 font-medium text-gray-900">{metric}</td>
                 <td className="px-6 py-4 text-sm text-gray-600">
-                  {stat.mean.toFixed(4)} ± {stat.std.toFixed(4)}
+                  {formatMetric(metric, stat.mean)} ± {formatMetric(metric, stat.std)}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-600">
                   {typeof stat.ciLow === 'number' && typeof stat.ciHigh === 'number'
-                    ? `${stat.ciLow.toFixed(4)} ~ ${stat.ciHigh.toFixed(4)}`
+                    ? `${formatMetric(metric, stat.ciLow)} ~ ${formatMetric(metric, stat.ciHigh)}`
                     : '-'}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">{stat.min.toFixed(4)}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">{stat.max.toFixed(4)}</td>
+                <td className="px-6 py-4 text-sm text-gray-600">{formatMetric(metric, stat.min)}</td>
+                <td className="px-6 py-4 text-sm text-gray-600">{formatMetric(metric, stat.max)}</td>
                 <td className="px-6 py-4 text-sm text-gray-600">{stat.n}</td>
                 <td className="px-6 py-4 text-sm text-blue-600">
                   {stat.bestRunId ? <Link to={`/runs/${stat.bestRunId}`}>View</Link> : '-'}
@@ -162,7 +166,7 @@ export const GroupSummary: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-gray-600">{run.seed ?? '-'}</td>
                 <td className="px-6 py-4 text-xs text-gray-600 space-y-1">
                   {Object.entries(run.metrics).slice(0, 3).map(([key, value]) => (
-                    <div key={key}><span className="font-semibold">{key}</span>: {value.toFixed(4)}</div>
+                    <div key={key}><span className="font-semibold">{key}</span>: {formatMetric(key, value)}</div>
                   ))}
                   {Object.keys(run.metrics).length === 0 && <span className="text-gray-400">-</span>}
                 </td>

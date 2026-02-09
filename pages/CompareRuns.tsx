@@ -156,6 +156,9 @@ export const CompareRuns: React.FC = () => {
       { key: 'entropy', label: 'Entropy' },
   ];
 
+  const formatMetricValue = (metric: MetricKey, value: number) =>
+    metric === 'winRate' ? `${(value * 100).toFixed(1)}%` : value.toFixed(2);
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -300,8 +303,11 @@ export const CompareRuns: React.FC = () => {
                                             <LineChart data={timeSeriesData}>
                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                                 <XAxis dataKey="step" fontSize={12} tickFormatter={(val) => `${val/1000}k`} />
-                                                <YAxis fontSize={12} />
-                                                <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                                                <YAxis fontSize={12} tickFormatter={(value) => formatMetricValue(selectedMetric, Number(value))} />
+                                                <Tooltip
+                                                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                                  formatter={(value: number | string) => formatMetricValue(selectedMetric, Number(value))}
+                                                />
                                                 {selectedRuns.map((r, idx) => (
                                                     <Line 
                                                         key={r.id} 
@@ -319,7 +325,13 @@ export const CompareRuns: React.FC = () => {
                                             <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                                                 <CartesianGrid strokeDasharray="3 3" />
                                                 <XAxis type="number" dataKey="x" name={xAxisParam} label={{ value: xAxisParam, position: 'insideBottom', offset: -10 }} />
-                                                <YAxis type="number" dataKey="y" name={selectedMetric} label={{ value: selectedMetric, angle: -90, position: 'insideLeft' }} />
+                                                <YAxis
+                                                  type="number"
+                                                  dataKey="y"
+                                                  name={selectedMetric}
+                                                  tickFormatter={(value) => formatMetricValue(selectedMetric, Number(value))}
+                                                  label={{ value: selectedMetric, angle: -90, position: 'insideLeft' }}
+                                                />
                                                 <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
                                                     if (active && payload && payload.length) {
                                                         const data = payload[0].payload;
@@ -327,7 +339,7 @@ export const CompareRuns: React.FC = () => {
                                                             <div className="bg-white p-2 border border-gray-200 shadow-lg rounded text-sm">
                                                                 <p className="font-bold mb-1">{data.name}</p>
                                                                 <p>{xAxisParam}: {data.x}</p>
-                                                                <p>{selectedMetric}: {data.y.toFixed(4)}</p>
+                                                                <p>{selectedMetric}: {formatMetricValue(selectedMetric, Number(data.y))}</p>
                                                             </div>
                                                         );
                                                     }

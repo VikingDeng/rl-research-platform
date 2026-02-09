@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { Heatmap } from '../components/Heatmap';
+import { AdversarialReplayPlayer, isAdversarialReplayData } from '../components/AdversarialReplayPlayer';
 import { MatrixCell, OpponentPool, EvalProtocol, MatrixResult } from '../types';
 import { Download, Plus, X, Video } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -46,6 +47,10 @@ export const MatrixView: React.FC = () => {
       ? (value: number) => `${value.toFixed(1)}s`
       : (value: number) => value.toFixed(2);
   const metricDomain = selectedMetric === 'winRate' ? [0, 1] as [number, number] : undefined;
+  const replayData = useMemo(() => {
+    const candidate = (matrixResult?.summary as any)?.replay;
+    return isAdversarialReplayData(candidate) ? candidate : null;
+  }, [matrixResult]);
 
   useEffect(() => {
     api.getPools().then(p => {
@@ -344,9 +349,13 @@ export const MatrixView: React.FC = () => {
                       <div className="text-sm text-gray-600">
                         {metricLabel}: <span className="font-semibold text-gray-900">{metricFormatter(selectedMatch.value)}</span>
                       </div>
-                      <div className="text-sm text-gray-600">
-                        Replay artifacts are not available in this build.
-                      </div>
+                      {replayData ? (
+                        <AdversarialReplayPlayer replay={replayData} />
+                      ) : (
+                        <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                          Replay payload is not available for this matrix result.
+                        </div>
+                      )}
                    </div>
               </div>
            </div>

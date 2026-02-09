@@ -33,10 +33,10 @@
 
 ```bash
 # 1. 启动平台 (自动构建镜像、初始化数据库)
-docker-compose up -d --build
+docker compose up -d --build
 
 # 2. 查看日志
-docker-compose logs -f
+docker compose logs -f
 ```
 访问地址: **http://localhost:8000**
 
@@ -48,8 +48,8 @@ docker-compose logs -f
 **步骤 1: 本地准备 (在你的电脑上)**
 先编译前端，避免在服务器上安装 Node.js。
 ```bash
-cd apps/portal-frontend
-npm install && npm run build
+cd rl-research-platform
+npm ci && npm run build
 # 然后将整个项目（包含生成的 dist 文件夹）上传到服务器。
 ```
 
@@ -69,20 +69,52 @@ chmod +x start-mac.sh
 
 ---
 
+### 方案 C：仅后端快速启动（离线友好）
+**适用场景**: 已有可用 Python 环境，或服务器无法联网安装依赖。
+
+```bash
+chmod +x scripts/backend-local-up.sh
+cp apps/portal-backend/.env.example apps/portal-backend/.env
+./scripts/backend-local-up.sh
+```
+
+说明:
+* 默认使用 SQLite (`apps/portal-backend/rl_platform.db`)。
+* 自动选择可用 Python 解释器（`BACKEND_PYTHON`、`.venv`、conda 环境）。
+* 跳过 `start-linux.sh` 中耗时的 Orbit/扩展环境安装步骤。
+
+---
+
+### 方案 D：一键验收检查（录屏前必跑）
+**适用场景**: 录屏/路演前，快速确认“这台机器可用”。
+
+```bash
+chmod +x scripts/acceptance-check.sh
+./scripts/acceptance-check.sh
+```
+
+检查项:
+* docker compose 配置有效性
+* 前端构建
+* 后端启动 + `/healthz` 健康检查
+
+---
+
 ### start 脚本做了什么
 `start-*.sh` 已经整合为全自动流程，会：
 
 * 构建前端 + 生成 OpenAPI 客户端
-* 创建 venv 并安装后端/runner 依赖
-* 安装 Miniconda（用户态）+ OrbitZoo + Orekit 数据
-* 安装常用环境扩展（Box2D/MuJoCo/MiniGrid/PettingZoo）
-* 初始化数据库 + 预置默认与大型 MARL 环境
-* 运行后端测试
+* 创建 venv 并安装后端/runner 依赖（或复用已有 conda 环境）
+* 可选安装 Miniconda + OrbitZoo + Orekit 数据（`INSTALL_ORBIT_RUNTIME=1`）
+* 可选安装常用环境扩展（`INSTALL_RL_EXTRAS=1`）
+* 初始化数据库 + 预置默认环境
+* 可选预置大型 MARL 环境（`SEED_MARL_ENVS=1`）
+* 可选运行后端测试（`RUN_TESTS=1`）
 * 启动 TensorBoard + 后端服务
 
 需要跳过耗时步骤时可用：
 ```bash
-SEED_MARL_ENVS=0 RUN_TESTS=0 ./start-linux.sh
+SEED_MARL_ENVS=0 RUN_TESTS=0 INSTALL_ORBIT_RUNTIME=0 INSTALL_RL_EXTRAS=0 ./start-linux.sh
 ```
 
 ---
@@ -98,6 +130,7 @@ rl-research-platform/
 │   └── portal-frontend/      # React 前端 (Vite)
 ├── scripts/
 │   ├── seed-full.sh          # 数据库初始化 (预设环境与算法)
+│   ├── backend-local-up.sh   # 后端快速启动（离线友好）
 │   ├── start-linux.sh        # 统一启动脚本 (Linux)
 │   └── start-mac.sh          # 统一启动脚本 (macOS)
 ├── docs/                     # 文档目录

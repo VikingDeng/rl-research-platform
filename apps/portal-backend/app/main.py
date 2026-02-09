@@ -49,6 +49,11 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api/v1")
 
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "service": settings.app_name}
+
 # Ensure correct MIME types for JS/CSS on minimal Linux images
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("application/javascript", ".mjs")

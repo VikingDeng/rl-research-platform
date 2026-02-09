@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     app_name: str = "rl-research-platform-backend"
-    database_url: str = "postgresql+psycopg2://rl:rl@localhost:5432/rl_platform"
+    database_url: str = "sqlite:///rl_platform.db"
     s3_endpoint_url: str = "http://localhost:9000"
     s3_region: str = "us-east-1"
     s3_access_key: str = "minioadmin"

@@ -38,14 +38,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_started
     ports:
       - "8000:8000" # Web UI + API
       - "6006:6006" # TensorBoard
     volumes:
-      - ./runs_data:/app/.local/runs # Persist experiment data
+      - ./runs_data:/app/.local # Persist runs/artifacts
     environment:
       # Database
       DATABASE_URL: postgresql+psycopg2://rl:rl@postgres:5432/rl_platform
+      DATABASE_STRICT: "1"
       # MinIO Config
       S3_ENDPOINT_URL: http://minio:9000
       S3_ACCESS_KEY: minioadmin
@@ -53,9 +56,12 @@ services:
       S3_BUCKET: rl-artifacts
       # Executor Config
       EXECUTOR_MODE: local
+      LOCAL_EXECUTOR_MODE: mock
       LOCAL_RUN_ROOT: /app/.local/runs
       # Frontend Hosting
       SERVE_FRONTEND: "true"
+      FRONTEND_DIST: /app/dist
+      DISABLE_CSP: "1"
 
 volumes:
   postgres_data:

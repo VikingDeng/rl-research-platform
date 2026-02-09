@@ -1,29 +1,33 @@
 import type {
-  Project,
-  Run,
-  Template,
-  TemplateDetail,
-  EnvSpec,
-  EnvVersion,
   Algo,
   AlgoVersion,
-  OpponentPool,
-  MatrixResult,
+  ArtifactFile,
+  BootstrapResponse,
   Checkpoint,
+  Dataset,
+  EnvSpec,
+  EnvVersion,
   EvalProtocol,
+  LogPage,
+  MatrixResult,
+  ModelVersion,
+  OpponentPool,
   Plugin,
   PluginVersion,
-  ArtifactFile,
+  Project,
+  RegisteredModel,
+  RetentionApplyResponse,
+  Run,
   RunMetricsResponse,
-  LogPage,
   SettingsResponse,
   SettingsUpdate,
+  SystemResources,
+  Template,
+  TemplateDetail,
   TokenRotateResponse,
-  RetentionApplyResponse,
-  BootstrapResponse,
-  Dataset,
 } from '../types';
 import { createApiClient } from '../apps/portal-frontend/src/api/generated/client';
+import { createMockApi } from './mockApi';
 
 const resolvedBaseUrl = (() => {
   const envBaseUrl = (import.meta as any)?.env?.VITE_API_BASE_URL;
@@ -54,14 +58,62 @@ const apiClient = createApiClient({
 
 export const apiBaseUrl = resolvedBaseUrl;
 
-export const api = {
+const DEMO_STORAGE_KEY = 'rl_platform_demo_mode';
+
+const isTruthyFlag = (value: unknown) => {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+};
+
+const resolveDemoMode = () => {
+  const envDemo = isTruthyFlag((import.meta as any)?.env?.VITE_DEMO_MODE);
+  if (typeof window === 'undefined') {
+    return envDemo;
+  }
+
+  const savedPreference = localStorage.getItem(DEMO_STORAGE_KEY);
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const query = params.get('demo');
+    if (query === '1' || query?.toLowerCase() === 'true') {
+      localStorage.setItem(DEMO_STORAGE_KEY, '1');
+    } else if (query === '0' || query?.toLowerCase() === 'false') {
+      localStorage.setItem(DEMO_STORAGE_KEY, '0');
+    }
+  } catch {
+    // Ignore malformed URL/search params.
+  }
+
+  const localFlag = localStorage.getItem(DEMO_STORAGE_KEY);
+  if (localFlag === '1') return true;
+  if (localFlag === '0') return false;
+
+  if (savedPreference === null && (import.meta as any)?.env?.DEV) {
+    return true;
+  }
+
+  return envDemo;
+};
+
+export const isDemoMode = resolveDemoMode();
+
+export const setDemoMode = (enabled: boolean) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(DEMO_STORAGE_KEY, enabled ? '1' : '0');
+  window.location.reload();
+};
+
+const realApi = {
   login: async (payload: { email: string; password: string }) => apiClient.login(payload),
   getProjects: async (): Promise<Project[]> => apiClient.listProjects(),
   getProjectById: async (id: string): Promise<Project> => apiClient.getProject(id),
   createProject: async (payload: { name: string; description?: string; tags?: string[]; gitRepo?: string; gitBranch?: string }): Promise<Project> =>
     apiClient.createProject(payload),
   deleteProject: async (id: string): Promise<void> => apiClient.deleteProject(id),
-  getRuns: async (params?: { projectId?: string; type?: string; status?: string; groupId?: string; page?: number; pageSize?: number }): Promise<Run[]> => apiClient.listRuns(params),
+  getRuns: async (params?: { projectId?: string; type?: string; status?: string; groupId?: string; page?: number; pageSize?: number }): Promise<Run[]> =>
+    apiClient.listRuns(params as any),
   getRunById: async (id: string): Promise<Run> => apiClient.getRun(id),
   getRunGroupSummary: async (groupId: string): Promise<any> => {
     const res = await authFetch(`${apiBaseUrl}/runs/groups/${groupId}`);
@@ -124,10 +176,11 @@ export const api = {
   ) => apiClient.createTemplateVersion(templateId, payload),
   freezeTemplateVersion: async (templateId: string, versionId: string) =>
     apiClient.freezeTemplateVersion(templateId, versionId),
+
   getAlgos: async (params?: { includeArchived?: boolean }): Promise<Algo[]> => apiClient.listAlgos(params),
   getAlgoVersions: async (algoId: string): Promise<AlgoVersion[]> => apiClient.listAlgoVersions(algoId),
   upsertAlgo: async (payload: { id: string; name: string; description?: string }): Promise<Algo> =>
-    apiClient.upsertAlgo(payload),
+    apiClient.upsertAlgo(payload as any),
   updateAlgo: async (
     algoId: string,
     payload: { name?: string; description?: string; archived?: boolean },
@@ -148,7 +201,7 @@ export const api = {
       metadata?: Record<string, unknown>;
       active?: boolean;
     },
-  ) => apiClient.createAlgoVersion(algoId, payload),
+  ) => apiClient.createAlgoVersion(algoId, payload as any),
   updateAlgoVersion: async (
     algoId: string,
     version: string,
@@ -164,9 +217,10 @@ export const api = {
       metadata?: Record<string, unknown>;
       active?: boolean;
     },
-  ) => apiClient.updateAlgoVersion(algoId, version, payload),
+  ) => apiClient.updateAlgoVersion(algoId, version, payload as any),
   freezeAlgoVersion: async (algoId: string, version: string): Promise<AlgoVersion> =>
     apiClient.freezeAlgoVersion(algoId, version),
+
   getEnvs: async (params?: { includeArchived?: boolean }): Promise<EnvSpec[]> => apiClient.listEnvs(params),
   getEnvVersions: async (envId: string) => apiClient.listEnvVersions(envId),
   updateEnv: async (envId: string, payload: { archived?: boolean }): Promise<EnvSpec> =>
@@ -180,7 +234,7 @@ export const api = {
     package?: string;
     mapSets?: { id: string; maps: string[] }[];
     scenarioSchema?: Record<string, unknown>;
-  }) => apiClient.upsertEnv(payload),
+  }) => apiClient.upsertEnv(payload as any),
   createEnvVersion: async (
     envId: string,
     payload: {
@@ -191,7 +245,7 @@ export const api = {
       mapSets?: { id: string; maps: string[] }[];
       scenarioSchema?: Record<string, unknown>;
     },
-  ) => apiClient.createEnvVersion(envId, payload),
+  ) => apiClient.createEnvVersion(envId, payload as any),
   updateEnvVersion: async (
     envId: string,
     version: string,
@@ -203,9 +257,10 @@ export const api = {
       mapSets?: { id: string; maps: string[] }[];
       scenarioSchema?: Record<string, unknown>;
     },
-  ) => apiClient.updateEnvVersion(envId, version, payload),
+  ) => apiClient.updateEnvVersion(envId, version, payload as any),
   freezeEnvVersion: async (envId: string, version: string): Promise<EnvVersion> =>
     apiClient.freezeEnvVersion(envId, version),
+
   getPools: async (): Promise<OpponentPool[]> => apiClient.listOpponentPools(),
   getPoolById: async (id: string): Promise<OpponentPool> => apiClient.getOpponentPool(id),
   createPool: async (payload: { name: string; env: string; version?: string; memberSnapshotIds?: string[] }) =>
@@ -217,6 +272,7 @@ export const api = {
     apiClient.updateOpponentPoolMembers(poolId, payload),
   freezePool: async (poolId: string): Promise<OpponentPool> => apiClient.freezeOpponentPool(poolId),
   deletePool: async (poolId: string): Promise<void> => apiClient.deleteOpponentPool(poolId),
+
   getProtocols: async (): Promise<EvalProtocol[]> => apiClient.listEvalProtocols(),
   getProtocolById: async (id: string) => apiClient.getEvalProtocol(id),
   createProtocol: async (payload: {
@@ -228,7 +284,7 @@ export const api = {
     scenarioGrid?: Record<string, unknown>;
     opponentSampling?: Record<string, unknown>;
     opponentPoolRef?: { poolId: string; version: string };
-  }) => apiClient.createEvalProtocol(payload),
+  }) => apiClient.createEvalProtocol(payload as any),
   updateProtocol: async (
     protocolId: string,
     payload: {
@@ -240,7 +296,7 @@ export const api = {
       opponentSampling?: Record<string, unknown> | null;
       opponentPoolRef?: { poolId: string; version: string } | null;
     },
-  ) => apiClient.updateEvalProtocol(protocolId, payload),
+  ) => apiClient.updateEvalProtocol(protocolId, payload as any),
   createProtocolVersion: async (
     protocolId: string,
     payload?: {
@@ -253,12 +309,14 @@ export const api = {
       opponentSampling?: Record<string, unknown>;
       opponentPoolRef?: { poolId: string; version: string };
     },
-  ) => apiClient.createEvalProtocolVersion(protocolId, payload),
+  ) => apiClient.createEvalProtocolVersion(protocolId, payload as any),
   listProtocolVersions: async (protocolId: string): Promise<EvalProtocol[]> => apiClient.listEvalProtocolVersions(protocolId),
   freezeProtocol: async (protocolId: string) => apiClient.freezeEvalProtocol(protocolId),
   deleteProtocol: async (protocolId: string): Promise<void> => apiClient.deleteEvalProtocol(protocolId),
+
   submitEvalJob: async (payload: { policySnapshotId: string; protocolId: string; resources?: { gpus: number } }) =>
-    apiClient.submitEvalJob(payload),
+    apiClient.submitEvalJob(payload as any),
+
   getDatasets: async (): Promise<Dataset[]> => {
     const res = await authFetch(`${apiBaseUrl}/datasets`);
     if (!res.ok) {
@@ -267,6 +325,17 @@ export const api = {
     }
     return res.json();
   },
+  getDatasetPreview: async (datasetId: string) => {
+    const res = await authFetch(`${apiBaseUrl}/datasets/${datasetId}/preview`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'preview_failed');
+    }
+    return res.json();
+  },
+  getDatasetDownloadUrl: async (datasetId: string) => ({
+    url: `${apiBaseUrl}/datasets/${datasetId}/download`,
+  }),
   registerDataset: async (payload: { name: string; description?: string; path: string; format?: string }): Promise<Dataset> => {
     const res = await authFetch(`${apiBaseUrl}/datasets`, {
       method: 'POST',
@@ -300,6 +369,7 @@ export const api = {
     }
     return res.json();
   },
+
   submitTrainJob: async (payload: {
     projectId: string;
     templateVersionId: string;
@@ -313,7 +383,8 @@ export const api = {
     git?: { repo?: string; branch?: string; commit?: string };
     groupId?: string;
     datasetId?: string;
-  }) => apiClient.submitTrainJob(payload),
+  }) => apiClient.submitTrainJob(payload as any),
+
   getTuningStudy: async (studyName: string) => apiClient.getTuningStudy(studyName),
   submitMatrixJob: async (payload: {
     poolId?: string;
@@ -322,15 +393,17 @@ export const api = {
     gamesPerPair?: number;
     metric?: string;
     resources?: { gpus: number };
-  }) => apiClient.submitMatrixJob(payload),
+  }) => apiClient.submitMatrixJob(payload as any),
   getEvalResultById: async (id: string) => apiClient.getEvalResult(id),
   getMatrixResults: async (params?: { runId?: string; protocolId?: string; poolId?: string }): Promise<MatrixResult[]> =>
     apiClient.listMatrixResults(params),
   getMatrixResultById: async (id: string): Promise<MatrixResult> => apiClient.getMatrixResult(id),
+
   getJobById: async (jobId: string) => apiClient.getJob(jobId),
   pauseJob: async (jobId: string, payload?: { reason?: string }) => apiClient.pauseJob(jobId, payload),
   resumeJob: async (jobId: string, payload?: { reason?: string }) => apiClient.resumeJob(jobId, payload),
   cancelJob: async (jobId: string, payload?: { reason?: string }) => apiClient.cancelJob(jobId, payload),
+
   downloadRunArtifactsArchive: async (runId: string): Promise<Blob> => apiClient.downloadRunArtifactsArchive(runId),
   getPlugins: async (params?: { includeArchived?: boolean }): Promise<Plugin[]> => apiClient.listPlugins(params),
   getPluginVersions: async (pluginId: string): Promise<PluginVersion[]> => apiClient.listPluginVersions(pluginId),
@@ -340,26 +413,102 @@ export const api = {
     wheelUri: string;
     sha256: string;
     manifest?: Record<string, unknown>;
-  }) => apiClient.createPluginVersion(payload),
-  updatePlugin: async (pluginId: string, payload: { name?: string; description?: string; author?: string; type?: string; installed?: boolean; archived?: boolean }): Promise<Plugin> =>
-    apiClient.updatePlugin(pluginId, payload),
+  }) => apiClient.createPluginVersion(payload as any),
+  updatePlugin: async (
+    pluginId: string,
+    payload: { name?: string; description?: string; author?: string; type?: string; installed?: boolean; archived?: boolean },
+  ): Promise<Plugin> => apiClient.updatePlugin(pluginId, payload),
   archivePlugin: async (pluginId: string): Promise<void> => apiClient.archivePlugin(pluginId),
   freezePluginVersion: async (pluginId: string, version: string) =>
     apiClient.freezePluginVersion(pluginId, version),
+
   getArtifacts: async (runId: string): Promise<ArtifactFile[]> => apiClient.listRunArtifacts(runId),
   getArtifactDownloadUrl: async (artifactId: string) => apiClient.getArtifactDownloadUrl(artifactId),
   getReproBundle: async (runId: string) => apiClient.getReproBundle(runId),
 
-  // Notebooks
-  createNotebook: async (projectId: string, name?: string) => apiClient.createNotebook(projectId, name),
-  deleteNotebook: async (runId: string) => apiClient.deleteNotebook(runId),
+  createNotebook: async (projectId: string, name?: string) => (apiClient as any).createNotebook(projectId, name),
+  deleteNotebook: async (runId: string) => (apiClient as any).deleteNotebook(runId),
 
-  // Model Registry
-  getModels: async (): Promise<RegisteredModel[]> => apiClient.listModels(),
-  createModel: async (name: string, description?: string): Promise<RegisteredModel> => apiClient.createModel({ name, description }),
-  getModelVersions: async (modelId: string): Promise<ModelVersion[]> => apiClient.listModelVersions(modelId),
-  registerModelVersion: async (modelId: string, checkpointId: string): Promise<ModelVersion> => apiClient.createModelVersion(modelId, { checkpointId }),
-  updateModelStage: async (versionId: string, stage: string): Promise<ModelVersion> => apiClient.updateModelVersionStage(versionId, stage),
-  
-  getSystemResources: async (): Promise<SystemResources> => apiClient.getSystemResources(),
+  getModels: async (): Promise<RegisteredModel[]> => (apiClient as any).listModels(),
+  createModel: async (name: string, description?: string): Promise<RegisteredModel> => (apiClient as any).createModel({ name, description }),
+  getModelVersions: async (modelId: string): Promise<ModelVersion[]> => (apiClient as any).listModelVersions(modelId),
+  registerModelVersion: async (modelId: string, checkpointId: string): Promise<ModelVersion> =>
+    (apiClient as any).createModelVersion(modelId, { checkpointId }),
+  updateModelStage: async (versionId: string, stage: string): Promise<ModelVersion> =>
+    (apiClient as any).updateModelVersionStage(versionId, stage),
+
+  getSystemResources: async (): Promise<SystemResources> => (apiClient as any).getSystemResources(),
 };
+
+const mockApi = createMockApi(apiBaseUrl) as typeof realApi;
+
+let runtimeFallbackToMock = false;
+let backendReachable: boolean | null = null;
+let backendReachabilityProbe: Promise<boolean> | null = null;
+
+const isNetworkUnavailableError = (err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err);
+  return /ECONNREFUSED|Failed to fetch|NetworkError|fetch failed|Load failed/i.test(message);
+};
+
+const markRuntimeFallbackToMock = () => {
+  runtimeFallbackToMock = true;
+  backendReachable = false;
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(DEMO_STORAGE_KEY, '1');
+    console.warn('[api] Backend unavailable, switched to demo fallback.');
+  }
+};
+
+const probeBackendReachability = async () => {
+  if (!(import.meta as any)?.env?.DEV) return true;
+  if (runtimeFallbackToMock) return false;
+  if (backendReachable !== null) return backendReachable;
+  if (!backendReachabilityProbe) {
+    backendReachabilityProbe = authFetch(`${apiBaseUrl}/settings`, { method: 'GET' })
+      .then(() => true)
+      .catch((err) => !isNetworkUnavailableError(err))
+      .then((reachable) => {
+        backendReachable = reachable;
+        if (!reachable) {
+          markRuntimeFallbackToMock();
+        }
+        return reachable;
+      })
+      .finally(() => {
+        backendReachabilityProbe = null;
+      });
+  }
+  return backendReachabilityProbe;
+};
+
+const withRuntimeFallback = <T extends Record<string, any>>(primary: T, fallback: T): T =>
+  new Proxy(primary, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      return async (...args: unknown[]) => {
+        const fallbackFn = (fallback as any)[prop];
+        if (runtimeFallbackToMock && typeof fallbackFn === 'function') {
+          return fallbackFn(...args);
+        }
+        if (typeof fallbackFn === 'function' && !(runtimeFallbackToMock || isDemoMode)) {
+          const reachable = await probeBackendReachability();
+          if (!reachable) {
+            return fallbackFn(...args);
+          }
+        }
+        try {
+          return await value(...args);
+        } catch (err) {
+          if (typeof fallbackFn === 'function' && isNetworkUnavailableError(err)) {
+            markRuntimeFallbackToMock();
+            return fallbackFn(...args);
+          }
+          throw err;
+        }
+      };
+    },
+  });
+
+export const api: typeof realApi = isDemoMode ? mockApi : withRuntimeFallback(realApi, mockApi);

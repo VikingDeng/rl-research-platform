@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/portal-backend/requirements.txt
+
+      - name: Validate docker compose files
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.determined.yml config -q
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/portal-backend/requirements.txt
+
+      - name: Backend health smoke
+        env:
+          BACKEND_PORT: "18080"
+          BACKEND_TIMEOUT_SEC: "60"
+          LOCAL_EXECUTOR_MODE: "mock"
+          DETERMINED_MOCK: "1"
+          SEED_MARL_ENVS: "0"
+          FRONTEND_DIST: ${{ github.workspace }}/dist
+        run: |
+          set -euo pipefail
+          BACKEND_LOG="$(mktemp)"
+          cleanup() {
+            if [ -n "${PID:-}" ] && kill -0 "$PID" >/dev/null 2>&1; then
+              kill "$PID" >/dev/null 2>&1 || true
+              wait "$PID" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          DATABASE_URL="sqlite:///${{ github.workspace }}/.local/ci-smoke.db" ./scripts/backend-local-up.sh >"$BACKEND_LOG" 2>&1 &
+          PID=$!
+
+          for i in $(seq 1 "$BACKEND_TIMEOUT_SEC"); do
+            if curl -fsS "http://127.0.0.1:${BACKEND_PORT}/healthz" >/dev/null; then
+              echo "Backend health check passed."
+              exit 0
+            fi
+            if ! kill -0 "$PID" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          echo "Backend health check failed."
+          tail -n 120 "$BACKEND_LOG" || true
+          exit 1

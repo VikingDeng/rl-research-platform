@@ -30,8 +30,9 @@ RUNS_DIR="$ROOT_DIR/.local/runs"
 NODE_DIR="$ROOT_DIR/.local/node"
 NODE_VER="v20.19.0"
 NODE_ROOT="$NODE_DIR/$NODE_VER"
-SEED_MARL_ENVS="${SEED_MARL_ENVS:-1}"
-RUN_TESTS="${RUN_TESTS:-1}"
+# Keep default startup lightweight for fresh/offline environments.
+SEED_MARL_ENVS="${SEED_MARL_ENVS:-0}"
+RUN_TESTS="${RUN_TESTS:-0}"
 
 ARCH="$(uname -m)"
 if [ "$ARCH" = "arm64" ]; then
@@ -198,6 +199,7 @@ export PYTHONPATH=$BACKEND_DIR
 python3 scripts/init_db_direct.py
 
 echo -e "${GREEN}[2.1/4] Seeding Default Envs & Algos...${NC}"
+export BACKEND_PYTHON="python3"
 /bin/sh "$ROOT_DIR/scripts/seed-full.sh"
 
 if [ "$SEED_MARL_ENVS" = "1" ]; then

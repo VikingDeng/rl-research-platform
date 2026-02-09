@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, apiBaseUrl } from '../services/api';
+import { api, isDemoMode } from '../services/api';
 import { Download, Database, Plus, X, UploadCloud, Link as LinkIcon, Eye } from 'lucide-react';
 import { useToast } from '../components/Toast';
 
@@ -44,20 +44,23 @@ export const DatasetRegistry: React.FC = () => {
         setPreviewLoading(true);
         setPreviewData(null);
         try {
-            const res = await fetch(`${apiBaseUrl}/datasets/${ds.id}/preview`, {
-                headers: { Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}` },
-            });
-            if (!res.ok) {
-                const detail = await res.text();
-                throw new Error(detail || 'preview_failed');
-            }
-            const data = await res.json();
+            const data = await api.getDatasetPreview(ds.id);
             setPreviewData(data);
         } catch (err) {
             const detail = err instanceof Error ? err.message : 'Preview failed';
             showToast(detail, 'error');
         } finally {
             setPreviewLoading(false);
+        }
+    };
+
+    const handleDownload = async (ds: Dataset) => {
+        try {
+            const { url } = await api.getDatasetDownloadUrl(ds.id);
+            window.open(url, '_blank', 'noreferrer');
+        } catch (err) {
+            const detail = err instanceof Error ? err.message : 'Download failed';
+            showToast(detail, 'error');
         }
     };
 
@@ -125,7 +128,14 @@ export const DatasetRegistry: React.FC = () => {
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-bold text-gray-900">Dataset Registry</h1>
+                <div className="flex items-center gap-3">
+                    <h1 className="text-2xl font-bold text-gray-900">Dataset Registry</h1>
+                    {isDemoMode && (
+                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                            Demo Data
+                        </span>
+                    )}
+                </div>
                 <button
                   onClick={() => setIsModalOpen(true)}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center hover:bg-blue-700"
@@ -167,7 +177,7 @@ export const DatasetRegistry: React.FC = () => {
                                     </button>
                                     <button
                                       className="text-blue-600 hover:text-blue-800"
-                                      onClick={() => window.open(`${apiBaseUrl}/datasets/${ds.id}/download`, '_blank')}
+                                      onClick={() => handleDownload(ds)}
                                       title="Download"
                                     >
                                         <Download className="w-4 h-4" />

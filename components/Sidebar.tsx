@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, PlusCircle, Box, Activity, Grid3X3, FileStack, Settings, Database, BarChart2, List, Cpu, Layers, Package, LogOut, BookOpen, Terminal, Sliders } from 'lucide-react';
+import { isDemoMode, setDemoMode } from '../services/api';
 
 export const Sidebar: React.FC = () => {
   const navigate = useNavigate();
@@ -134,6 +135,17 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       <div className="p-4 border-t border-gray-100 bg-gray-50">
+        <div className="mb-3 flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+            <div className="text-xs font-semibold text-gray-600">
+                {isDemoMode ? 'Demo Data' : 'Live API'}
+            </div>
+            <button
+                onClick={() => setDemoMode(!isDemoMode)}
+                className="text-xs font-medium text-blue-600 hover:text-blue-700"
+            >
+                {isDemoMode ? 'Use Live' : 'Use Demo'}
+            </button>
+        </div>
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 flex items-center justify-center text-white text-xs font-bold">

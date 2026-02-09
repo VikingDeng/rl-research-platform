@@ -1,0 +1,4 @@
+master_url: http://determined-master:8080
+agent_id: rl-platform-agent
+# Use "cuda" if this host provides GPU slots for Determined agents.
+slot_type: cpu

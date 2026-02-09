@@ -27,8 +27,11 @@ NODE_DIR="$ROOT_DIR/.local/node"
 NODE_VER="v20.19.0"
 NODE_ROOT="$NODE_DIR/$NODE_VER"
 NODE_DIST="node-$NODE_VER-linux-x64"
-SEED_MARL_ENVS="${SEED_MARL_ENVS:-1}"
-RUN_TESTS="${RUN_TESTS:-1}"
+# Keep default startup lightweight for fresh/offline environments.
+SEED_MARL_ENVS="${SEED_MARL_ENVS:-0}"
+RUN_TESTS="${RUN_TESTS:-0}"
+INSTALL_ORBIT_RUNTIME="${INSTALL_ORBIT_RUNTIME:-0}"
+INSTALL_RL_EXTRAS="${INSTALL_RL_EXTRAS:-0}"
 
 GREEN='\033[0;32m'
 NC='\033[0m'
@@ -119,59 +122,87 @@ cd "$BACKEND_DIR"
     source .venv/bin/activate
 # fi
 
-echo "Ensuring dependencies..."
-pip install "setuptools<66" wheel > /dev/null 2>&1
-# Pre-install safe gym
-pip install "gym==0.26.2" > /dev/null 2>&1
-# Install with constraints to prevent legacy gym build errors
-pip install --no-build-isolation -c ../../constraints.txt -r requirements.txt > /dev/null
-pip install --no-build-isolation -c ../../constraints.txt "python-multipart==0.0.13" > /dev/null
-pip install --no-build-isolation -c ../../constraints.txt -r runner/requirements.txt tensorboard > /dev/null
+has_backend_deps() {
+    local py_bin="$1"
+    "$py_bin" - <<'PY' >/dev/null 2>&1
+import importlib.util
+required = ["fastapi", "sqlalchemy", "uvicorn", "pydantic", "alembic"]
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+raise SystemExit(1 if missing else 0)
+PY
+}
 
-# Force install Ray RLLib without checking dependencies (Bypass Gym Hell)
-echo "Installing Ray RLLib (No Deps mode)..."
-pip install --no-deps "ray[rllib]>=2.9.0" "dm-tree" "lz4" "scipy" "typer" > /dev/null
+PYTHON_BIN="$BACKEND_DIR/.venv/bin/python3"
+CONDA_PYTHON="$HOME/miniconda3/envs/rl-platform/bin/python3"
+
+if has_backend_deps "$PYTHON_BIN"; then
+    echo "Backend dependencies already available in .venv. Skipping install."
+elif [ -x "$CONDA_PYTHON" ] && has_backend_deps "$CONDA_PYTHON"; then
+    PYTHON_BIN="$CONDA_PYTHON"
+    echo "Using Conda backend Python at $PYTHON_BIN. Skipping pip install in .venv."
+else
+    echo "Ensuring dependencies in .venv..."
+    pip install "setuptools<66" wheel > /dev/null 2>&1
+    # Pre-install safe gym
+    pip install "gym==0.26.2" > /dev/null 2>&1
+    # Install with constraints to prevent legacy gym build errors
+    pip install --no-build-isolation -c ../../constraints.txt -r requirements.txt > /dev/null
+    pip install --no-build-isolation -c ../../constraints.txt "python-multipart==0.0.13" > /dev/null
+    pip install --no-build-isolation -c ../../constraints.txt -r runner/requirements.txt tensorboard > /dev/null
+
+    # Force install Ray RLLib without checking dependencies (Bypass Gym Hell)
+    echo "Installing Ray RLLib (No Deps mode)..."
+    pip install --no-deps "ray[rllib]>=2.9.0" "dm-tree" "lz4" "scipy" "typer" > /dev/null
+fi
 
 # 1.5 Ensure conda (auto-install Miniconda if missing)
 if ! command -v conda >/dev/null 2>&1; then
-    if [ ! -x "$MINICONDA_ROOT/bin/conda" ]; then
-        echo -e "${GREEN}[1.5/4] Installing Miniconda (user-space)...${NC}"
-        curl -L "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" -o "$SETUP_DIR/miniconda.sh"
-        bash "$SETUP_DIR/miniconda.sh" -b -p "$MINICONDA_ROOT"
-        rm -f "$SETUP_DIR/miniconda.sh"
+    if [ -x "$CONDA_PYTHON" ]; then
+        echo -e "${GREEN}[1.5/4] Reusing existing conda env python at $CONDA_PYTHON.${NC}"
+    else
+        if [ ! -x "$MINICONDA_ROOT/bin/conda" ]; then
+            echo -e "${GREEN}[1.5/4] Installing Miniconda (user-space)...${NC}"
+            curl -L "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" -o "$SETUP_DIR/miniconda.sh"
+            bash "$SETUP_DIR/miniconda.sh" -b -p "$MINICONDA_ROOT"
+            rm -f "$SETUP_DIR/miniconda.sh"
+        fi
+        export PATH="$MINICONDA_ROOT/bin:$PATH"
     fi
-    export PATH="$MINICONDA_ROOT/bin:$PATH"
 fi
 
-# 1.6 Prepare OrbitZoo repo + orekit data (one-time)
-if [ ! -f "$ORBIT_MARKER" ]; then
-    export ORBITZOO_REPO="${ORBITZOO_REPO:-$ORBITZOO_REPO_DEFAULT}"
-    export ORBITZOO_GIT_URL="${ORBITZOO_GIT_URL:-$ORBITZOO_GIT_URL_DEFAULT}"
-    mkdir -p "$ORBITZOO_ROOT"
-    if [ ! -d "$ORBITZOO_REPO/.git" ]; then
-        if ! command -v git >/dev/null 2>&1; then
-            echo "git is required to clone OrbitZoo. Please install git and re-run."
-            exit 1
+# 1.6 Prepare OrbitZoo repo + orekit data (one-time, optional)
+if [ "$INSTALL_ORBIT_RUNTIME" = "1" ]; then
+    if [ ! -f "$ORBIT_MARKER" ]; then
+        export ORBITZOO_REPO="${ORBITZOO_REPO:-$ORBITZOO_REPO_DEFAULT}"
+        export ORBITZOO_GIT_URL="${ORBITZOO_GIT_URL:-$ORBITZOO_GIT_URL_DEFAULT}"
+        mkdir -p "$ORBITZOO_ROOT"
+        if [ ! -d "$ORBITZOO_REPO/.git" ]; then
+            if ! command -v git >/dev/null 2>&1; then
+                echo "git is required to clone OrbitZoo. Please install git and re-run."
+                exit 1
+            fi
+            echo -e "${GREEN}[1.6/4] Cloning OrbitZoo...${NC}"
+            git clone "$ORBITZOO_GIT_URL" "$ORBITZOO_REPO"
         fi
-        echo -e "${GREEN}[1.6/4] Cloning OrbitZoo...${NC}"
-        git clone "$ORBITZOO_GIT_URL" "$ORBITZOO_REPO"
+        export ORBITZOO_OREKIT_DATA_ZIP="${ORBITZOO_OREKIT_DATA_ZIP:-$OREKIT_CACHE}"
+        if [ ! -f "$ORBITZOO_OREKIT_DATA_ZIP" ]; then
+            echo -e "${GREEN}[1.6/4] Downloading orekit-data.zip...${NC}"
+            curl -fL "https://gitlab.orekit.org/orekit/orekit-data/-/archive/main/orekit-data-main.zip" -o "$ORBITZOO_OREKIT_DATA_ZIP" \
+              || curl -fL "https://gitlab.orekit.org/orekit/orekit-data/-/archive/master/orekit-data-master.zip" -o "$ORBITZOO_OREKIT_DATA_ZIP" \
+              || { echo "Failed to download orekit-data.zip. Please check network or set ORBITZOO_OREKIT_DATA_ZIP."; exit 1; }
+        fi
+        echo -e "${GREEN}[1.6/4] Installing OrbitZoo runtime...${NC}"
+        /bin/sh "$ROOT_DIR/scripts/install-orbitzoo.sh"
+        touch "$ORBIT_MARKER"
+    else
+        echo -e "${GREEN}[1.6/4] OrbitZoo runtime already installed. Skipping.${NC}"
+        if [ -z "$ORBITZOO_OREKIT_DATA_ZIP" ] && [ -f "$OREKIT_CACHE" ]; then
+            export ORBITZOO_OREKIT_DATA_ZIP="$OREKIT_CACHE"
+        fi
+        export ORBITZOO_REPO="${ORBITZOO_REPO:-$ORBITZOO_REPO_DEFAULT}"
     fi
-    export ORBITZOO_OREKIT_DATA_ZIP="${ORBITZOO_OREKIT_DATA_ZIP:-$OREKIT_CACHE}"
-    if [ ! -f "$ORBITZOO_OREKIT_DATA_ZIP" ]; then
-        echo -e "${GREEN}[1.6/4] Downloading orekit-data.zip...${NC}"
-        curl -fL "https://gitlab.orekit.org/orekit/orekit-data/-/archive/main/orekit-data-main.zip" -o "$ORBITZOO_OREKIT_DATA_ZIP" \
-          || curl -fL "https://gitlab.orekit.org/orekit/orekit-data/-/archive/master/orekit-data-master.zip" -o "$ORBITZOO_OREKIT_DATA_ZIP" \
-          || { echo "Failed to download orekit-data.zip. Please check network or set ORBITZOO_OREKIT_DATA_ZIP."; exit 1; }
-    fi
-    echo -e "${GREEN}[1.6/4] Installing OrbitZoo runtime...${NC}"
-    /bin/sh "$ROOT_DIR/scripts/install-orbitzoo.sh"
-    touch "$ORBIT_MARKER"
 else
-    echo -e "${GREEN}[1.6/4] OrbitZoo runtime already installed. Skipping.${NC}"
-    if [ -z "$ORBITZOO_OREKIT_DATA_ZIP" ] && [ -f "$OREKIT_CACHE" ]; then
-        export ORBITZOO_OREKIT_DATA_ZIP="$OREKIT_CACHE"
-    fi
-    export ORBITZOO_REPO="${ORBITZOO_REPO:-$ORBITZOO_REPO_DEFAULT}"
+    echo -e "${GREEN}[1.6/4] Skipping OrbitZoo runtime install (INSTALL_ORBIT_RUNTIME=0).${NC}"
 fi
 
 # If OrbitZoo setup wrote a runner python path, use it for all runs.
@@ -188,13 +219,17 @@ fi
 export ORBITZOO_OREKIT_DATA_DIR="${ORBITZOO_OREKIT_DATA_DIR:-$ORBITZOO_OREKIT_DIR_DEFAULT}"
 export OREKIT_DATA_PATH="${OREKIT_DATA_PATH:-$ORBITZOO_OREKIT_DATA_DIR}"
 
-# 1.7 Install extra environments into runner python (one-time)
-if [ ! -f "$EXTRAS_MARKER" ]; then
-    echo -e "${GREEN}[1.7/4] Installing RL environment extras...${NC}"
-    RL_EXTRAS_PYTHON="${RUNNER_PYTHON:-}" /bin/sh "$ROOT_DIR/scripts/install-rl-extras.sh"
-    touch "$EXTRAS_MARKER"
+# 1.7 Install extra environments into runner python (one-time, optional)
+if [ "$INSTALL_RL_EXTRAS" = "1" ]; then
+    if [ ! -f "$EXTRAS_MARKER" ]; then
+        echo -e "${GREEN}[1.7/4] Installing RL environment extras...${NC}"
+        RL_EXTRAS_PYTHON="${RUNNER_PYTHON:-}" /bin/sh "$ROOT_DIR/scripts/install-rl-extras.sh"
+        touch "$EXTRAS_MARKER"
+    else
+        echo -e "${GREEN}[1.7/4] RL extras already installed. Skipping.${NC}"
+    fi
 else
-    echo -e "${GREEN}[1.7/4] RL extras already installed. Skipping.${NC}"
+    echo -e "${GREEN}[1.7/4] Skipping RL extras install (INSTALL_RL_EXTRAS=0).${NC}"
 fi
 
 # 2. Database Initialization & Seeding (Direct Python Logic)
@@ -202,16 +237,17 @@ echo -e "${GREEN}[2/4] Initializing Database & Seeding...${NC}"
 export DATABASE_URL="sqlite:///rl_platform.db"
 export PYTHONPATH=$BACKEND_DIR
 # This one script now does EVERYTHING: Create tables + Seed data
-python3 scripts/init_db_direct.py
+"$PYTHON_BIN" scripts/init_db_direct.py
 
 # 2.1 Seed Default Environment Data (Idempotent)
 echo -e "${GREEN}[2.1/4] Seeding Default Envs & Algos...${NC}"
+export BACKEND_PYTHON="$PYTHON_BIN"
 /bin/sh "$ROOT_DIR/scripts/seed-full.sh"
 
 # 2.2 Seed Comprehensive MARL Envs
 if [ "$SEED_MARL_ENVS" = "1" ]; then
     echo -e "${GREEN}[2.2/4] Seeding Comprehensive MARL Envs...${NC}"
-    python3 scripts/seed_marl_envs.py
+    "$PYTHON_BIN" scripts/seed_marl_envs.py
 else
     echo -e "${GREEN}[2.2/4] Skipping MARL env seed (SEED_MARL_ENVS=0).${NC}"
 fi
@@ -219,7 +255,7 @@ fi
 # 2.3 Run Backend Tests
 if [ "$RUN_TESTS" = "1" ]; then
     echo -e "${GREEN}[2.3/4] Running Backend Tests...${NC}"
-    PYTHONPATH="$BACKEND_DIR" pytest -q
+    PYTHONPATH="$BACKEND_DIR" "$PYTHON_BIN" -m pytest -q
 else
     echo -e "${GREEN}[2.3/4] Skipping backend tests (RUN_TESTS=0).${NC}"
 fi
@@ -230,14 +266,14 @@ TB_BIN="$BACKEND_DIR/.venv/bin/tensorboard"
 if [ -x "$TB_BIN" ]; then
     "$TB_BIN" --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
 else
-    python3 -m tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
+    "$PYTHON_BIN" -m tensorboard --logdir "$RUNS_DIR" --port 6006 --bind_all > "$ROOT_DIR/tensorboard.log" 2>&1 &
 fi
 TB_PID=$!
 
 # 4. Start Backend
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 echo -e "${GREEN}[4/4] Starting Backend & Frontend...${NC}"
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" &
+"$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" &
 BACKEND_PID=$!
 
 echo -e "${GREEN}>>> Platform is Ready! http://localhost:$BACKEND_PORT <<<${NC}"

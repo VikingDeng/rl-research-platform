@@ -35,10 +35,10 @@ Designed for researchers who need reproducible experiments, automated evaluation
 
 ```bash
 # 1. Start the platform (Builds everything automatically)
-docker-compose up -d --build
+docker compose up -d --build
 
 # 2. View logs
-docker-compose logs -f
+docker compose logs -f
 ```
 Access at: **http://localhost:8000**
 
@@ -50,8 +50,8 @@ Access at: **http://localhost:8000**
 **Step 1: Local Preparation (On your Mac/PC)**
 Build the frontend assets locally to avoid installing Node.js on the server.
 ```bash
-cd apps/portal-frontend
-npm install && npm run build
+cd rl-research-platform
+npm ci && npm run build
 # Now upload the entire project (including the new 'dist' folder) to your server.
 ```
 
@@ -71,20 +71,52 @@ Access at: **http://localhost:8000**
 
 ---
 
+### Option C: Backend-Only Quick Start (Offline Friendly)
+**Best for**: Existing Python environment already has dependencies, or network-restricted servers.
+
+```bash
+chmod +x scripts/backend-local-up.sh
+cp apps/portal-backend/.env.example apps/portal-backend/.env
+./scripts/backend-local-up.sh
+```
+
+Notes:
+* Uses SQLite by default (`apps/portal-backend/rl_platform.db`).
+* Auto-detects usable Python interpreter (`BACKEND_PYTHON`, `.venv`, then conda env).
+* Skips heavy Orbit/extra runtime installation from `start-linux.sh`.
+
+---
+
+### Option D: One-Click Acceptance Check (For Demo Readiness)
+**Best for**: Verifying "can run on this machine" before recording or demo.
+
+```bash
+chmod +x scripts/acceptance-check.sh
+./scripts/acceptance-check.sh
+```
+
+Checks:
+* docker compose config validation
+* frontend build
+* backend startup + `/healthz` smoke
+
+---
+
 ### What the start scripts do
 The `start-*.sh` scripts are fully automated and will:
 
 * Build the frontend + generate OpenAPI clients
-* Create venv and install backend/runner dependencies
-* Install Miniconda (user-space) + OrbitZoo + Orekit data
-* Install common RL env extras (Box2D/MuJoCo/MiniGrid/PettingZoo)
-* Initialize DB, seed default + comprehensive MARL envs
-* Run backend tests
+* Create venv and install backend/runner dependencies (or reuse an existing conda env if available)
+* Optionally install Miniconda + OrbitZoo + Orekit data (`INSTALL_ORBIT_RUNTIME=1`)
+* Optionally install common RL env extras (`INSTALL_RL_EXTRAS=1`)
+* Initialize DB and seed defaults
+* Optionally seed comprehensive MARL envs (`SEED_MARL_ENVS=1`)
+* Optionally run backend tests (`RUN_TESTS=1`)
 * Start TensorBoard + backend
 
 You can skip heavy steps if needed:
 ```bash
-SEED_MARL_ENVS=0 RUN_TESTS=0 ./start-linux.sh
+SEED_MARL_ENVS=0 RUN_TESTS=0 INSTALL_ORBIT_RUNTIME=0 INSTALL_RL_EXTRAS=0 ./start-linux.sh
 ```
 
 ---
@@ -100,6 +132,7 @@ rl-research-platform/
 │   └── portal-frontend/      # React Frontend (Vite)
 ├── scripts/
 │   ├── seed-full.sh          # Database Seeding (Default Envs/Algos)
+│   ├── backend-local-up.sh   # Backend quick start (offline-friendly)
 │   ├── start-linux.sh        # Unified Startup Script (Linux)
 │   └── start-mac.sh          # Unified Startup Script (macOS)
 ├── docs/                     # Documentation

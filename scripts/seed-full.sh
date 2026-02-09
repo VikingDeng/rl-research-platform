@@ -2,7 +2,14 @@
 set -e
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
-BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
+BACKEND_DIR="${BACKEND_DIR:-$ROOT_DIR/apps/portal-backend}"
+if [ ! -d "$BACKEND_DIR" ] && [ -d "/app/apps/portal-backend" ]; then
+  BACKEND_DIR="/app/apps/portal-backend"
+fi
+if [ ! -d "$BACKEND_DIR" ]; then
+  echo "Backend directory not found: $BACKEND_DIR"
+  exit 1
+fi
 ORIG_DATABASE_URL="${DATABASE_URL:-}"
 
 if [ -f "$BACKEND_DIR/.env" ]; then
@@ -14,7 +21,10 @@ if [ -n "$ORIG_DATABASE_URL" ]; then
   export DATABASE_URL="$ORIG_DATABASE_URL"
 fi
 
-PYTHON="$BACKEND_DIR/.venv/bin/python"
+PYTHON="${BACKEND_PYTHON:-}"
+if [ -z "$PYTHON" ] || [ ! -x "$PYTHON" ]; then
+  PYTHON="$BACKEND_DIR/.venv/bin/python"
+fi
 if [ ! -x "$PYTHON" ]; then
   PYTHON=python3
 fi

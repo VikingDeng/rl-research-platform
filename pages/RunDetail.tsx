@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api, apiBaseUrl } from '../services/api';
+import { api } from '../services/api';
 import { Run, Job, JobStatus, RunType, Checkpoint, EvalProtocol, ArtifactFile, MatrixCell, EvalResult, MatrixResult } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { Heatmap } from '../components/Heatmap';
+import { AdversarialReplayPlayer, isAdversarialReplayData, type AdversarialReplayData } from '../components/AdversarialReplayPlayer';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Terminal, Download, RefreshCw, FileText, Tag, PlayCircle, Folder, ChevronRight, GitFork, Grid3X3, Search, ArrowDownCircle, Calculator, Copy, X, HardDrive, AlertTriangle, Package } from 'lucide-react';
 import { useToast } from '../components/Toast.tsx';
@@ -208,7 +209,7 @@ export const RunDetail: React.FC = () => {
           }
       }
       
-      const vids = files.filter(f => f.name.endsWith('.mp4'));
+      const vids = files.filter(f => f.name.endsWith('.mp4') || f.name.endsWith('.replay.json'));
       setVideoFiles(vids.sort((a, b) => a.name.localeCompare(b.name)));
   }
 
@@ -500,8 +501,19 @@ export const RunDetail: React.FC = () => {
 
   const handleDownloadAllArtifacts = () => {
       if (!run) return;
-      const url = `${apiBaseUrl}/runs/${run.id}/artifacts/archive`;
-      window.open(url, '_blank', 'noreferrer');
+      api.downloadRunArtifactsArchive(run.id)
+        .then((blob) => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${run.id}_artifacts.zip`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        })
+        .catch((err) => {
+            const detail = err instanceof Error ? err.message : String(err);
+            showToast(`Failed to download artifacts: ${detail}`, 'error');
+        });
   }
 
   const openEvalModal = (ckpt: Checkpoint) => {
@@ -523,15 +535,49 @@ export const RunDetail: React.FC = () => {
   // Video Component
   const VideoPlayer = ({ file }: { file: ArtifactFile }) => {
       const [url, setUrl] = useState<string | null>(null);
+      const [replayData, setReplayData] = useState<AdversarialReplayData | null>(null);
       useEffect(() => {
-          api.getArtifactDownloadUrl(file.id).then(res => setUrl(res.url));
-      }, [file.id]);
+          let cancelled = false;
+          api.getArtifactDownloadUrl(file.id).then(async (res) => {
+              if (cancelled) return;
+              setUrl(res.url);
+              if (!file.name.endsWith('.replay.json')) {
+                  setReplayData(null);
+                  return;
+              }
+              try {
+                  const text = await fetch(res.url).then(r => r.text());
+                  const parsed = JSON.parse(text);
+                  if (!cancelled && isAdversarialReplayData(parsed)) {
+                      setReplayData(parsed);
+                  }
+              } catch {
+                  if (!cancelled) setReplayData(null);
+              }
+          });
+          return () => {
+              cancelled = true;
+          };
+      }, [file.id, file.name]);
       
       if (!url) return <div className="w-full h-48 bg-gray-100 animate-pulse rounded-lg"></div>;
       return (
-          <div className="bg-black/5 p-2 rounded-lg">
+          <div className="bg-black/5 p-2 rounded-lg space-y-2">
              <div className="text-xs text-gray-500 mb-1 truncate font-mono">{file.name}</div>
-             <video controls className="w-full rounded shadow-sm border border-gray-200" src={url} preload="metadata" />
+             {replayData ? (
+               <div className="space-y-2">
+                 <div className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                   Generated Adversarial Replay
+                 </div>
+                 <AdversarialReplayPlayer replay={replayData} />
+               </div>
+             ) : file.name.endsWith('.mp4') ? (
+               <video controls className="w-full rounded shadow-sm border border-gray-200" src={url} preload="metadata" />
+             ) : (
+               <div className="text-xs text-gray-500 p-3 bg-white border border-gray-200 rounded">
+                 Replay payload unavailable.
+               </div>
+             )}
           </div>
       );
   }
@@ -703,12 +749,14 @@ export const RunDetail: React.FC = () => {
               {isMatrix ? (
                   <>
                     <button onClick={() => setActiveTab('matrix')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'matrix' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Heatmap Analysis</button>
+                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Replay Gallery ({videoFiles.length})</button>}
                     <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Configuration</button>
                     <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Job Logs</button>
                   </>
               ) : isEval ? (
                    <>
                     <button onClick={() => setActiveTab('metrics')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Evaluation Metrics</button>
+                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Replay Gallery ({videoFiles.length})</button>}
                     <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>System Logs</button>
                     <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Configuration</button>
                   </>
@@ -716,7 +764,7 @@ export const RunDetail: React.FC = () => {
                   <>
                     <button onClick={() => setActiveTab('metrics')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Training Metrics</button>
                     <button onClick={() => setActiveTab('tensorboard')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'tensorboard' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>TensorBoard</button>
-                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Video Gallery ({videoFiles.length})</button>}
+                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Replay Gallery ({videoFiles.length})</button>}
                     <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>System Logs</button>
                     <button onClick={() => setActiveTab('checkpoints')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'checkpoints' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Checkpoints</button>
                     <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Configuration</button>
@@ -761,7 +809,7 @@ export const RunDetail: React.FC = () => {
                                      <span className="w-2 h-2 rounded-full bg-green-500"></span>
                                      <span className="text-sm font-medium">{topRank.id}</span>
                                  </div>
-                                 <div className="text-xs text-gray-500 mt-1">Score: {topRank.score.toFixed(3)}</div>
+                                 <div className="text-xs text-gray-500 mt-1">Score: {topRank.score.toFixed(2)}</div>
                                </>
                              ) : (
                                <div className="text-xs text-gray-500">No ranking data yet.</div>
