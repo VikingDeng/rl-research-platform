@@ -11,7 +11,8 @@ export PYTHONPATH="${PYTHONPATH:-$BACKEND_DIR}"
 export BACKEND_DIR="${BACKEND_DIR}"
 export FRONTEND_DIST="${FRONTEND_DIST:-$APP_ROOT/dist}"
 export LOCAL_RUN_ROOT="${LOCAL_RUN_ROOT:-$APP_ROOT/.local/runs}"
-export DATABASE_URL="${DATABASE_URL:-sqlite:///rl_platform.db}"
+# 使用绝对路径确保数据库文件位置一致
+export DATABASE_URL="${DATABASE_URL:-sqlite:///$BACKEND_DIR/rl_platform.db}"
 export BACKEND_PYTHON="$PYTHON_BIN"
 
 mkdir -p "$LOCAL_RUN_ROOT" "$APP_ROOT/.local/artifacts"
