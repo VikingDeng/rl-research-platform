@@ -10,8 +10,13 @@ sys.path.insert(0, BASE_DIR)
 from app.db.base import Base
 from app.db.session import engine, SessionLocal
 from app.db import models
-# 确保所有模型都被导入到 Base.metadata
-from app.db.models import Project, Algo, AlgoVersion, EnvSpec, EnvVersion, Template, TemplateVersion, Run, Job, Checkpoint, Dataset, EvalProtocol, Plugin, PluginVersion  # noqa: F401
+# 确保所有模型都被导入到 Base.metadata（显式导入以确保表被创建）
+from app.db.models import (  # noqa: F401
+    Project, Algo, AlgoVersion, EnvSpec, EnvVersion, Template, TemplateVersion,
+    Run, Job, Checkpoint, Dataset, EvalProtocol, Plugin, PluginVersion,
+    SystemSetting, OpponentPool, OpponentPoolVersion, OpponentPoolMember,
+    Artifact, EvalResult, MatrixResult, Webhook, RegisteredModel, ModelVersion
+)
 from alembic.config import Config
 from alembic import command
 from sqlalchemy import text
