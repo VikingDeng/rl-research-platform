@@ -151,5 +151,8 @@ if [ "${START_TENSORBOARD:-1}" = "1" ]; then
 fi
 
 echo "[entrypoint] Starting FastAPI..."
+echo "[entrypoint] DATABASE_URL: $DATABASE_URL"
+echo "[entrypoint] PYTHONPATH: $PYTHONPATH"
 cd "$BACKEND_DIR"
-exec "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-7860}"
+# 确保环境变量被传递到应用
+exec env DATABASE_URL="$DATABASE_URL" PYTHONPATH="$PYTHONPATH" "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-7860}"
