@@ -55,6 +55,9 @@ def _resolve_database_url(configured_url: str) -> str:
     return url
 
 
-database_url = _resolve_database_url(settings.database_url)
+# 优先使用环境变量 DATABASE_URL，如果没有则使用 settings 中的值
+final_database_url = os.getenv("DATABASE_URL") or settings.database_url
+database_url = _resolve_database_url(final_database_url)
+print(f"[DB] Using database URL: {database_url}", file=sys.stderr)
 engine = _build_engine(database_url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

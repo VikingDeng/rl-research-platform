@@ -6,7 +6,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     app_name: str = "rl-research-platform-backend"
-    database_url: str = "sqlite:///rl_platform.db"
+    # pydantic_settings 会自动从环境变量读取，如果没有则使用默认值
+    # 默认值使用相对路径，但环境变量 DATABASE_URL 会覆盖它
+    database_url: str = os.getenv("DATABASE_URL", "sqlite:///rl_platform.db")
     s3_endpoint_url: str = "http://localhost:9000"
     s3_region: str = "us-east-1"
     s3_access_key: str = "minioadmin"
