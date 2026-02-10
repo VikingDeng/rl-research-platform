@@ -73,20 +73,59 @@ from pathlib import Path
 backend_dir = os.getenv("BACKEND_DIR", "/app/apps/portal-backend")
 sys.path.insert(0, backend_dir)
 
+# 确保使用相同的数据库 URL
+database_url = os.getenv("DATABASE_URL", f"sqlite:///{backend_dir}/rl_platform.db")
+print(f"[entrypoint] Database URL: {database_url}")
+
 from app.db.session import engine
 from sqlalchemy import inspect, text
 
+# 检查数据库文件是否存在（对于 SQLite）
+if database_url.startswith("sqlite"):
+    db_path = database_url.replace("sqlite:///", "")
+    if not Path(db_path).exists():
+        print(f"[entrypoint] ERROR: Database file does not exist: {db_path}")
+        sys.exit(1)
+    print(f"[entrypoint] Database file exists: {db_path}")
+
 inspector = inspect(engine)
 tables = inspector.get_table_names()
-required_tables = ["jobs", "runs", "projects", "algos", "env_specs"]
+print(f"[entrypoint] Found tables: {tables}")
 
+required_tables = ["jobs", "runs", "projects", "algos", "env_specs"]
 missing = [t for t in required_tables if t not in tables]
+
 if missing:
     print(f"[entrypoint] ERROR: Missing required tables: {missing}")
     print(f"[entrypoint] Existing tables: {tables}")
-    sys.exit(1)
+    print(f"[entrypoint] Attempting to create missing tables...")
+    
+    # 尝试重新创建表
+    from app.db.base import Base
+    from app.db import models
+    # 确保所有模型都被导入
+    from app.db.models import (  # noqa: F401
+        Project, Algo, AlgoVersion, EnvSpec, EnvVersion, Template, TemplateVersion,
+        Run, Job, Checkpoint, Dataset, EvalProtocol, Plugin, PluginVersion,
+        SystemSetting, OpponentPool, OpponentPoolVersion, OpponentPoolMember,
+        Artifact, EvalResult, MatrixResult, Webhook, RegisteredModel, ModelVersion
+    )
+    
+    print(f"[entrypoint] Registered tables in metadata: {list(Base.metadata.tables.keys())}")
+    Base.metadata.create_all(bind=engine)
+    
+    # 再次检查
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    missing = [t for t in required_tables if t not in tables]
+    
+    if missing:
+        print(f"[entrypoint] ERROR: Still missing tables after recreation: {missing}")
+        sys.exit(1)
+    else:
+        print(f"[entrypoint] Successfully created missing tables. All tables: {tables}")
 else:
-    print(f"[entrypoint] Database verification passed. Tables: {len(tables)}")
+    print(f"[entrypoint] Database verification passed. Found {len(tables)} tables.")
 PY
 
 if [ $? -ne 0 ]; then
