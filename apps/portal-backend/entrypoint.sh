@@ -52,6 +52,11 @@ PY
 echo "[entrypoint] Initializing database..."
 "$PYTHON_BIN" "$BACKEND_DIR/scripts/init_db_direct.py"
 
+if echo "$DATABASE_URL" | grep -q '^postgresql'; then
+  echo "[entrypoint] Applying DB patches (v2)..."
+  "$PYTHON_BIN" "$BACKEND_DIR/scripts/patch_db_v2.py"
+fi
+
 echo "[entrypoint] Seeding defaults..."
 /bin/sh "$APP_ROOT/scripts/seed-full.sh"
 
@@ -62,9 +67,13 @@ fi
 
 if [ "${START_TENSORBOARD:-1}" = "1" ]; then
   echo "[entrypoint] Starting TensorBoard..."
-  "$PYTHON_BIN" -m tensorboard --logdir "$LOCAL_RUN_ROOT" --port 6006 --bind_all &
+  if command -v tensorboard >/dev/null 2>&1; then
+    tensorboard --logdir "$LOCAL_RUN_ROOT" --port 6006 --bind_all &
+  else
+    echo "[entrypoint] tensorboard CLI not found; skipping."
+  fi
 fi
 
 echo "[entrypoint] Starting FastAPI..."
 cd "$BACKEND_DIR"
-exec "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+exec "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-7860}"
