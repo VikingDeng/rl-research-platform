@@ -20,8 +20,8 @@ flowchart LR
   - Production-like: PostgreSQL (`docker-compose.yml`).
   - Dev fallback: SQLite (`DATABASE_URL=sqlite:///...`).
 - Artifact store:
-  - MinIO in compose mode (`S3_ENDPOINT_URL=http://minio:9000`).
-  - Local filesystem fallback (`.local/artifacts`).
+  - Default local filesystem (`STORAGE_BACKEND=local`, `.local/artifacts`).
+  - Optional MinIO / S3 mode (`STORAGE_BACKEND=s3` + S3 settings).
 - Execution layer:
   - `EXECUTOR_MODE=local` for local jobs.
   - Optional Determined integration via `docker-compose.determined.yml`.
@@ -48,4 +48,13 @@ flowchart LR
   - compose file validity
   - frontend build
   - backend health startup
+- `scripts/real-chain-smoke.sh` verifies real API chain:
+  - project/env/algo/template creation
+  - train job completion
+  - opponent pool + eval protocol
+  - eval job + matrix job completion
+  - replay artifact availability for train/eval/matrix runs
+  - matrix summary replay payload materialization
+- `scripts/full-quality-gate.sh --full` is the default pre-PR/release gate
+  and combines compile checks + acceptance checks + backend regression tests.
 - CI (`.github/workflows/ci.yml`) runs the same critical checks on PR/push.

@@ -2,6 +2,7 @@ import sys
 import os
 import logging
 from pathlib import Path
+from typing import Set
 
 # Ensure the app is in python path
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -19,7 +20,7 @@ from app.db.models import (  # noqa: F401
 )
 from alembic.config import Config
 from alembic import command
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,26 +60,87 @@ ALGO_DEFS = [
     }
 ]
 
-def _ensure_sqlite_schema() -> None:
-    if engine.dialect.name != "sqlite":
+def _alembic_config() -> Config:
+    backend_dir = Path(__file__).resolve().parents[1]
+    return Config(str(backend_dir / "alembic.ini"))
+
+
+def _known_app_tables() -> Set[str]:
+    return {
+        "algos",
+        "algo_versions",
+        "checkpoints",
+        "datasets",
+        "env_specs",
+        "env_versions",
+        "eval_protocols",
+        "jobs",
+        "matrix_results",
+        "projects",
+        "runs",
+        "templates",
+        "template_versions",
+    }
+
+
+def _looks_like_existing_schema_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "already exists" in message or "duplicate column" in message
+
+
+def _run_migrations() -> None:
+    alembic_cfg = _alembic_config()
+    try:
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Schema migrated to alembic head.")
         return
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info('eval_protocols')"))
-        cols = {row[1] for row in result}
-        for col, ctype in (("scenario_grid", "JSON"), ("opponent_sampling", "JSON")):
-            if col not in cols:
-                logger.info("Adding missing column eval_protocols.%s", col)
-                conn.execute(text(f"ALTER TABLE eval_protocols ADD COLUMN {col} {ctype}"))
-        conn.commit()
+    except Exception as exc:
+        inspector = inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+        is_legacy_schema = bool(existing_tables.intersection(_known_app_tables()))
+        has_alembic_version = "alembic_version" in existing_tables
+        if is_legacy_schema and not has_alembic_version and _looks_like_existing_schema_error(exc):
+            logger.warning(
+                "Detected legacy schema without alembic_version. "
+                "Stamping current DB to head. Original migration error: %s",
+                exc,
+            )
+            command.stamp(alembic_cfg, "head")
+            return
+        raise
+
+
+def _ensure_critical_columns() -> None:
+    inspector = inspect(engine)
+    if "eval_protocols" not in inspector.get_table_names():
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("eval_protocols")}
+    missing_columns = []
+    if "scenario_grid" not in columns:
+        missing_columns.append(("scenario_grid", "JSON"))
+    if "opponent_sampling" not in columns:
+        missing_columns.append(("opponent_sampling", "JSON"))
+
+    if not missing_columns:
+        return
+
+    with engine.begin() as conn:
+        for col_name, col_type in missing_columns:
+            logger.warning("Patching missing schema column eval_protocols.%s", col_name)
+            conn.execute(text(f"ALTER TABLE eval_protocols ADD COLUMN {col_name} {col_type}"))
 
 
 def init_db():
-    logger.info("Step 1: Creating tables...")
-    # 确保所有模型都已注册到 Base.metadata
-    logger.info(f"Registered tables: {list(Base.metadata.tables.keys())}")
-    Base.metadata.create_all(bind=engine)
-    _ensure_sqlite_schema()
-    logger.info("Step 1 completed: All tables created.")
+    if engine.dialect.name == "sqlite":
+        # Alembic revisions contain PostgreSQL-only types; use model metadata in local SQLite mode.
+        logger.info("Step 1: Creating schema via SQLAlchemy metadata (SQLite mode)...")
+        logger.info(f"Registered tables: {list(Base.metadata.tables.keys())}")
+        Base.metadata.create_all(bind=engine)
+    else:
+        logger.info("Step 1: Running schema migrations...")
+        _run_migrations()
+    _ensure_critical_columns()
     
     db = SessionLocal()
     try:
