@@ -1,0 +1,7 @@
+# 魔搭创空间配置文件
+# ModelScope Studio configuration file
+
+# Docker 构建配置
+docker:
+  dockerfile: Dockerfile
+  context: .
