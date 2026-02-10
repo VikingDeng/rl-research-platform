@@ -51,11 +51,47 @@ raise SystemExit(1)
 PY
 
 echo "[entrypoint] Initializing database..."
-"$PYTHON_BIN" "$BACKEND_DIR/scripts/init_db_direct.py"
+if ! "$PYTHON_BIN" "$BACKEND_DIR/scripts/init_db_direct.py"; then
+  echo "[entrypoint] ERROR: Database initialization failed!"
+  exit 1
+fi
 
 if echo "$DATABASE_URL" | grep -q '^postgresql'; then
   echo "[entrypoint] Applying DB patches (v2)..."
-  "$PYTHON_BIN" "$BACKEND_DIR/scripts/patch_db_v2.py"
+  if ! "$PYTHON_BIN" "$BACKEND_DIR/scripts/patch_db_v2.py"; then
+    echo "[entrypoint] WARNING: DB patch failed, continuing anyway..."
+  fi
+fi
+
+# 验证数据库表是否存在
+echo "[entrypoint] Verifying database tables..."
+"$PYTHON_BIN" - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+backend_dir = os.getenv("BACKEND_DIR", "/app/apps/portal-backend")
+sys.path.insert(0, backend_dir)
+
+from app.db.session import engine
+from sqlalchemy import inspect, text
+
+inspector = inspect(engine)
+tables = inspector.get_table_names()
+required_tables = ["jobs", "runs", "projects", "algos", "env_specs"]
+
+missing = [t for t in required_tables if t not in tables]
+if missing:
+    print(f"[entrypoint] ERROR: Missing required tables: {missing}")
+    print(f"[entrypoint] Existing tables: {tables}")
+    sys.exit(1)
+else:
+    print(f"[entrypoint] Database verification passed. Tables: {len(tables)}")
+PY
+
+if [ $? -ne 0 ]; then
+  echo "[entrypoint] ERROR: Database verification failed!"
+  exit 1
 fi
 
 echo "[entrypoint] Seeding defaults..."
