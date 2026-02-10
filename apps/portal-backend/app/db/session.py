@@ -56,8 +56,26 @@ def _resolve_database_url(configured_url: str) -> str:
 
 
 # 优先使用环境变量 DATABASE_URL，如果没有则使用 settings 中的值
-final_database_url = os.getenv("DATABASE_URL") or settings.database_url
+# 注意：环境变量应该在 entrypoint.sh 中设置，确保在模块导入前就可用
+final_database_url = os.getenv("DATABASE_URL")
+if not final_database_url:
+    # 如果环境变量未设置，使用 settings（pydantic_settings 会自动从环境变量读取）
+    final_database_url = settings.database_url
+    print(f"[DB] DATABASE_URL env var not set, using settings.database_url: {final_database_url}", file=sys.stderr)
+else:
+    print(f"[DB] Using DATABASE_URL from environment: {final_database_url}", file=sys.stderr)
+
 database_url = _resolve_database_url(final_database_url)
-print(f"[DB] Using database URL: {database_url}", file=sys.stderr)
+print(f"[DB] Resolved database URL: {database_url}", file=sys.stderr)
+
+# 对于 SQLite，验证数据库文件路径
+if database_url.startswith("sqlite"):
+    db_path = database_url.replace("sqlite:///", "")
+    if os.path.exists(db_path):
+        print(f"[DB] Database file exists: {db_path}", file=sys.stderr)
+    else:
+        print(f"[DB] WARNING: Database file does not exist: {db_path}", file=sys.stderr)
+        print(f"[DB] It will be created on first use.", file=sys.stderr)
+
 engine = _build_engine(database_url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
