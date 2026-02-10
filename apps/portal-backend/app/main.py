@@ -116,6 +116,23 @@ else:
 
 @app.on_event("startup")
 def start_job_manager() -> None:
+    # 在启动时验证数据库连接
+    from app.db.session import engine
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    print(f"[Startup] Database tables: {tables}")
+    if "jobs" not in tables:
+        print(f"[Startup] ERROR: 'jobs' table not found! Database URL: {os.getenv('DATABASE_URL', 'not set')}")
+        # 尝试重新创建表
+        from app.db.base import Base
+        from app.db import models
+        print(f"[Startup] Attempting to create missing tables...")
+        Base.metadata.create_all(bind=engine)
+        tables = inspector.get_table_names()
+        print(f"[Startup] Tables after recreation: {tables}")
+        if "jobs" not in tables:
+            raise RuntimeError("Failed to create 'jobs' table. Database may be corrupted.")
     job_manager.start()
 
 
