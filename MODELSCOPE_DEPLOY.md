@@ -1,25 +1,25 @@
-# 魔搭创空间部署说明
+# 魔搭创空间 Docker 部署说明
 
-本项目已配置为可在魔搭创空间（ModelScope Studio）上部署。
+本项目已配置为可在魔搭创空间（ModelScope Studio）上使用 **Docker 方式**部署。
 
 ## 部署方式
 
-### 方式一：使用 Dockerfile（推荐）
+### Docker 部署（推荐）
 
-魔搭创空间会自动识别 `Dockerfile` 或 `Dockerfile.modelscope` 进行构建。
+魔搭创空间会自动识别根目录的 `Dockerfile` 进行 Docker 构建和部署。
 
 1. 在魔搭创空间创建新项目
-2. 将本仓库连接到创空间
-3. 选择使用 `Dockerfile.modelscope` 进行构建
-4. 启动服务
+2. 选择 **Docker 部署类型**（不是 Gradio）
+3. 将本仓库连接到创空间
+4. 魔搭会自动使用根目录的 `Dockerfile` 进行构建
+5. 启动服务后，应用将在端口 **7860** 上运行（魔搭默认端口）
 
-### 方式二：使用 app.py
+### Dockerfile 说明
 
-如果魔搭创空间支持直接运行 Python 应用：
-
-1. 确保已安装所有依赖：`pip install -r requirements.txt`
-2. 运行：`python app.py`
-3. 应用将在端口 7860 上启动（魔搭默认端口）
+- **主 Dockerfile**: 已配置为使用端口 7860，适合魔搭创空间
+- **Dockerfile.modelscope**: 备用配置（与主 Dockerfile 相同）
+- 使用多阶段构建：先构建前端，再构建后端运行时
+- 自动初始化数据库和种子数据
 
 ## 环境变量配置
 
@@ -54,7 +54,27 @@
 
 ## 文件说明
 
-- `app.py`: 魔搭创空间入口文件
-- `requirements.txt`: Python 依赖列表
-- `Dockerfile.modelscope`: 魔搭创空间专用 Dockerfile
-- `entrypoint.sh`: 启动脚本（已更新为使用端口 7860）
+- `Dockerfile`: 主 Dockerfile，已配置为魔搭创空间 Docker 部署（端口 7860）
+- `Dockerfile.modelscope`: 备用 Dockerfile（与主 Dockerfile 相同）
+- `requirements.txt`: Python 依赖列表（合并了后端和 runner 的所有依赖）
+- `app.py`: 可选的 Python 入口文件（Docker 部署使用 entrypoint.sh）
+- `entrypoint.sh`: Docker 启动脚本（包含数据库初始化、种子数据等完整流程）
+
+## Docker 构建流程
+
+1. **前端构建阶段**: 使用 Node.js 构建 React 前端，生成 `dist` 目录
+2. **后端运行时阶段**: 
+   - 安装 Python 依赖（从 `requirements.txt`）
+   - 复制应用代码、脚本和前端构建产物
+   - 设置环境变量（端口 7860、SQLite 数据库等）
+   - 使用 `entrypoint.sh` 作为启动入口
+
+## 启动流程
+
+容器启动时会自动执行：
+1. 等待数据库就绪（如果使用 PostgreSQL）
+2. 初始化数据库表结构
+3. 应用数据库补丁（如需要）
+4. 种子默认数据（环境、算法、模板等）
+5. 启动 TensorBoard（如果启用）
+6. 启动 FastAPI 应用（端口 7860）

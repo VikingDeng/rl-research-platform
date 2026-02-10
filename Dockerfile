@@ -16,27 +16,31 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY apps/portal-backend/requirements.txt /app/apps/portal-backend/requirements.txt
-COPY apps/portal-backend/runner/requirements.txt /app/apps/portal-backend/runner/requirements.txt
-RUN pip install --no-cache-dir \
-    -r /app/apps/portal-backend/requirements.txt \
-    -r /app/apps/portal-backend/runner/requirements.txt \
-    tensorboard \
-    psycopg2-binary
+# 安装依赖（使用根目录的 requirements.txt，已合并所有依赖）
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
+# 复制应用代码
 COPY apps /app/apps
 COPY scripts /app/scripts
 COPY --from=frontend-builder /workspace/dist /app/dist
 
+# 复制入口脚本
 COPY apps/portal-backend/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh \
     && mkdir -p /app/.local/runs /app/.local/artifacts
 
+# 复制 app.py（可选，用于直接运行）
+COPY app.py /app/app.py
+
 ENV PYTHONPATH=/app/apps/portal-backend
 ENV FRONTEND_DIST=/app/dist
 ENV LOCAL_RUN_ROOT=/app/.local/runs
-ENV PORT=8000
+ENV PORT=7860
+ENV DATABASE_URL=sqlite:///rl_platform.db
+ENV DISABLE_CSP=1
 
-EXPOSE 8000 6006
+EXPOSE 7860 6006
 
+# 使用 entrypoint.sh（包含数据库初始化等完整启动流程）
 ENTRYPOINT ["/app/entrypoint.sh"]
