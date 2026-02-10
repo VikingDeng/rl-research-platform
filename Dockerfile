@@ -30,9 +30,6 @@ COPY apps/portal-backend/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh \
     && mkdir -p /app/.local/runs /app/.local/artifacts
 
-# 复制 app.py（可选，用于直接运行）
-COPY app.py /app/app.py
-
 ENV PYTHONPATH=/app/apps/portal-backend
 ENV FRONTEND_DIST=/app/dist
 ENV LOCAL_RUN_ROOT=/app/.local/runs

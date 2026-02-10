@@ -41,7 +41,7 @@ services:
       minio:
         condition: service_started
     ports:
-      - "8000:8000" # Web UI + API
+      - "18000:8000" # Web UI + API
       - "6006:6006" # TensorBoard
     volumes:
       - ./runs_data:/app/.local # Persist runs/artifacts
