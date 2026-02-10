@@ -92,7 +92,7 @@ inspector = inspect(engine)
 tables = inspector.get_table_names()
 print(f"[entrypoint] Found tables: {tables}")
 
-required_tables = ["jobs", "runs", "projects", "algos", "env_specs"]
+required_tables = ["jobs", "runs", "projects", "algos", "envs"]
 missing = [t for t in required_tables if t not in tables]
 
 if missing:
