@@ -34,7 +34,7 @@ ENV PYTHONPATH=/app/apps/portal-backend
 ENV FRONTEND_DIST=/app/dist
 ENV LOCAL_RUN_ROOT=/app/.local/runs
 ENV PORT=7860
-ENV DATABASE_URL=sqlite:///rl_platform.db
+ENV DATABASE_URL=sqlite:////app/apps/portal-backend/rl_platform.db
 ENV DISABLE_CSP=1
 
 EXPOSE 7860 6006

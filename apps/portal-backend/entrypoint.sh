@@ -12,7 +12,29 @@ export BACKEND_DIR="${BACKEND_DIR}"
 export FRONTEND_DIST="${FRONTEND_DIST:-$APP_ROOT/dist}"
 export LOCAL_RUN_ROOT="${LOCAL_RUN_ROOT:-$APP_ROOT/.local/runs}"
 # 使用绝对路径确保数据库文件位置一致
-export DATABASE_URL="${DATABASE_URL:-sqlite:///$BACKEND_DIR/rl_platform.db}"
+# 确保 DATABASE_URL 是绝对路径（特别是对于 SQLite）
+if echo "$DATABASE_URL" | grep -q "^sqlite:///"; then
+    # 如果是 sqlite:///relative/path，转换为绝对路径
+    # 注意：sqlite:///path (3 slashes) 是相对路径，sqlite:////path (4 slashes) 是绝对路径
+    case "$DATABASE_URL" in
+        sqlite:////*) ;; # 已经是绝对路径
+        *)
+            REL_PATH=$(echo "$DATABASE_URL" | sed 's|^sqlite:///||')
+            # 如果不是以 / 开头，则是相对路径
+            case "$REL_PATH" in
+                /*) ;; # 已经是绝对路径（处理 sqlite:/// /path 这种情况）
+                *)
+                    # 转换为相对于 BACKEND_DIR 的绝对路径
+                    ABS_PATH="$BACKEND_DIR/$REL_PATH"
+                    export DATABASE_URL="sqlite:///$ABS_PATH"
+                    echo "[entrypoint] Converted relative DATABASE_URL to absolute: $DATABASE_URL"
+                    ;;
+            esac
+            ;;
+    esac
+fi
+
+export DATABASE_URL="${DATABASE_URL}"
 export BACKEND_PYTHON="$PYTHON_BIN"
 
 mkdir -p "$LOCAL_RUN_ROOT" "$APP_ROOT/.local/artifacts"
