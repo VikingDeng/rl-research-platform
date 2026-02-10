@@ -10,6 +10,8 @@ sys.path.insert(0, BASE_DIR)
 from app.db.base import Base
 from app.db.session import engine, SessionLocal
 from app.db import models
+# 确保所有模型都被导入到 Base.metadata
+from app.db.models import Project, Algo, AlgoVersion, EnvSpec, EnvVersion, Template, TemplateVersion, Run, Job, Checkpoint, Dataset, EvalProtocol, Plugin, PluginVersion  # noqa: F401
 from alembic.config import Config
 from alembic import command
 from sqlalchemy import text
@@ -67,8 +69,11 @@ def _ensure_sqlite_schema() -> None:
 
 def init_db():
     logger.info("Step 1: Creating tables...")
+    # 确保所有模型都已注册到 Base.metadata
+    logger.info(f"Registered tables: {list(Base.metadata.tables.keys())}")
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_schema()
+    logger.info("Step 1 completed: All tables created.")
     
     db = SessionLocal()
     try:
