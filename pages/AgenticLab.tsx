@@ -153,6 +153,7 @@ export const AgenticLab: React.FC = () => {
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Record<string, boolean>>({});
   const [showInsightRail, setShowInsightRail] = useState(true);
   const [insightPanel, setInsightPanel] = useState<'frontier' | 'focus' | 'minimap'>('frontier');
+  const [focusView, setFocusView] = useState(false);
   const [showIdeaComposer, setShowIdeaComposer] = useState(false);
   const graphViewportRef = useRef<HTMLDivElement | null>(null);
 
@@ -629,6 +630,7 @@ export const AgenticLab: React.FC = () => {
         </div>
       </section>
 
+      {!focusView && (
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('当前 Run', 'Current Run')}</label>
@@ -725,7 +727,9 @@ export const AgenticLab: React.FC = () => {
           </div>
         )}
       </section>
+      )}
 
+      {!focusView && (
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -802,12 +806,27 @@ export const AgenticLab: React.FC = () => {
         </div>
         )}
       </section>
+      )}
 
       <section className="grid gap-4 xl:grid-cols-12">
         <div className={`${showInsightRail ? 'xl:col-span-9' : 'xl:col-span-12'} rounded-2xl border border-slate-200 bg-white p-3 shadow-sm`}>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-800">{tx('核心：ToT / MCTS 树搜索', 'Core: ToT / MCTS Tree Search')}</h2>
             <div className="flex flex-wrap items-center gap-2">
+              {focusView && (
+                <select
+                  value={selectedRunId}
+                  onChange={e => setSelectedRunId(e.target.value)}
+                  className="max-w-[14rem] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                >
+                  {runs.length === 0 && <option value="">{tx('暂无运行', 'No runs')}</option>}
+                  {runs.map(run => (
+                    <option key={`focus-run-${run.runId}`} value={run.runId}>
+                      {run.runId}
+                    </option>
+                  ))}
+                </select>
+              )}
               <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1">
                 <Search className="h-3.5 w-3.5 text-slate-400" />
                 <input
@@ -882,10 +901,25 @@ export const AgenticLab: React.FC = () => {
               >
                 {showInsightRail ? tx('隐藏侧栏', 'Hide Rail') : tx('显示侧栏', 'Show Rail')}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFocusView(prev => {
+                    const next = !prev;
+                    if (next) {
+                      setShowInsightRail(false);
+                    }
+                    return next;
+                  });
+                }}
+                className={`rounded-lg border px-2 py-1 text-xs ${focusView ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+              >
+                {focusView ? tx('退出专注', 'Exit Focus') : tx('专注视图', 'Focus View')}
+              </button>
             </div>
           </div>
 
-          <div ref={graphViewportRef} className="max-h-[72vh] overflow-auto rounded-xl border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(219,234,254,.34),transparent_42%),radial-gradient(circle_at_100%_0%,rgba(209,250,229,.24),transparent_38%),linear-gradient(180deg,rgba(248,250,252,.72),rgba(255,255,255,.95))]">
+          <div ref={graphViewportRef} className={`${focusView ? 'max-h-[82vh]' : 'max-h-[72vh]'} overflow-auto rounded-xl border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(219,234,254,.34),transparent_42%),radial-gradient(circle_at_100%_0%,rgba(209,250,229,.24),transparent_38%),linear-gradient(180deg,rgba(248,250,252,.72),rgba(255,255,255,.95))]`}>
             {loadingRun ? (
               <div className="p-6 text-sm text-slate-500">{tx('加载运行详情中...', 'Loading run detail...')}</div>
             ) : visibleNodes.length === 0 ? (
@@ -1049,6 +1083,49 @@ export const AgenticLab: React.FC = () => {
               </svg>
             )}
           </div>
+          {focusedNode && (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">{focusedNode.nodeId}</span>
+                    <span className={`rounded px-1.5 py-0.5 font-semibold ${statusBadgeClass(focusedNode.status)}`}>{focusedNode.status}</span>
+                    <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">UCT {focusedNodeScore}</span>
+                    <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">
+                      {tx('目标胜率', 'Target Win')} {Math.round(extractExpectedWinRate(focusedNode) * 100)}%
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-slate-800">{focusedNode.title || focusedNode.nodeId}</div>
+                  <p className="mt-1 line-clamp-2 text-xs text-slate-600">{focusedNode.hypothesis || '-'}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => centerNodeInViewport(focusedNode.nodeId)}
+                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+                  >
+                    {tx('定位', 'Center')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openNodeEvidence(focusedNode.nodeId)}
+                    className="inline-flex items-center rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+                  >
+                    {tx('证据页', 'Evidence Page')} <ArrowRight className="ml-1 h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => runExecutionAction('next')}
+                    disabled={isActionBusy}
+                    className="inline-flex items-center rounded-md border border-blue-300 bg-white px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                  >
+                    <Play className="mr-1 h-3.5 w-3.5" />
+                    {tx('继续一步', 'Run Next')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {showInsightRail && (

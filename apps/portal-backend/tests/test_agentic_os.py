@@ -37,6 +37,27 @@ def _create_run(client, *, induce_failure: bool = False, auto_execute: bool = Fa
     return body["runId"], body
 
 
+def _max_depth(nodes):
+    by_id = {item["nodeId"]: item for item in nodes}
+    best = 0
+    for node in nodes:
+        depth = 0
+        cursor = node
+        seen = set()
+        while cursor.get("parentId"):
+            parent_id = cursor.get("parentId")
+            if not parent_id or parent_id in seen:
+                break
+            seen.add(parent_id)
+            parent = by_id.get(parent_id)
+            if not parent:
+                break
+            depth += 1
+            cursor = parent
+        best = max(best, depth)
+    return best
+
+
 def test_f1_spec_validation_and_drafts(client):
     idea = _idea_payload()
     res = client.post("/api/v1/agentic/specs/validate", json=idea)
@@ -201,6 +222,22 @@ def test_f2_tot_tree_and_node_evidence(client):
     assert {"ResearchAgent", "IntegrationAgent", "OpsAgent", "EvalAgent", "SafetyAgent"}.issubset(agents)
     assert len(detail["events"]) >= 5
     assert detail["contract"]["passRate"] >= 95
+
+
+def test_f2_search_expansion_generates_multilevel_tot(client):
+    run_id, _ = _create_run(client)
+
+    # Simulate iterative ToT search steps instead of one-shot all-mode execution.
+    for _ in range(9):
+        exec_res = client.post(f"/api/v1/agentic/runs/{run_id}/execute", json={"mode": "next"})
+        assert exec_res.status_code == 200, exec_res.text
+
+    detail = client.get(f"/api/v1/agentic/runs/{run_id}").json()
+    tot = detail["totTree"]
+    assert len(tot) > 7
+    assert _max_depth(tot) >= 2
+    assert any(evt["event"] == "search_node_selected" for evt in detail["events"])
+    assert any(evt["event"] == "tot_node_expanded" for evt in detail["events"])
 
 
 def test_f2_sub_agent_spawn_and_nested_chain(client):

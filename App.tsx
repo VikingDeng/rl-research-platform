@@ -24,6 +24,8 @@ const TuningDashboard = lazy(() => import('./pages/TuningDashboard').then(mod =>
 const Workspaces = lazy(() => import('./pages/Workspaces').then(mod => ({ default: mod.Workspaces })));
 const Login = lazy(() => import('./pages/Login').then(mod => ({ default: mod.Login })));
 const GroupSummary = lazy(() => import('./pages/GroupSummary').then(mod => ({ default: mod.GroupSummary })));
+const AgenticTotCanvas = lazy(() => import('./pages/AgenticTotCanvas').then(mod => ({ default: mod.AgenticTotCanvas })));
+const AgenticIdeaBuilder = lazy(() => import('./pages/AgenticIdeaBuilder').then(mod => ({ default: mod.AgenticIdeaBuilder })));
 const AgenticLab = lazy(() => import('./pages/AgenticLab').then(mod => ({ default: mod.AgenticLab })));
 const AgenticLabClassic = lazy(() => import('./pages/AgenticLabClassic').then(mod => ({ default: mod.AgenticLab })));
 const AgenticNodeEvidence = lazy(() => import('./pages/AgenticNodeEvidence').then(mod => ({ default: mod.AgenticNodeEvidence })));
@@ -82,7 +84,9 @@ const App: React.FC = () => {
                         <Route path="/create-job" element={<CreateJob />} />
                         <Route path="/runs/:id" element={<RunDetail />} />
                         <Route path="/groups/:groupId" element={<GroupSummary />} />
-                        <Route path="/agentic" element={<AgenticLab />} />
+                        <Route path="/agentic" element={<AgenticTotCanvas />} />
+                        <Route path="/agentic/new" element={<AgenticIdeaBuilder />} />
+                        <Route path="/agentic/workbench" element={<AgenticLab />} />
                         <Route path="/agentic/classic" element={<AgenticLabClassic />} />
                         <Route path="/agentic/runs/:runId/nodes/:nodeId" element={<AgenticNodeEvidence />} />
                         <Route path="/agentic/runs/:runId/agents" element={<AgenticAgents />} />

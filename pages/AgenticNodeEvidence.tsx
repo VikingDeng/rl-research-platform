@@ -25,6 +25,8 @@ type TimelineRow = {
   ts: number;
 };
 
+type EvidenceTab = 'overview' | 'timeline' | 'branch' | 'contract';
+
 const statusBadgeClass = (status: string) => {
   const normalized = String(status || '').toUpperCase();
   if (normalized === 'SUCCEEDED') return 'bg-emerald-100 text-emerald-700';
@@ -108,6 +110,7 @@ export const AgenticNodeEvidence: React.FC = () => {
   const [busy, setBusy] = useState<'none' | 'refresh' | 'next' | 'branch'>('none');
   const [message, setMessage] = useState('');
   const [timelineFilter, setTimelineFilter] = useState<'all' | TimelineCategoryId>('all');
+  const [activeTab, setActiveTab] = useState<EvidenceTab>('overview');
 
   const [branchDraft, setBranchDraft] = useState({
     title: '',
@@ -135,6 +138,7 @@ export const AgenticNodeEvidence: React.FC = () => {
   }, [loadRun]);
   useEffect(() => {
     setTimelineFilter('all');
+    setActiveTab('overview');
   }, [nodeId]);
 
   const nodeById = useMemo(() => {
@@ -462,93 +466,145 @@ export const AgenticNodeEvidence: React.FC = () => {
             </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-12">
-            <div className="space-y-4 xl:col-span-8">
-              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('执行计划', 'Execution Plan')}</h2>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selectedNode.executionPlan || '-'}</p>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('预期指标', 'Expected Metrics')}</div>
-                    <pre className="mt-2 max-h-56 overflow-auto text-xs text-slate-700">{JSON.stringify(selectedNode.expectedMetrics || {}, null, 2)}</pre>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('预算约束', 'Budget')}</div>
-                    <pre className="mt-2 max-h-56 overflow-auto text-xs text-slate-700">{JSON.stringify(selectedNode.budget || {}, null, 2)}</pre>
-                  </div>
-                </div>
-              </article>
-
-              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('节点证据', 'Node Evidence')}</h2>
-                <pre className="mt-2 max-h-[22rem] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-                  {JSON.stringify(selectedNode.evidence || {}, null, 2)}
-                </pre>
-              </article>
-
-              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('节点事件回放', 'Node Event Replay')}</h2>
-                <div className="mt-3">
-                  <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setTimelineFilter('all')}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${timelineFilter === 'all' ? 'bg-slate-200 text-slate-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                    >
-                      {tx('全部', 'All')} ({timelineRows.length})
-                    </button>
-                    {timelineCategoryOrder.map(category => {
-                      const count = timelineCountByCategory[category];
-                      if (!count) return null;
-                      const meta = timelineCategoryMeta[category];
-                      const isActive = timelineFilter === category;
-                      return (
-                        <button
-                          key={`timeline-filter-${category}`}
-                          type="button"
-                          onClick={() => setTimelineFilter(category)}
-                          className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${isActive ? meta.badgeClass : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                        >
-                          {tx(meta.zh, meta.en)} ({count})
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {timelineRows.length === 0 && <div className="text-xs text-slate-500">{tx('当前节点没有匹配事件。', 'No events matched this node.')}</div>}
-                  <div className="space-y-3">
-                    {layeredTimeline.map(layer => {
-                      const meta = timelineCategoryMeta[layer.category];
-                      return (
-                        <div key={`layer-${layer.category}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
-                          <div className="mb-2 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className={`h-2.5 w-2.5 rounded-full ${meta.dotClass}`} />
-                              <span className="text-xs font-semibold text-slate-700">{tx(meta.zh, meta.en)}</span>
-                            </div>
-                            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-500">{layer.rows.length}</span>
-                          </div>
-                          <div className="space-y-2">
-                            {layer.rows.map(row => (
-                              <div key={row.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div className="text-xs font-semibold text-slate-700">{row.title}</div>
-                                  <div className="text-[11px] text-slate-500">{formatTimestamp(row.tsRaw)}</div>
-                                </div>
-                                <div className="mt-1 text-[11px] text-slate-500">{row.status}</div>
-                                {row.message && <div className="mt-1 text-xs text-slate-700">{row.message}</div>}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </article>
+          <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[12px]">
+              {([
+                ['overview', tx('概览', 'Overview')],
+                ['timeline', tx('时间线', 'Timeline')],
+                ['branch', tx('分支操作', 'Branch')],
+                ['contract', tx('合同账本', 'Contract')],
+              ] as Array<[EvidenceTab, string]>).map(([tabId, label]) => (
+                <button
+                  key={`node-tab-${tabId}`}
+                  type="button"
+                  onClick={() => setActiveTab(tabId)}
+                  className={`rounded-md px-3 py-1.5 font-medium ${activeTab === tabId ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
+          </section>
 
-            <aside className="space-y-4 xl:col-span-4">
-              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          {activeTab === 'overview' && (
+            <section className="grid gap-4 xl:grid-cols-12">
+              <div className="space-y-4 xl:col-span-8">
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('执行计划', 'Execution Plan')}</h2>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selectedNode.executionPlan || '-'}</p>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('预期指标', 'Expected Metrics')}</div>
+                      <pre className="mt-2 max-h-56 overflow-auto text-xs text-slate-700">{JSON.stringify(selectedNode.expectedMetrics || {}, null, 2)}</pre>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('预算约束', 'Budget')}</div>
+                      <pre className="mt-2 max-h-56 overflow-auto text-xs text-slate-700">{JSON.stringify(selectedNode.budget || {}, null, 2)}</pre>
+                    </div>
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('节点证据', 'Node Evidence')}</h2>
+                  <pre className="mt-2 max-h-[26rem] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                    {JSON.stringify(selectedNode.evidence || {}, null, 2)}
+                  </pre>
+                </article>
+              </div>
+              <aside className="space-y-4 xl:col-span-4">
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('快速导航', 'Quick Navigation')}</h2>
+                  <div className="mt-2 space-y-2">
+                    {parentNode && (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/agentic/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(parentNode.nodeId)}`)}
+                        className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2 py-1 text-left text-xs text-slate-700 hover:bg-slate-100"
+                      >
+                        {tx('父节点', 'Parent')}: {parentNode.nodeId}
+                      </button>
+                    )}
+                    {childNodes.slice(0, 4).map(node => (
+                      <button
+                        key={`overview-child-${node.nodeId}`}
+                        type="button"
+                        onClick={() => navigate(`/agentic/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(node.nodeId)}`)}
+                        className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2 py-1 text-left text-xs text-slate-700 hover:bg-slate-100"
+                      >
+                        {tx('子节点', 'Child')}: {node.nodeId}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </aside>
+            </section>
+          )}
+
+          {activeTab === 'timeline' && (
+            <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('节点事件回放', 'Node Event Replay')}</h2>
+              <div className="mt-3">
+                <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setTimelineFilter('all')}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${timelineFilter === 'all' ? 'bg-slate-200 text-slate-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                  >
+                    {tx('全部', 'All')} ({timelineRows.length})
+                  </button>
+                  {timelineCategoryOrder.map(category => {
+                    const count = timelineCountByCategory[category];
+                    if (!count) return null;
+                    const meta = timelineCategoryMeta[category];
+                    const isActive = timelineFilter === category;
+                    return (
+                      <button
+                        key={`timeline-filter-${category}`}
+                        type="button"
+                        onClick={() => setTimelineFilter(category)}
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${isActive ? meta.badgeClass : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                      >
+                        {tx(meta.zh, meta.en)} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+                {timelineRows.length === 0 && <div className="text-xs text-slate-500">{tx('当前节点没有匹配事件。', 'No events matched this node.')}</div>}
+                <div className="space-y-3">
+                  {layeredTimeline.map(layer => {
+                    const meta = timelineCategoryMeta[layer.category];
+                    return (
+                      <div key={`layer-${layer.category}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`h-2.5 w-2.5 rounded-full ${meta.dotClass}`} />
+                            <span className="text-xs font-semibold text-slate-700">{tx(meta.zh, meta.en)}</span>
+                          </div>
+                          <span className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-500">{layer.rows.length}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {layer.rows.map(row => (
+                            <div key={row.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs font-semibold text-slate-700">{row.title}</div>
+                                <div className="text-[11px] text-slate-500">{formatTimestamp(row.tsRaw)}</div>
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-500">{row.status}</div>
+                              {row.message && <div className="mt-1 text-xs text-slate-700">{row.message}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </article>
+          )}
+
+          {activeTab === 'branch' && (
+            <section className="grid gap-4 xl:grid-cols-12">
+              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-7">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('新增分支', 'Create Branch')}</h2>
                 <div className="mt-2 space-y-2">
                   <input
@@ -567,7 +623,7 @@ export const AgenticNodeEvidence: React.FC = () => {
                     value={branchDraft.executionPlan}
                     onChange={e => setBranchDraft(prev => ({ ...prev, executionPlan: e.target.value }))}
                     placeholder={tx('执行计划', 'Execution plan')}
-                    rows={4}
+                    rows={5}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
                   <select
@@ -589,29 +645,53 @@ export const AgenticNodeEvidence: React.FC = () => {
                     {busy === 'branch' ? tx('创建中...', 'Creating...') : tx('创建分支', 'Create Branch')}
                   </button>
                 </div>
-              </section>
+              </article>
+              <aside className="space-y-4 xl:col-span-5">
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('可参考上下文', 'Suggested Context')}</h2>
+                  <div className="mt-2 space-y-2 text-xs text-slate-700">
+                    <div>{tx('父节点', 'Parent')}: {parentNode?.nodeId || '-'}</div>
+                    <div>{tx('同级节点数', 'Sibling count')}: {siblingNodes.length}</div>
+                    <div>{tx('子节点数', 'Children count')}: {childNodes.length}</div>
+                  </div>
+                </section>
+              </aside>
+            </section>
+          )}
 
-              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('合同与注册账本', 'Contract & Registry')}</h2>
+          {activeTab === 'contract' && (
+            <section className="grid gap-4 xl:grid-cols-12">
+              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-4">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('合同状态', 'Contract Status')}</h2>
                 <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                   <div>{tx('合同通过率', 'Pass rate')}: {Math.round(((detail.contract?.passRate || 0) * 100))}%</div>
                   <div>{tx('缺失项', 'Missing')}: {(detail.contract?.missing || []).length}</div>
                 </div>
-                <div className="mt-2 max-h-60 overflow-auto rounded-lg border border-slate-200">
+                {(detail.contract?.missing || []).length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-auto rounded-lg border border-slate-200 bg-white p-2 text-xs text-rose-700">
+                    {(detail.contract?.missing || []).map(item => (
+                      <div key={`missing-${item}`}>- {item}</div>
+                    ))}
+                  </div>
+                )}
+              </article>
+              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-8">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('注册账本', 'Registry Ledger')}</h2>
+                <div className="mt-2 max-h-80 overflow-auto rounded-lg border border-slate-200">
                   <table className="min-w-full text-xs">
                     <tbody>
                       {registryRows.map(([key, value]) => (
                         <tr key={`registry-${key}`} className="border-b border-slate-100">
-                          <td className="w-40 px-2 py-1.5 font-semibold text-slate-600">{key}</td>
+                          <td className="w-44 px-2 py-1.5 font-semibold text-slate-600">{key}</td>
                           <td className="px-2 py-1.5 text-slate-700">{value}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              </section>
-            </aside>
-          </section>
+              </article>
+            </section>
+          )}
         </>
       )}
 

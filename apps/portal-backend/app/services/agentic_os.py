@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import os
 import platform
 import fnmatch
@@ -595,19 +596,35 @@ class AgenticOSService:
             return state
         state["status"] = "RUNNING"
         state["updated_at"] = _now_iso()
+        max_steps = max(1, int(os.getenv("AGENTIC_MAX_EXECUTE_STEPS", "128")))
+        steps = 0
 
-        pending_nodes = [n for n in state.get("tot_tree", []) if n.get("status") in {"PENDING", "RETRY_PENDING", "RUNNING"}]
         if payload.mode == "next":
-            pending_nodes = pending_nodes[:1]
+            node = self._select_pending_node_for_search(state)
+            if node is not None:
+                self._execute_node(state, node)
+                steps += 1
+                self._persist_state(run_id, state)
+                self._sync_contract_and_registry(run_id)
+        else:
+            while steps < max_steps:
+                node = self._select_pending_node_for_search(state)
+                if node is None:
+                    break
+                self._execute_node(state, node)
+                steps += 1
+                self._persist_state(run_id, state)
+                self._sync_contract_and_registry(run_id)
+                if node.get("status") in {"BLOCKED", "FAILED"}:
+                    break
 
-        for node in pending_nodes:
-            self._execute_node(state, node)
-            self._persist_state(run_id, state)
-            self._sync_contract_and_registry(run_id)
-            if payload.mode == "next":
-                break
-            if node.get("status") in {"BLOCKED", "FAILED"}:
-                break
+        if steps >= max_steps:
+            self._append_event(
+                state,
+                event="search_step_cap_reached",
+                message=f"Execution stopped after reaching max step cap {max_steps}",
+                payload={"max_steps": max_steps},
+            )
 
         blocked = any(n.get("status") == "BLOCKED" for n in state.get("tot_tree", []))
         failed = any(n.get("status") == "FAILED" for n in state.get("tot_tree", []))
@@ -1311,6 +1328,8 @@ PY
                 branch_ops.append({"op": "add", "payload": payload})
             elif event_name == "tot_branch_deleted":
                 branch_ops.append({"op": "delete", "payload": payload})
+            elif event_name == "tot_node_expanded":
+                branch_ops.append({"op": "expand", "payload": payload})
             elif event_name == "approval_updated":
                 approvals_updated += 1
             elif event_name == "sub_agent_started":
@@ -2207,6 +2226,7 @@ PY
         node_id = str(node.get("node_id"))
         agent = str(node.get("agent") or "Agent")
         title = str(node.get("title") or node_id)
+        self._ensure_search_node_state(state, node)
         node["status"] = "RUNNING"
 
         self._append_event(
@@ -2247,6 +2267,7 @@ PY
                 payload={"node_id": node_id, "reason": failure["reason"]},
             )
             self._append_log(state, f"[{node_id}] FAILED {failure['reason']}")
+            self._record_search_result(state, node, succeeded=False, failure=failure)
 
             if agent == "IntegrationAgent":
                 fix_node = self._create_fix_branch(state, node, failure)
@@ -2271,6 +2292,8 @@ PY
                         self._run_integration_lane(state, node, retry=True)
             return
 
+        self._record_search_result(state, node, succeeded=True, failure=None)
+        self._maybe_expand_search_frontier(state, node)
         self._append_event(
             state,
             event="node_succeeded",
@@ -4667,6 +4690,396 @@ PY
         self._rotate_log_if_needed(log_path)
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(f"{_now_iso()} {line}\n")
+
+    def _select_pending_node_for_search(self, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        rows: List[Tuple[float, int, str, Dict[str, Any]]] = []
+        for node in state.get("tot_tree", []):
+            status = str(node.get("status") or "").upper()
+            if status not in {"PENDING", "RETRY_PENDING", "RUNNING"}:
+                continue
+            self._ensure_search_node_state(state, node)
+            depth = self._node_depth(state, node)
+            score = self._frontier_score(state, node, depth=depth)
+            rows.append((score, depth, str(node.get("node_id") or ""), node))
+
+        if not rows:
+            return None
+
+        rows.sort(key=lambda row: (-row[0], row[1], row[2]))
+        score, depth, node_id, selected = rows[0]
+        search = self._ensure_search_node_state(state, selected)
+        search["frontierScore"] = round(score, 4)
+        search["depth"] = depth
+        search["selectedCount"] = int(search.get("selectedCount") or 0) + 1
+        search["selectedAt"] = _now_iso()
+        self._append_event(
+            state,
+            event="search_node_selected",
+            message=f"Selected frontier node {node_id}",
+            payload={"node_id": node_id, "score": round(score, 4), "depth": depth},
+        )
+        return selected
+
+    def _ensure_search_node_state(self, state: Dict[str, Any], node: Dict[str, Any]) -> Dict[str, Any]:
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+            node["evidence"] = evidence
+        search = evidence.get("search")
+        if not isinstance(search, dict):
+            search = {}
+            evidence["search"] = search
+        search.setdefault("visits", 0)
+        search.setdefault("value", 0.0)
+        search.setdefault("expanded", False)
+        search.setdefault("selectedCount", 0)
+        search.setdefault("frontierScore", 0.0)
+        search.setdefault("depth", self._node_depth(state, node))
+        return search
+
+    def _node_depth(self, state: Dict[str, Any], node: Dict[str, Any]) -> int:
+        by_id = {str(item.get("node_id") or ""): item for item in state.get("tot_tree", [])}
+        depth = 0
+        cursor = node
+        seen: set[str] = set()
+        while True:
+            parent_id = str(cursor.get("parent_id") or "")
+            if not parent_id:
+                break
+            if parent_id in seen:
+                break
+            seen.add(parent_id)
+            parent = by_id.get(parent_id)
+            if not isinstance(parent, dict):
+                break
+            depth += 1
+            cursor = parent
+        return depth
+
+    def _frontier_score(self, state: Dict[str, Any], node: Dict[str, Any], *, depth: Optional[int] = None) -> float:
+        search = self._ensure_search_node_state(state, node)
+        visits = float(search.get("visits") or 0.0)
+        value = float(search.get("value") or 0.0)
+        depth_v = depth if depth is not None else self._node_depth(state, node)
+        metric_signal = self._metric_signal(node)
+        risk = str(node.get("risk") or "medium").lower()
+        risk_penalty = 0.2 if risk == "high" else 0.1 if risk == "medium" else 0.03
+
+        parent_visits = 1.0
+        parent_id = str(node.get("parent_id") or "")
+        if parent_id:
+            parent = self._find_node(state, parent_id)
+            if isinstance(parent, dict):
+                parent_search = self._ensure_search_node_state(state, parent)
+                parent_visits = float(parent_search.get("visits") or 1.0)
+        exploration = math.sqrt(max(0.0, math.log(parent_visits + 2.0) / (visits + 1.0)))
+        depth_penalty = min(0.2, max(0.0, (depth_v - 1) * 0.05))
+        status = str(node.get("status") or "").upper()
+        status_bonus = 0.03 if status == "RETRY_PENDING" else 0.0
+        score = metric_signal * 0.52 + value * 0.28 + exploration * 0.24 + status_bonus - risk_penalty - depth_penalty
+        return max(0.0, min(1.5, score))
+
+    def _metric_signal(self, node: Dict[str, Any]) -> float:
+        metrics = node.get("expected_metrics")
+        if not isinstance(metrics, dict):
+            return 0.5
+        values = list(metrics.values())
+        if not values:
+            return 0.5
+        blob = " ".join(str(v) for v in values)
+        match = re.search(r"[-+]?\d*\.?\d+", blob)
+        if not match:
+            return 0.5
+        try:
+            number = float(match.group(0))
+        except Exception:
+            return 0.5
+        if number > 1.0:
+            number = number / 100.0
+        return max(0.0, min(1.0, number))
+
+    def _record_search_result(
+        self,
+        state: Dict[str, Any],
+        node: Dict[str, Any],
+        *,
+        succeeded: bool,
+        failure: Optional[Dict[str, Any]],
+    ) -> None:
+        reward = self._search_reward(node=node, succeeded=succeeded, failure=failure)
+        by_id = {str(item.get("node_id") or ""): item for item in state.get("tot_tree", [])}
+        cursor = node
+        discount = 1.0
+        seen: set[str] = set()
+        while isinstance(cursor, dict):
+            node_id = str(cursor.get("node_id") or "")
+            if not node_id or node_id in seen:
+                break
+            seen.add(node_id)
+            search = self._ensure_search_node_state(state, cursor)
+            visits_prev = int(search.get("visits") or 0)
+            value_prev = float(search.get("value") or 0.0)
+            visits_new = visits_prev + 1
+            local_reward = max(0.0, min(1.0, reward * discount))
+            value_new = ((value_prev * visits_prev) + local_reward) / max(1, visits_new)
+            search["visits"] = visits_new
+            search["value"] = round(value_new, 4)
+            search["lastReward"] = round(local_reward, 4)
+            search["lastResult"] = "SUCCEEDED" if succeeded else "FAILED"
+            search["updatedAt"] = _now_iso()
+            parent_id = str(cursor.get("parent_id") or "")
+            if not parent_id:
+                break
+            cursor = by_id.get(parent_id)
+            discount *= 0.9
+
+    def _search_reward(self, node: Dict[str, Any], *, succeeded: bool, failure: Optional[Dict[str, Any]]) -> float:
+        metric_signal = self._metric_signal(node)
+        risk = str(node.get("risk") or "medium").lower()
+        risk_penalty = 0.12 if risk == "high" else 0.07 if risk == "medium" else 0.03
+        if succeeded:
+            reward = 0.55 + metric_signal * 0.35 - risk_penalty
+        else:
+            reward = 0.12 + metric_signal * 0.1 - risk_penalty
+            reason = str((failure or {}).get("reason") or "").lower()
+            if "blocked" in reason:
+                reward *= 0.6
+        return max(0.0, min(1.0, reward))
+
+    def _search_plan(self, state: Dict[str, Any]) -> Dict[str, int]:
+        spec = state.get("research_spec") or {}
+        budget = spec.get("budget") or {}
+        try:
+            gpu_hours = float(budget.get("gpuHours") or 0.0)
+        except Exception:
+            gpu_hours = 0.0
+        try:
+            wallclock = int(budget.get("wallclockMinutes") or 60)
+        except Exception:
+            wallclock = 60
+
+        max_depth = 3
+        if wallclock >= 180 or gpu_hours >= 6:
+            max_depth = 4
+        elif wallclock <= 45 and gpu_hours <= 1:
+            max_depth = 2
+        branch_factor = 2 if gpu_hours < 4 else 3
+        max_nodes = max(18, min(72, 12 + branch_factor * max_depth * 6))
+
+        env_depth = os.getenv("AGENTIC_SEARCH_MAX_DEPTH")
+        env_branch = os.getenv("AGENTIC_SEARCH_BRANCH_FACTOR")
+        env_nodes = os.getenv("AGENTIC_SEARCH_MAX_NODES")
+        try:
+            if env_depth:
+                max_depth = max(2, min(5, int(env_depth)))
+        except Exception:
+            pass
+        try:
+            if env_branch:
+                branch_factor = max(1, min(4, int(env_branch)))
+        except Exception:
+            pass
+        try:
+            if env_nodes:
+                max_nodes = max(12, min(120, int(env_nodes)))
+        except Exception:
+            pass
+        return {"maxDepth": max_depth, "branchFactor": branch_factor, "maxNodes": max_nodes}
+
+    def _maybe_expand_search_frontier(self, state: Dict[str, Any], node: Dict[str, Any]) -> None:
+        if str(node.get("status") or "").upper() != "SUCCEEDED":
+            return
+        agent = str(node.get("agent") or "")
+        title = str(node.get("title") or "")
+        if agent not in {"ResearchAgent", "IntegrationAgent", "EvalAgent"}:
+            return
+        if title.lower().startswith("repair branch"):
+            return
+
+        search = self._ensure_search_node_state(state, node)
+        if bool(search.get("expanded")):
+            return
+
+        plan = self._search_plan(state)
+        depth = self._node_depth(state, node)
+        if depth >= int(plan.get("maxDepth") or 3):
+            search["expanded"] = True
+            search["expandedReason"] = "depth_cap"
+            return
+
+        if len(state.get("tot_tree") or []) >= int(plan.get("maxNodes") or 32):
+            search["expanded"] = True
+            search["expandedReason"] = "node_cap"
+            return
+
+        candidates = self._search_expansion_candidates(state, node, branch_factor=int(plan.get("branchFactor") or 2))
+        if not candidates:
+            search["expanded"] = True
+            search["expandedReason"] = "no_candidates"
+            return
+
+        created_ids: List[str] = []
+        for idx, candidate in enumerate(candidates, start=1):
+            if len(state.get("tot_tree") or []) >= int(plan.get("maxNodes") or 32):
+                break
+            new_id = self._next_node_id(state)
+            child = {
+                "node_id": new_id,
+                "parent_id": node.get("node_id"),
+                "agent": candidate.get("agent") or agent,
+                "title": candidate.get("title") or f"{title} / Branch {idx}",
+                "hypothesis": candidate.get("hypothesis") or "Branch exploration",
+                "execution_plan": candidate.get("execution_plan") or "Execute branch hypothesis and collect evidence.",
+                "expected_metrics": candidate.get("expected_metrics") or node.get("expected_metrics") or {},
+                "budget": candidate.get("budget") or self._child_budget_from_parent(node=node, branch_index=idx),
+                "risk": candidate.get("risk") or "medium",
+                "status": "PENDING",
+                "rationale": f"Search expansion from {node.get('node_id')}",
+                "evidence": {
+                    "search": {
+                        "visits": 0,
+                        "value": 0.0,
+                        "expanded": False,
+                        "depth": depth + 1,
+                        "frontierScore": 0.0,
+                        "generatedFrom": str(node.get("node_id") or ""),
+                    },
+                    "expansion": {
+                        "strategy": candidate.get("strategy") or "rule_driven_branch",
+                        "createdAt": _now_iso(),
+                    },
+                },
+                "sub_agents": [],
+                "next_suggestions": ["Execute this branch", "Compare with sibling branches"],
+                "children": [],
+            }
+            state.setdefault("tot_tree", []).append(child)
+            node.setdefault("children", []).append(new_id)
+            created_ids.append(new_id)
+
+        search["expanded"] = True
+        search["expandedAt"] = _now_iso()
+        if created_ids:
+            self._append_event(
+                state,
+                event="tot_node_expanded",
+                message=f"Expanded {node.get('node_id')} with {len(created_ids)} child nodes",
+                payload={
+                    "node_id": node.get("node_id"),
+                    "created_node_ids": created_ids,
+                    "depth": depth + 1,
+                    "branch_factor": int(plan.get("branchFactor") or 2),
+                },
+            )
+            self._append_timeline(state, node, "search_expanded", cost=0.08)
+            self._append_log(state, f"[{node.get('node_id')}] Search expanded with children={created_ids}")
+
+    def _search_expansion_candidates(self, state: Dict[str, Any], node: Dict[str, Any], *, branch_factor: int) -> List[Dict[str, Any]]:
+        agent = str(node.get("agent") or "")
+        node_id = str(node.get("node_id") or "")
+        base_metric = node.get("expected_metrics") if isinstance(node.get("expected_metrics"), dict) else {}
+        specs: List[Dict[str, Any]]
+        if agent == "ResearchAgent":
+            specs = [
+                {
+                    "title": f"{node_id} Exploit Branch",
+                    "hypothesis": "Exploit strongest known configuration with conservative updates.",
+                    "execution_plan": "Run controlled exploitation branch and compare uplift against parent baseline.",
+                    "risk": "low",
+                    "strategy": "exploit",
+                },
+                {
+                    "title": f"{node_id} Explore Branch",
+                    "hypothesis": "Explore higher-variance hypothesis for potentially larger reward.",
+                    "execution_plan": "Run exploratory branch with broader search parameters and strict budget guard.",
+                    "risk": "medium",
+                    "strategy": "explore",
+                },
+                {
+                    "title": f"{node_id} Counterfactual Branch",
+                    "hypothesis": "Counterfactual control branch isolates variance drivers in rollout policy.",
+                    "execution_plan": "Run control branch with ablated features and compare metric confidence.",
+                    "risk": "medium",
+                    "strategy": "counterfactual",
+                },
+            ]
+        elif agent == "IntegrationAgent":
+            specs = [
+                {
+                    "title": f"{node_id} Adapter Harden Branch",
+                    "hypothesis": "Adapter hardening can reduce runtime incompatibilities.",
+                    "execution_plan": "Apply compatibility hardening and replay integration checks.",
+                    "risk": "medium",
+                    "strategy": "adapter_harden",
+                },
+                {
+                    "title": f"{node_id} Fallback Branch",
+                    "hypothesis": "Fallback adapter path improves robustness under dependency gaps.",
+                    "execution_plan": "Execute fallback strategy and validate artifact contract continuity.",
+                    "risk": "low",
+                    "strategy": "fallback_path",
+                },
+                {
+                    "title": f"{node_id} Minimal Patch Branch",
+                    "hypothesis": "Minimal patch strategy minimizes integration churn while preserving metric gains.",
+                    "execution_plan": "Patch minimal surfaces and run smoke checks with audit trace.",
+                    "risk": "medium",
+                    "strategy": "minimal_patch",
+                },
+            ]
+        else:
+            specs = [
+                {
+                    "title": f"{node_id} Stress Slice Branch",
+                    "hypothesis": "Stress scenario slice improves confidence estimation of league outcomes.",
+                    "execution_plan": "Run stress slice and compare confidence interval shift in matrix cells.",
+                    "risk": "low",
+                    "strategy": "stress_slice",
+                },
+                {
+                    "title": f"{node_id} Confidence Branch",
+                    "hypothesis": "Confidence calibration branch reduces decision uncertainty for ranking.",
+                    "execution_plan": "Run calibration protocol and update confidence estimator.",
+                    "risk": "low",
+                    "strategy": "confidence_calibration",
+                },
+                {
+                    "title": f"{node_id} Adversarial Branch",
+                    "hypothesis": "Adversarial opponent subset uncovers hidden weaknesses before final league ranking.",
+                    "execution_plan": "Evaluate against adversarial pool and collect replay evidence for weak spots.",
+                    "risk": "medium",
+                    "strategy": "adversarial_slice",
+                },
+            ]
+        capped = max(1, min(len(specs), branch_factor))
+        rows = []
+        for idx, item in enumerate(specs[:capped], start=1):
+            expected = dict(base_metric) if base_metric else {"winRate": ">=0.55"}
+            budget = self._child_budget_from_parent(node=node, branch_index=idx)
+            rows.append(
+                {
+                    **item,
+                    "agent": agent,
+                    "expected_metrics": expected,
+                    "budget": budget,
+                }
+            )
+        return rows
+
+    def _child_budget_from_parent(self, node: Dict[str, Any], branch_index: int) -> Dict[str, Any]:
+        parent_budget = node.get("budget") if isinstance(node.get("budget"), dict) else {}
+        try:
+            parent_gpu = float(parent_budget.get("gpuHours") or 0.2)
+        except Exception:
+            parent_gpu = 0.2
+        try:
+            parent_wallclock = int(parent_budget.get("wallclockMinutes") or 20)
+        except Exception:
+            parent_wallclock = 20
+        ratio = 0.45 if branch_index == 1 else 0.35 if branch_index == 2 else 0.3
+        gpu = max(0.05, round(parent_gpu * ratio, 3))
+        wallclock = max(5, int(parent_wallclock * ratio))
+        return {"gpuHours": gpu, "wallclockMinutes": wallclock}
 
     def _rotate_log_if_needed(self, log_path: Path) -> None:
         max_bytes = int(os.getenv("AGENTIC_LOG_MAX_BYTES", str(2 * 1024 * 1024)))
