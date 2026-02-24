@@ -1,5 +1,7 @@
 import os
 import mimetypes
+import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +12,35 @@ from app.api.routes import router
 from app.core.config import settings
 from app.services.job_manager import job_manager
 
-app = FastAPI(title=settings.app_name)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Validate DB schema and bootstrap job manager on startup.
+    from app.db.session import engine
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    print(f"[Startup] Database tables: {tables}")
+    if "jobs" not in tables:
+        print(f"[Startup] ERROR: 'jobs' table not found! Database URL: {os.getenv('DATABASE_URL', 'not set')}")
+        from app.db.base import Base
+        from app.db import models  # noqa: F401  # ensure models are imported for metadata
+
+        print(f"[Startup] Attempting to create missing tables...")
+        Base.metadata.create_all(bind=engine)
+        tables = inspect(engine).get_table_names()
+        print(f"[Startup] Tables after recreation: {tables}")
+        if "jobs" not in tables:
+            raise RuntimeError("Failed to create 'jobs' table. Database may be corrupted.")
+    job_manager.start()
+    try:
+        yield
+    finally:
+        job_manager.stop()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 @app.middleware("http")
 async def csp_middleware(request: Request, call_next):
@@ -53,6 +83,54 @@ app.include_router(router, prefix="/api/v1")
 @app.get("/healthz")
 def healthz():
     return {"status": "ok", "service": settings.app_name}
+
+
+@app.get("/readyz")
+def readyz():
+    run_root = Path(settings.local_run_root).expanduser()
+    if not run_root.is_absolute():
+        run_root = (Path.cwd() / run_root).resolve()
+    agentic_root = run_root.parent / "agentic_os"
+    runs_root = agentic_root / "runs"
+    registry_path = agentic_root / "runs.jsonl"
+    ready = runs_root.exists() and registry_path.exists()
+    return {
+        "status": "ready" if ready else "not_ready",
+        "service": settings.app_name,
+        "agenticRunsRoot": str(runs_root),
+        "agenticRegistry": str(registry_path),
+    }
+
+
+@app.get("/metrics/basic")
+def metrics_basic():
+    run_root = Path(settings.local_run_root).expanduser()
+    if not run_root.is_absolute():
+        run_root = (Path.cwd() / run_root).resolve()
+    registry_path = run_root.parent / "agentic_os" / "runs.jsonl"
+    total = 0
+    by_status: dict[str, int] = {}
+    audit_invalid = 0
+    if registry_path.exists():
+        for line in registry_path.read_text(encoding="utf-8").splitlines():
+            row = line.strip()
+            if not row:
+                continue
+            try:
+                payload = json.loads(row)
+            except json.JSONDecodeError:
+                continue
+            total += 1
+            status = str(payload.get("status") or "UNKNOWN")
+            by_status[status] = by_status.get(status, 0) + 1
+            if payload.get("audit_verified") is False:
+                audit_invalid += 1
+    return {
+        "service": settings.app_name,
+        "agenticRunsTotal": total,
+        "agenticRunsByStatus": by_status,
+        "agenticAuditInvalidRuns": audit_invalid,
+    }
 
 # Ensure correct MIME types for JS/CSS on minimal Linux images
 mimetypes.add_type("application/javascript", ".js")
@@ -112,30 +190,3 @@ else:
     LOCAL_ARTIFACTS.mkdir(parents=True, exist_ok=True)
     print(f"[System] Initialized Local Artifacts at: {LOCAL_ARTIFACTS}")
     app.mount("/artifacts", StaticFiles(directory=LOCAL_ARTIFACTS), name="artifacts")
-
-
-@app.on_event("startup")
-def start_job_manager() -> None:
-    # 在启动时验证数据库连接
-    from app.db.session import engine
-    from sqlalchemy import inspect
-    inspector = inspect(engine)
-    tables = inspector.get_table_names()
-    print(f"[Startup] Database tables: {tables}")
-    if "jobs" not in tables:
-        print(f"[Startup] ERROR: 'jobs' table not found! Database URL: {os.getenv('DATABASE_URL', 'not set')}")
-        # 尝试重新创建表
-        from app.db.base import Base
-        from app.db import models
-        print(f"[Startup] Attempting to create missing tables...")
-        Base.metadata.create_all(bind=engine)
-        tables = inspector.get_table_names()
-        print(f"[Startup] Tables after recreation: {tables}")
-        if "jobs" not in tables:
-            raise RuntimeError("Failed to create 'jobs' table. Database may be corrupted.")
-    job_manager.start()
-
-
-@app.on_event("shutdown")
-def stop_job_manager() -> None:
-    job_manager.stop()

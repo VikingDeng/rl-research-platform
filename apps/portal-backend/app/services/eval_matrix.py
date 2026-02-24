@@ -103,11 +103,35 @@ class EvalMatrixService:
                 matrix_result.ranking = payload.get("ranking", [])
                 matrix_result.meta = payload.get("meta", {})
                 matrix_result.summary = {"generated": True}
+
+                replay_artifact = (
+                    db.query(models.Artifact)
+                    .filter(
+                        models.Artifact.run_id == run.id,
+                        models.Artifact.path.ilike("/matrix/%.replay.json"),
+                    )
+                    .order_by(models.Artifact.created_at.desc())
+                    .first()
+                )
+                replay_payload = None
+                if replay_artifact:
+                    try:
+                        replay_bytes = s3_client.get_object_bytes(replay_artifact.object_key)
+                        if replay_bytes:
+                            parsed = json.loads(replay_bytes.decode("utf-8"))
+                            if isinstance(parsed, dict):
+                                replay_payload = parsed
+                    except Exception:
+                        replay_payload = None
+                if replay_payload:
+                    matrix_result.summary["replay"] = replay_payload
                 
                 # Update URLs
                 matrix_result.artifacts = {
                     "jsonUri": f"s3://runs/{run.id}/matrix/matrix.json",
                 }
+                if replay_artifact:
+                    matrix_result.artifacts["replayUri"] = f"s3://runs/{run.id}/{replay_artifact.path.lstrip('/')}"
                 
                 # Check for CSV
                 csv_artifact = (

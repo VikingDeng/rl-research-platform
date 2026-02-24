@@ -4,6 +4,7 @@ import { Algo, AlgoVersion, Project, Template, TemplateDetail, TemplateVersion }
 import { Archive, Code, Terminal, FileJson, PlayCircle, BookOpen, Plus, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
+import { useI18n } from '../services/i18n';
 
 const isSystemTemplate = (tmpl: Template) => tmpl.name === 'Quick Run';
 
@@ -11,6 +12,7 @@ export const TemplateLibrary: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast } = useToast();
+  const { tx, locale } = useI18n();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -128,14 +130,14 @@ export const TemplateLibrary: React.FC = () => {
   const handleCreateTemplate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProjectId) {
-      showToast('Select a project first.', 'error');
+      showToast(tx('请先选择项目。', 'Select a project first.'), 'error');
       return;
     }
     let parsedConfig: Record<string, unknown> | undefined = undefined;
     try {
       parsedConfig = newDefaultConfig.trim() ? JSON.parse(newDefaultConfig) : {};
     } catch (err) {
-      showToast('Default config is not valid JSON.', 'error');
+      showToast(tx('默认配置不是合法 JSON。', 'Default config is not valid JSON.'), 'error');
       return;
     }
     api
@@ -155,7 +157,7 @@ export const TemplateLibrary: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to create template: ${detail}`, 'error');
+        showToast(tx(`创建模板失败：${detail}`, `Failed to create template: ${detail}`), 'error');
       });
   };
 
@@ -163,26 +165,26 @@ export const TemplateLibrary: React.FC = () => {
     e.preventDefault();
     if (!selectedTemplate) return;
     if (selectedTemplate.archived) {
-      showToast('Archived templates cannot accept new versions.', 'error');
+      showToast(tx('归档模板不可新增版本。', 'Archived templates cannot accept new versions.'), 'error');
       return;
     }
     if (!newVersion.trim()) {
-      showToast('Version is required.', 'error');
+      showToast(tx('版本号不能为空。', 'Version is required.'), 'error');
       return;
     }
     if (algoVersionOptions.length === 0) {
-      showToast('Register an algorithm version before creating a template version.', 'error');
+      showToast(tx('请先注册算法版本，再创建模板版本。', 'Register an algorithm version before creating a template version.'), 'error');
       return;
     }
     if (!selectedAlgoVersionId) {
-      showToast('Select an algorithm version to link.', 'error');
+      showToast(tx('请选择要关联的算法版本。', 'Select an algorithm version to link.'), 'error');
       return;
     }
     let parsedConfig: Record<string, unknown> | undefined = undefined;
     try {
       parsedConfig = newVersionConfig.trim() ? JSON.parse(newVersionConfig) : undefined;
     } catch (err) {
-      showToast('Version config is not valid JSON.', 'error');
+      showToast(tx('版本配置不是合法 JSON。', 'Version config is not valid JSON.'), 'error');
       return;
     }
     api.createTemplateVersion(selectedTemplate.id, {
@@ -200,7 +202,7 @@ export const TemplateLibrary: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to create version: ${detail}`, 'error');
+        showToast(tx(`创建版本失败：${detail}`, `Failed to create version: ${detail}`), 'error');
       });
   };
 
@@ -219,7 +221,7 @@ export const TemplateLibrary: React.FC = () => {
     try {
       parsedConfig = editDefaultConfig.trim() ? JSON.parse(editDefaultConfig) : {};
     } catch (err) {
-      showToast('Default config is not valid JSON.', 'error');
+      showToast(tx('默认配置不是合法 JSON。', 'Default config is not valid JSON.'), 'error');
       return;
     }
     api
@@ -237,7 +239,7 @@ export const TemplateLibrary: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to update template: ${detail}`, 'error');
+        showToast(tx(`更新模板失败：${detail}`, `Failed to update template: ${detail}`), 'error');
       });
   };
 
@@ -249,7 +251,13 @@ export const TemplateLibrary: React.FC = () => {
       .then(() => (selectedTemplate ? api.getTemplateById(selectedTemplate.id).then(setSelectedTemplateDetail) : undefined))
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to ${archived ? 'restore' : 'archive'} template: ${detail}`, 'error');
+        showToast(
+          tx(
+            `${archived ? '恢复' : '归档'}模板失败：${detail}`,
+            `Failed to ${archived ? 'restore' : 'archive'} template: ${detail}`,
+          ),
+          'error',
+        );
       });
   };
 
@@ -261,7 +269,7 @@ export const TemplateLibrary: React.FC = () => {
       .then(setSelectedTemplateDetail)
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to freeze version: ${detail}`, 'error');
+        showToast(tx(`冻结版本失败：${detail}`, `Failed to freeze version: ${detail}`), 'error');
       });
   };
 
@@ -288,18 +296,18 @@ export const TemplateLibrary: React.FC = () => {
     <div className="space-y-6 h-[calc(100vh-4rem)] flex flex-col">
        <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Template Library</h1>
-          <p className="text-gray-500 mt-1">Experiment recipes that bind algorithm versions to training configs.</p>
+          <h1 className="text-2xl font-bold text-gray-900">{tx('模板库', 'Template Library')}</h1>
+          <p className="text-gray-500 mt-1">{tx('将算法版本与训练配置绑定为可复用实验配方。', 'Experiment recipes that bind algorithm versions to training configs.')}</p>
         </div>
         <div className="flex items-center gap-3">
           <label className="text-sm text-gray-600 flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase text-gray-400">Project</span>
+            <span className="text-xs font-semibold uppercase text-gray-400">{tx('项目', 'Project')}</span>
             <select
               className="border border-gray-300 rounded-lg px-2 py-1 text-sm"
               value={selectedProjectId}
               onChange={e => setSelectedProjectId(e.target.value)}
             >
-              <option value="">-- Select --</option>
+              <option value="">{tx('-- 选择 --', '-- Select --')}</option>
               {projects.map(project => (
                 <option key={project.id} value={project.id}>
                   {project.name}
@@ -314,14 +322,14 @@ export const TemplateLibrary: React.FC = () => {
               onChange={e => setIncludeArchived(e.target.checked)}
               className="rounded border-gray-300"
             />
-            Show archived
+            {tx('显示归档', 'Show archived')}
           </label>
           <button
             onClick={() => setIsCreateOpen(true)}
             disabled={!selectedProjectId}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center hover:bg-blue-700 disabled:opacity-50"
           >
-            <Plus className="w-4 h-4 mr-2" /> New Template
+            <Plus className="w-4 h-4 mr-2" /> {tx('新建模板', 'New Template')}
           </button>
         </div>
       </div>
@@ -344,7 +352,7 @@ export const TemplateLibrary: React.FC = () => {
                           <div className="flex gap-2 items-center">
                             {tmpl.archived && (
                               <span className="px-2 py-1 rounded text-xs font-bold bg-gray-100 text-gray-600 border border-gray-200">
-                                Archived
+                                {tx('已归档', 'Archived')}
                               </span>
                             )}
                             <span className={`px-2 py-1 rounded text-xs font-bold ${tmpl.type === 'Multi-Agent' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
@@ -360,7 +368,7 @@ export const TemplateLibrary: React.FC = () => {
               ))}
               {visibleTemplates.length === 0 && (
                 <div className="p-5 rounded-xl border border-dashed border-gray-200 text-sm text-gray-500">
-                  No templates yet. Create one to start from a reusable configuration.
+                  {tx('暂无模板。创建一个模板即可从可复用配置开始。', 'No templates yet. Create one to start from a reusable configuration.')}
                 </div>
               )}
           </div>
@@ -375,11 +383,11 @@ export const TemplateLibrary: React.FC = () => {
                                 <h2 className="text-xl font-bold text-gray-900">{selectedTemplate.name}</h2>
                                 {selectedTemplate.archived && (
                                   <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-mono border border-gray-200">
-                                    archived
+                                    {tx('已归档', 'archived')}
                                   </span>
                                 )}
                                 <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-mono border border-gray-200">
-                                  {latestVersion ? `v${latestVersion.version}` : 'no version'}
+                                  {latestVersion ? `v${latestVersion.version}` : tx('无版本', 'no version')}
                                 </span>
                             </div>
                             <p className="text-gray-600">{selectedTemplate.description}</p>
@@ -395,27 +403,27 @@ export const TemplateLibrary: React.FC = () => {
                               disabled={selectedTemplate.archived}
                               className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center font-medium shadow-sm transition-colors"
                           >
-                              <Plus className="w-4 h-4 mr-2" /> New Version
+                              <Plus className="w-4 h-4 mr-2" /> {tx('新建版本', 'New Version')}
                           </button>
                           <button 
                               onClick={handleUseTemplate}
                               disabled={selectedTemplate.archived}
                               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center font-medium shadow-sm transition-colors"
                           >
-                              <PlayCircle className="w-4 h-4 mr-2" /> Use Template
+                              <PlayCircle className="w-4 h-4 mr-2" /> {tx('使用模板', 'Use Template')}
                           </button>
                           <button
                             onClick={openEditModal}
                             className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center font-medium shadow-sm transition-colors"
                           >
-                            Edit
+                            {tx('编辑', 'Edit')}
                           </button>
                           <button
                             onClick={() => handleArchiveTemplate(selectedTemplate, !!selectedTemplate.archived)}
                             className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center font-medium shadow-sm transition-colors"
                           >
                             <Archive className="w-4 h-4 mr-2" />
-                            {selectedTemplate.archived ? 'Restore' : 'Archive'}
+                            {selectedTemplate.archived ? tx('恢复', 'Restore') : tx('归档', 'Archive')}
                           </button>
                         </div>
                     </div>
@@ -423,17 +431,17 @@ export const TemplateLibrary: React.FC = () => {
                     <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
                         <div className="mb-6">
                             <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center">
-                                <Code className="w-4 h-4 mr-2" /> Versions
+                                <Code className="w-4 h-4 mr-2" /> {tx('版本', 'Versions')}
                             </h3>
                             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                                 <table className="w-full text-left text-sm">
                                     <thead className="bg-gray-50 text-xs text-gray-500 uppercase font-semibold">
                                         <tr>
-                                            <th className="px-4 py-2">Version</th>
-                                            <th className="px-4 py-2">Algo Version</th>
-                                            <th className="px-4 py-2">Created</th>
-                                            <th className="px-4 py-2">Status</th>
-                                            <th className="px-4 py-2 text-right">Actions</th>
+                                            <th className="px-4 py-2">{tx('版本', 'Version')}</th>
+                                            <th className="px-4 py-2">{tx('算法版本', 'Algo Version')}</th>
+                                            <th className="px-4 py-2">{tx('创建时间', 'Created')}</th>
+                                            <th className="px-4 py-2">{tx('状态', 'Status')}</th>
+                                            <th className="px-4 py-2 text-right">{tx('操作', 'Actions')}</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
@@ -446,13 +454,13 @@ export const TemplateLibrary: React.FC = () => {
                                                       : '-'}
                                                 </td>
                                                 <td className="px-4 py-2 text-gray-500">
-                                                    {ver.createdAt ? new Date(ver.createdAt).toLocaleString() : '-'}
+                                                    {ver.createdAt ? new Date(ver.createdAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : '-'}
                                                 </td>
                                                 <td className="px-4 py-2 text-xs text-gray-600">
                                                   <span className={`px-2 py-0.5 rounded-full border ${
                                                     ver.frozen ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-100 text-gray-600 border-gray-200'
                                                   }`}>
-                                                    {ver.frozen ? 'Frozen' : 'Mutable'}
+                                                    {ver.frozen ? tx('已冻结', 'Frozen') : tx('可变更', 'Mutable')}
                                                   </span>
                                                 </td>
                                                 <td className="px-4 py-2 text-right">
@@ -461,14 +469,14 @@ export const TemplateLibrary: React.FC = () => {
                                                     disabled={ver.frozen}
                                                     className="text-xs text-blue-600 hover:text-blue-800 disabled:text-gray-400"
                                                   >
-                                                    Freeze
+                                                    {tx('冻结', 'Freeze')}
                                                   </button>
                                                 </td>
                                             </tr>
                                         ))}
                                         {sortedVersions.length === 0 && (
                                             <tr>
-                                                <td colSpan={5} className="px-4 py-3 text-gray-400">No versions yet.</td>
+                                                <td colSpan={5} className="px-4 py-3 text-gray-400">{tx('暂无版本。', 'No versions yet.')}</td>
                                             </tr>
                                         )}
                                     </tbody>
@@ -477,12 +485,12 @@ export const TemplateLibrary: React.FC = () => {
                         </div>
                         <div className="mb-6">
                             <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center">
-                                <BookOpen className="w-4 h-4 mr-2" /> Algorithm Details
+                                <BookOpen className="w-4 h-4 mr-2" /> {tx('算法详情', 'Algorithm Details')}
                             </h3>
                             {selectedAlgoVersion ? (
                               <div className="text-sm text-gray-600 space-y-2">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs font-semibold text-gray-500 uppercase">Algo</span>
+                                  <span className="text-xs font-semibold text-gray-500 uppercase">{tx('算法', 'Algo')}</span>
                                   <span className="font-mono">{selectedAlgoVersion.algoId}</span>
                                   <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50">
                                     v{selectedAlgoVersion.version}
@@ -490,28 +498,28 @@ export const TemplateLibrary: React.FC = () => {
                                   <span className={`text-xs px-2 py-0.5 rounded-full border ${
                                     selectedAlgoVersion.active ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200'
                                   }`}>
-                                    {selectedAlgoVersion.active ? 'Active' : 'Disabled'}
+                                    {selectedAlgoVersion.active ? tx('激活', 'Active') : tx('禁用', 'Disabled')}
                                   </span>
                                 </div>
                                 <div>
-                                  <span className="text-xs font-semibold text-gray-500 uppercase">Entrypoint</span>
+                                  <span className="text-xs font-semibold text-gray-500 uppercase">{tx('入口点', 'Entrypoint')}</span>
                                   <div className="font-mono text-xs text-gray-700">{selectedAlgoVersion.entrypoint}</div>
                                 </div>
                                 {selectedAlgoVersion.package && (
                                   <div>
-                                    <span className="text-xs font-semibold text-gray-500 uppercase">Package</span>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase">{tx('包', 'Package')}</span>
                                     <div className="text-xs text-gray-700">{selectedAlgoVersion.package}</div>
                                   </div>
                                 )}
                                 {selectedAlgoVersion.artifactUri && (
                                   <div>
-                                    <span className="text-xs font-semibold text-gray-500 uppercase">Artifact</span>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase">{tx('产物', 'Artifact')}</span>
                                     <div className="text-xs text-gray-700 break-all">{selectedAlgoVersion.artifactUri}</div>
                                   </div>
                                 )}
                                 {selectedAlgoVersion.configSchema && (
                                   <div>
-                                    <span className="text-xs font-semibold text-gray-500 uppercase">Config Schema</span>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase">{tx('配置 Schema', 'Config Schema')}</span>
                                     <pre className="mt-1 text-xs bg-gray-900 text-gray-200 p-3 rounded-lg overflow-auto">
 {JSON.stringify(selectedAlgoVersion.configSchema, null, 2)}
                                     </pre>
@@ -519,13 +527,13 @@ export const TemplateLibrary: React.FC = () => {
                                 )}
                               </div>
                             ) : (
-                              <p className="text-sm text-gray-500">No algorithm version linked to the latest template version.</p>
+                              <p className="text-sm text-gray-500">{tx('最新模板版本未关联算法版本。', 'No algorithm version linked to the latest template version.')}</p>
                             )}
                         </div>
 
                         <div>
                             <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center">
-                                <FileJson className="w-4 h-4 mr-2" /> Default Configuration
+                                <FileJson className="w-4 h-4 mr-2" /> {tx('默认配置', 'Default Configuration')}
                             </h3>
                             <div className="bg-gray-900 rounded-lg p-4 font-mono text-sm text-gray-300 shadow-inner border border-gray-800">
                                 <pre className="whitespace-pre-wrap">
@@ -538,7 +546,7 @@ export const TemplateLibrary: React.FC = () => {
               ) : (
                   <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
                       <Terminal className="w-12 h-12 mb-4 opacity-20" />
-                      <p>Select a template to view details</p>
+                      <p>{tx('请选择模板查看详情', 'Select a template to view details')}</p>
                   </div>
               )}
           </div>
@@ -548,14 +556,14 @@ export const TemplateLibrary: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Create Template</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('创建模板', 'Create Template')}</h2>
               <button onClick={() => setIsCreateOpen(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCreateTemplate} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('名称', 'Name')}</label>
                 <input
                   type="text"
                   required
@@ -565,7 +573,7 @@ export const TemplateLibrary: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('描述', 'Description')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-20 resize-none"
                   value={newDescription}
@@ -573,18 +581,18 @@ export const TemplateLibrary: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('类型', 'Type')}</label>
                 <select
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={newType}
                   onChange={e => setNewType(e.target.value as 'Single-Agent' | 'Multi-Agent')}
                 >
-                  <option value="Single-Agent">Single-Agent</option>
-                  <option value="Multi-Agent">Multi-Agent</option>
+                  <option value="Single-Agent">{tx('单智能体', 'Single-Agent')}</option>
+                  <option value="Multi-Agent">{tx('多智能体', 'Multi-Agent')}</option>
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Default Config (JSON)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('默认配置 (JSON)', 'Default Config (JSON)')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-32 font-mono text-xs"
                   value={newDefaultConfig}
@@ -592,8 +600,8 @@ export const TemplateLibrary: React.FC = () => {
                 />
               </div>
               <div className="pt-4 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsCreateOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Create</button>
+                <button type="button" onClick={() => setIsCreateOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('创建', 'Create')}</button>
               </div>
             </form>
           </div>
@@ -604,7 +612,7 @@ export const TemplateLibrary: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Create Template Version</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('创建模板版本', 'Create Template Version')}</h2>
               <button
                 onClick={() => {
                   setIsVersionOpen(false);
@@ -617,22 +625,22 @@ export const TemplateLibrary: React.FC = () => {
             </div>
             <form onSubmit={handleCreateVersion} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('模板', 'Template')}</label>
                 <div className="text-sm text-gray-600">{selectedTemplate.name}</div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Version</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('版本', 'Version')}</label>
                 <input
                   type="text"
                   required
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={newVersion}
                   onChange={e => setNewVersion(e.target.value)}
-                  placeholder="e.g., 1.0.0"
+                  placeholder={tx('例如：1.0.0', 'e.g., 1.0.0')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm Version</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('算法版本', 'Algorithm Version')}</label>
                 <select
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={selectedAlgoVersionId}
@@ -645,11 +653,11 @@ export const TemplateLibrary: React.FC = () => {
                   ))}
                 </select>
                 {algoVersionOptions.length === 0 && (
-                  <p className="text-xs text-red-600 mt-1">No algorithm versions registered yet.</p>
+                  <p className="text-xs text-red-600 mt-1">{tx('尚未注册算法版本。', 'No algorithm versions registered yet.')}</p>
                 )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Override Config (JSON, optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('覆盖配置 (JSON，可选)', 'Override Config (JSON, optional)')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-32 font-mono text-xs"
                   value={newVersionConfig}
@@ -665,9 +673,9 @@ export const TemplateLibrary: React.FC = () => {
                   }}
                   className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium"
                 >
-                  Cancel
+                  {tx('取消', 'Cancel')}
                 </button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Create Version</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('创建版本', 'Create Version')}</button>
               </div>
             </form>
           </div>
@@ -678,14 +686,14 @@ export const TemplateLibrary: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Edit Template</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('编辑模板', 'Edit Template')}</h2>
               <button onClick={() => setIsEditOpen(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleUpdateTemplate} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('名称', 'Name')}</label>
                 <input
                   type="text"
                   required
@@ -695,7 +703,7 @@ export const TemplateLibrary: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('描述', 'Description')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-20 resize-none"
                   value={editDescription}
@@ -703,7 +711,7 @@ export const TemplateLibrary: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Default Config (JSON)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('默认配置 (JSON)', 'Default Config (JSON)')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-32 font-mono text-xs"
                   value={editDefaultConfig}
@@ -711,8 +719,8 @@ export const TemplateLibrary: React.FC = () => {
                 />
               </div>
               <div className="pt-4 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsEditOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Save</button>
+                <button type="button" onClick={() => setIsEditOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('保存', 'Save')}</button>
               </div>
             </form>
           </div>

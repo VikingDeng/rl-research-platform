@@ -3,6 +3,7 @@ import { api } from '../services/api';
 import { Algo, AlgoVersion } from '../types';
 import { Archive, Plus, Search, X, Cpu, Info, CheckSquare, Square } from 'lucide-react';
 import { useToast } from '../components/Toast';
+import { useI18n } from '../services/i18n';
 
 type AlgoManifest = {
   name: string;
@@ -106,6 +107,7 @@ const buildManifestFromVersion = (version: AlgoVersion) => {
 
 export const AlgorithmRegistry: React.FC = () => {
   const { showToast } = useToast();
+  const { tx } = useI18n();
   const [algos, setAlgos] = useState<Algo[]>([]);
   const [algoVersions, setAlgoVersions] = useState<Record<string, AlgoVersion[]>>({});
   const [search, setSearch] = useState('');
@@ -195,17 +197,20 @@ export const AlgorithmRegistry: React.FC = () => {
   const handleBulkArchive = (archive: boolean) => {
     const ids = Array.from(selectedAlgoIds);
     if (ids.length === 0) return;
-    if (!window.confirm(`${archive ? 'Archive' : 'Restore'} ${ids.length} algorithms?`)) return;
+    if (!window.confirm(tx(`${archive ? '归档' : '恢复'} ${ids.length} 个算法？`, `${archive ? 'Archive' : 'Restore'} ${ids.length} algorithms?`))) return;
 
     Promise.all(
       ids.map(id => archive ? api.archiveAlgo(id) : api.updateAlgo(id, { archived: false }))
     ).then(() => {
-        showToast(`Successfully ${archive ? 'archived' : 'restored'} algorithms.`, 'success');
+        showToast(
+          tx(`算法已${archive ? '归档' : '恢复'}。`, `Successfully ${archive ? 'archived' : 'restored'} algorithms.`),
+          'success',
+        );
         setSelectedAlgoIds(new Set());
         return api.getAlgos({ includeArchived });
     }).then(setAlgos)
     .catch(err => {
-        showToast(`Bulk action failed: ${err}`, 'error');
+        showToast(tx(`批量操作失败：${err}`, `Bulk action failed: ${err}`), 'error');
     });
   };
 
@@ -214,7 +219,7 @@ export const AlgorithmRegistry: React.FC = () => {
     try {
       return JSON.parse(value);
     } catch (err) {
-      showToast(`${label} JSON is invalid.`, 'error');
+      showToast(tx(`${label} JSON 无效。`, `${label} JSON is invalid.`), 'error');
       return null;
     }
   };
@@ -286,14 +291,14 @@ export const AlgorithmRegistry: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to update algorithm: ${detail}`, 'error');
+        showToast(tx(`更新算法失败：${detail}`, `Failed to update algorithm: ${detail}`), 'error');
       });
   };
 
   const handleCreateAlgo = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAlgoId.trim() || !newAlgoName.trim()) {
-      showToast('Algorithm ID and name are required.', 'error');
+      showToast(tx('算法 ID 与名称必填。', 'Algorithm ID and name are required.'), 'error');
       return;
     }
     api
@@ -312,7 +317,7 @@ export const AlgorithmRegistry: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to register algorithm: ${detail}`, 'error');
+        showToast(tx(`注册算法失败：${detail}`, `Failed to register algorithm: ${detail}`), 'error');
       });
   };
 
@@ -320,15 +325,18 @@ export const AlgorithmRegistry: React.FC = () => {
     e.preventDefault();
     if (!versionTarget) return;
     if (!newManifestParsed.manifest) {
-      showToast(`Manifest invalid: ${newManifestParsed.error || 'required'}`, 'error');
+      showToast(
+        tx(`Manifest 无效：${newManifestParsed.error || '必填'}`, `Manifest invalid: ${newManifestParsed.error || 'required'}`),
+        'error',
+      );
       return;
     }
     if (newSourceType === 'path' && !newSourcePath.trim()) {
-      showToast('Local path is required for Path source.', 'error');
+      showToast(tx('Path 来源必须填写本地路径。', 'Local path is required for Path source.'), 'error');
       return;
     }
     if (newSourceType === 'git' && !newGitRepo.trim()) {
-      showToast('Git repo is required for Git source.', 'error');
+      showToast(tx('Git 来源必须填写仓库地址。', 'Git repo is required for Git source.'), 'error');
       return;
     }
     const configSchema = newManifestParsed.manifest.configSchema;
@@ -376,13 +384,13 @@ export const AlgorithmRegistry: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to create algorithm version: ${detail}`, 'error');
+        showToast(tx(`创建算法版本失败：${detail}`, `Failed to create algorithm version: ${detail}`), 'error');
       });
   };
 
   const openEditModal = (version: AlgoVersion) => {
     if (version.frozen) {
-      showToast('Frozen versions cannot be edited.', 'error');
+      showToast(tx('冻结版本不可编辑。', 'Frozen versions cannot be edited.'), 'error');
       return;
     }
     setEditTarget(version);
@@ -432,19 +440,22 @@ export const AlgorithmRegistry: React.FC = () => {
     e.preventDefault();
     if (!editTarget) return;
     if (editTarget.frozen) {
-      showToast('Frozen versions cannot be edited.', 'error');
+      showToast(tx('冻结版本不可编辑。', 'Frozen versions cannot be edited.'), 'error');
       return;
     }
     if (!editManifestParsed.manifest) {
-      showToast(`Manifest invalid: ${editManifestParsed.error || 'required'}`, 'error');
+      showToast(
+        tx(`Manifest 无效：${editManifestParsed.error || '必填'}`, `Manifest invalid: ${editManifestParsed.error || 'required'}`),
+        'error',
+      );
       return;
     }
     if (editSourceType === 'path' && !editSourcePath.trim()) {
-      showToast('Local path is required for Path source.', 'error');
+      showToast(tx('Path 来源必须填写本地路径。', 'Local path is required for Path source.'), 'error');
       return;
     }
     if (editSourceType === 'git' && !editGitRepo.trim()) {
-      showToast('Git repo is required for Git source.', 'error');
+      showToast(tx('Git 来源必须填写仓库地址。', 'Git repo is required for Git source.'), 'error');
       return;
     }
     const configSchema = editManifestParsed.manifest.configSchema;
@@ -493,13 +504,13 @@ export const AlgorithmRegistry: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to update version: ${detail}`, 'error');
+        showToast(tx(`更新版本失败：${detail}`, `Failed to update version: ${detail}`), 'error');
       });
   };
 
   const toggleVersionActive = (version: AlgoVersion) => {
     if (version.frozen) {
-      showToast('Frozen versions cannot be modified.', 'error');
+      showToast(tx('冻结版本不可修改。', 'Frozen versions cannot be modified.'), 'error');
       return;
     }
     api
@@ -508,7 +519,7 @@ export const AlgorithmRegistry: React.FC = () => {
       .then(setAlgos)
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to update status: ${detail}`, 'error');
+        showToast(tx(`更新状态失败：${detail}`, `Failed to update status: ${detail}`), 'error');
       });
   };
 
@@ -519,7 +530,13 @@ export const AlgorithmRegistry: React.FC = () => {
       .then(setAlgos)
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to ${archived ? 'restore' : 'archive'} algorithm: ${detail}`, 'error');
+        showToast(
+          tx(
+            `${archived ? '恢复' : '归档'}算法失败：${detail}`,
+            `Failed to ${archived ? 'restore' : 'archive'} algorithm: ${detail}`,
+          ),
+          'error',
+        );
       });
   };
 
@@ -530,7 +547,7 @@ export const AlgorithmRegistry: React.FC = () => {
       .then(setAlgos)
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to freeze version: ${detail}`, 'error');
+        showToast(tx(`冻结版本失败：${detail}`, `Failed to freeze version: ${detail}`), 'error');
       });
   };
 
@@ -540,8 +557,8 @@ export const AlgorithmRegistry: React.FC = () => {
     <div className="space-y-6 relative pb-20">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Algorithm Registry</h1>
-          <p className="text-gray-500 mt-1">Manage algorithm implementations, versions, and reproducibility metadata.</p>
+          <h1 className="text-2xl font-bold text-gray-900">{tx('算法仓库', 'Algorithm Registry')}</h1>
+          <p className="text-gray-500 mt-1">{tx('管理算法实现、版本与可复现元数据。', 'Manage algorithm implementations, versions, and reproducibility metadata.')}</p>
         </div>
         <div className="flex items-center gap-3">
           <label className="text-xs text-gray-500 flex items-center gap-2">
@@ -551,13 +568,13 @@ export const AlgorithmRegistry: React.FC = () => {
               onChange={e => setIncludeArchived(e.target.checked)}
               className="rounded border-gray-300"
             />
-            Show archived
+            {tx('显示归档', 'Show archived')}
           </label>
           <button
             onClick={() => setIsAlgoModalOpen(true)}
             className="flex items-center bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium"
           >
-            <Plus className="w-4 h-4 mr-2" /> Register Algorithm
+            <Plus className="w-4 h-4 mr-2" /> {tx('注册算法', 'Register Algorithm')}
           </button>
         </div>
       </div>
@@ -566,7 +583,7 @@ export const AlgorithmRegistry: React.FC = () => {
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
         <input
           type="text"
-          placeholder="Search algorithms..."
+          placeholder={tx('搜索算法...', 'Search algorithms...')}
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -622,16 +639,16 @@ export const AlgorithmRegistry: React.FC = () => {
                 <p className="text-xs text-gray-500 font-mono mb-2">{algo.id}</p>
                 {algo.archived && (
                   <span className="inline-flex items-center text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full mb-2">
-                    Archived
+                    {tx('已归档', 'Archived')}
                   </span>
                 )}
                 {algo.description && <p className="text-sm text-gray-600 line-clamp-2">{algo.description}</p>}
                 <div className="mt-4 space-y-2 text-sm text-gray-600">
                   <div>
-                    <span className="font-medium text-gray-900">{versions.length}</span> Versions
+                    <span className="font-medium text-gray-900">{versions.length}</span> {tx('个版本', 'Versions')}
                   </div>
                   <div className="text-xs text-gray-500 line-clamp-1">
-                    {latest?.entrypoint ? `Entrypoint: ${latest.entrypoint}` : 'No versions yet'}
+                    {latest?.entrypoint ? `${tx('入口点', 'Entrypoint')}: ${latest.entrypoint}` : tx('暂无版本', 'No versions yet')}
                   </div>
                 </div>
               </div>
@@ -642,25 +659,25 @@ export const AlgorithmRegistry: React.FC = () => {
 
       {selectedAlgoIds.size > 0 && (
           <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-6 animate-in slide-in-from-bottom duration-200 z-50">
-              <span className="font-medium text-sm">{selectedAlgoIds.size} selected</span>
+              <span className="font-medium text-sm">{tx(`已选 ${selectedAlgoIds.size} 个`, `${selectedAlgoIds.size} selected`)}</span>
               <div className="h-4 w-px bg-gray-700"></div>
               <button 
                 onClick={() => handleBulkArchive(true)}
                 className="flex items-center text-sm font-bold text-gray-300 hover:text-white"
               >
-                  <Archive className="w-4 h-4 mr-2" /> Archive
+                  <Archive className="w-4 h-4 mr-2" /> {tx('归档', 'Archive')}
               </button>
               <button 
                 onClick={() => handleBulkArchive(false)}
                 className="flex items-center text-sm font-bold text-gray-300 hover:text-white"
               >
-                  <Archive className="w-4 h-4 mr-2 rotate-180" /> Restore
+                  <Archive className="w-4 h-4 mr-2 rotate-180" /> {tx('恢复', 'Restore')}
               </button>
               <button 
                 onClick={() => setSelectedAlgoIds(new Set())}
                 className="text-gray-400 hover:text-gray-200 text-sm"
               >
-                  Clear
+                  {tx('清空', 'Clear')}
               </button>
           </div>
       )}
@@ -669,36 +686,36 @@ export const AlgorithmRegistry: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Register Algorithm</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('注册算法', 'Register Algorithm')}</h2>
               <button onClick={() => setIsAlgoModalOpen(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCreateAlgo} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm ID</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('算法 ID', 'Algorithm ID')}</label>
                 <input
                   type="text"
                   required
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={newAlgoId}
                   onChange={e => setNewAlgoId(e.target.value)}
-                  placeholder="e.g., mappo"
+                  placeholder={tx('例如：mappo', 'e.g., mappo')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('名称', 'Name')}</label>
                 <input
                   type="text"
                   required
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={newAlgoName}
                   onChange={e => setNewAlgoName(e.target.value)}
-                  placeholder="e.g., MAPPO"
+                  placeholder={tx('例如：MAPPO', 'e.g., MAPPO')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('描述', 'Description')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-20 resize-none"
                   value={newAlgoDescription}
@@ -706,8 +723,8 @@ export const AlgorithmRegistry: React.FC = () => {
                 />
               </div>
               <div className="pt-4 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsAlgoModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Register</button>
+                <button type="button" onClick={() => setIsAlgoModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('注册', 'Register')}</button>
               </div>
             </form>
           </div>
@@ -718,7 +735,7 @@ export const AlgorithmRegistry: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-xl animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Add Algorithm Version</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('新增算法版本', 'Add Algorithm Version')}</h2>
               <button onClick={() => { setIsVersionModalOpen(false); setVersionTarget(null); }} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
@@ -727,15 +744,15 @@ export const AlgorithmRegistry: React.FC = () => {
               <div className="bg-blue-50 p-4 rounded-lg flex gap-3 items-start">
                 <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
                 <div className="text-sm text-blue-700">
-                  Versions should point to reproducible artifacts (entrypoint + package or artifact URI).
+                  {tx('版本应指向可复现产物（入口点 + 依赖包或产物 URI）。', 'Versions should point to reproducible artifacts (entrypoint + package or artifact URI).')}
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('算法', 'Algorithm')}</label>
                 <div className="text-sm text-gray-600">{versionTarget.name}</div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm Manifest (required)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('算法 Manifest（必填）', 'Algorithm Manifest (required)')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-44 font-mono text-xs"
                   value={newManifest}
@@ -746,13 +763,13 @@ export const AlgorithmRegistry: React.FC = () => {
                 )}
                 {!newManifestParsed.error && newManifestParsed.manifest && (
                   <p className="text-xs text-green-700 mt-1">
-                    Manifest OK: {newManifestParsed.manifest.name} v{newManifestParsed.manifest.version}
+                    {tx('Manifest 校验通过：', 'Manifest OK:')} {newManifestParsed.manifest.name} v{newManifestParsed.manifest.version}
                   </p>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Version</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('版本', 'Version')}</label>
                   <input
                     type="text"
                     required
@@ -760,23 +777,23 @@ export const AlgorithmRegistry: React.FC = () => {
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={newManifestParsed.manifest?.version ?? newVersion}
                     onChange={e => setNewVersion(e.target.value)}
-                    placeholder="e.g., 1.0.0"
+                    placeholder={tx('例如：1.0.0', 'e.g., 1.0.0')}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Active</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('激活状态', 'Active')}</label>
                   <select
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={newActive ? 'true' : 'false'}
                     onChange={e => setNewActive(e.target.value === 'true')}
                   >
-                    <option value="true">Active</option>
-                    <option value="false">Disabled</option>
+                    <option value="true">{tx('激活', 'Active')}</option>
+                    <option value="false">{tx('禁用', 'Disabled')}</option>
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Entrypoint</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('入口点', 'Entrypoint')}</label>
                 <input
                   type="text"
                   required
@@ -784,40 +801,40 @@ export const AlgorithmRegistry: React.FC = () => {
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={newManifestParsed.manifest?.entrypoint ?? newEntrypoint}
                   onChange={e => setNewEntrypoint(e.target.value)}
-                  placeholder="e.g., myalgo.train:main"
+                  placeholder={tx('例如：myalgo.train:main', 'e.g., myalgo.train:main')}
                 />
-                <p className="text-xs text-gray-500 mt-1">Format: module:function (e.g. algorithms.mappo_train:train)</p>
+                <p className="text-xs text-gray-500 mt-1">{tx('格式：module:function（例如 algorithms.mappo_train:train）', 'Format: module:function (e.g. algorithms.mappo_train:train)')}</p>
                 {newSourceType === 'git' && (
-                  <p className="text-xs text-amber-600 mt-1">For Git sources, module must be importable from the repo/subdir.</p>
+                  <p className="text-xs text-amber-600 mt-1">{tx('Git 来源下，模块必须能从仓库/子目录被导入。', 'For Git sources, module must be importable from the repo/subdir.')}</p>
                 )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('来源', 'Source')}</label>
                 <select
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={newSourceType}
                   onChange={e => setNewSourceType(e.target.value as 'code' | 'path' | 'git' | 'package')}
                 >
-                  <option value="code">Inline code</option>
-                  <option value="path">Server file path</option>
-                  <option value="git">Git repository</option>
-                  <option value="package">Package/Artifact only</option>
+                  <option value="code">{tx('内联代码', 'Inline code')}</option>
+                  <option value="path">{tx('服务器文件路径', 'Server file path')}</option>
+                  <option value="git">{tx('Git 仓库', 'Git repository')}</option>
+                  <option value="package">{tx('仅依赖包/产物', 'Package/Artifact only')}</option>
                 </select>
               </div>
               {newSourceType === 'code' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Inline Code</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('内联代码', 'Inline Code')}</label>
                   <textarea
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-40 font-mono text-xs"
                     value={newCode}
                     onChange={e => setNewCode(e.target.value)}
-                    placeholder="Paste your Python code here. The entrypoint should match the module:function in this file."
+                    placeholder={tx('在此粘贴 Python 代码，入口点需与本文件中的 module:function 一致。', 'Paste your Python code here. The entrypoint should match the module:function in this file.')}
                   />
                 </div>
               )}
               {newSourceType === 'path' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Server File Path</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('服务器文件路径', 'Server File Path')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -825,96 +842,96 @@ export const AlgorithmRegistry: React.FC = () => {
                     onChange={e => setNewSourcePath(e.target.value)}
                     placeholder="/home/dwj/algos/mappo_train.py"
                   />
-                  <p className="text-xs text-gray-500 mt-1">The backend will copy this file into the algorithm store.</p>
+                  <p className="text-xs text-gray-500 mt-1">{tx('后端会将此文件复制到算法存储。', 'The backend will copy this file into the algorithm store.')}</p>
                 </div>
               )}
               {newSourceType === 'git' && (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Repo URL</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('仓库 URL', 'Repo URL')}</label>
                     <input
                       type="text"
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                       value={newGitRepo}
                       onChange={e => setNewGitRepo(e.target.value)}
-                      placeholder="https://github.com/org/repo.git"
+                      placeholder={tx('https://github.com/org/repo.git', 'https://github.com/org/repo.git')}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Branch (optional)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('分支（可选）', 'Branch (optional)')}</label>
                       <input
                         type="text"
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={newGitBranch}
                         onChange={e => setNewGitBranch(e.target.value)}
-                        placeholder="main"
+                        placeholder={tx('main', 'main')}
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Commit (optional)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('Commit（可选）', 'Commit (optional)')}</label>
                       <input
                         type="text"
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={newGitCommit}
                         onChange={e => setNewGitCommit(e.target.value)}
-                        placeholder="abc123"
+                        placeholder={tx('abc123', 'abc123')}
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Subdirectory (optional)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('子目录（可选）', 'Subdirectory (optional)')}</label>
                     <input
                       type="text"
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                       value={newGitSubdir}
                       onChange={e => setNewGitSubdir(e.target.value)}
-                      placeholder="src/algos"
+                      placeholder={tx('src/algos', 'src/algos')}
                     />
                   </div>
                 </div>
               )}
               {newSourceType === 'package' && (
                 <p className="text-xs text-gray-500">
-                  No source will be stored. Use Package/Artifact fields below for reproducible installs.
+                  {tx('不会保存源码。请使用下方依赖包/产物字段保证可复现安装。', 'No source will be stored. Use Package/Artifact fields below for reproducible installs.')}
                 </p>
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Dependencies</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('依赖', 'Dependencies')}</label>
                   <input
                     type="text"
                     readOnly
                     className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
-                    value={(newManifestParsed.manifest?.dependencies || []).join(', ') || 'None'}
+                    value={(newManifestParsed.manifest?.dependencies || []).join(', ') || tx('无', 'None')}
                   />
-                  <p className="text-xs text-gray-500 mt-1">Derived from manifest.dependencies.</p>
+                  <p className="text-xs text-gray-500 mt-1">{tx('来自 manifest.dependencies。', 'Derived from manifest.dependencies.')}</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Artifact URI (optional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('产物 URI（可选）', 'Artifact URI (optional)')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={newArtifactUri}
                     onChange={e => setNewArtifactUri(e.target.value)}
-                    placeholder="s3://.../artifact.tar.gz"
+                    placeholder={tx('s3://.../artifact.tar.gz', 's3://.../artifact.tar.gz')}
                   />
                 </div>
               </div>
               <div className="flex items-center justify-between border-t border-gray-100 pt-4">
-                <div className="text-sm font-medium text-gray-700">Advanced fields</div>
+                <div className="text-sm font-medium text-gray-700">{tx('高级字段', 'Advanced fields')}</div>
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(!showAdvanced)}
                   className="text-sm text-blue-600 hover:text-blue-700"
                 >
-                  {showAdvanced ? 'Hide' : 'Show'}
+                  {showAdvanced ? tx('隐藏', 'Hide') : tx('显示', 'Show')}
                 </button>
               </div>
               {showAdvanced ? (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Config Schema (JSON)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('配置 Schema (JSON)', 'Config Schema (JSON)')}</label>
                     <textarea
                       readOnly={!!newManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -927,7 +944,7 @@ export const AlgorithmRegistry: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Default Config (JSON)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('默认配置 (JSON)', 'Default Config (JSON)')}</label>
                     <textarea
                       readOnly={!!newManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -941,7 +958,7 @@ export const AlgorithmRegistry: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Resource Profile (JSON)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('资源画像 (JSON)', 'Resource Profile (JSON)')}</label>
                       <textarea
                         readOnly={!!newManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -954,7 +971,7 @@ export const AlgorithmRegistry: React.FC = () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Env Constraints (JSON)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('环境约束 (JSON)', 'Env Constraints (JSON)')}</label>
                       <textarea
                         readOnly={!!newManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -968,23 +985,23 @@ export const AlgorithmRegistry: React.FC = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Metadata (JSON)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('元数据 (JSON)', 'Metadata (JSON)')}</label>
                     <textarea
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
                       value={newMetadata}
                       onChange={e => setNewMetadata(e.target.value)}
                     />
-                    <p className="text-xs text-gray-500 mt-1">Reserved keys: path, git (auto-filled by Source).</p>
+                    <p className="text-xs text-gray-500 mt-1">{tx('保留字段：path、git（由来源自动填充）。', 'Reserved keys: path, git (auto-filled by Source).')}</p>
                   </div>
                 </>
               ) : (
                 <p className="text-xs text-gray-500">
-                  Using defaults for config schema, resource profile, constraints, and metadata.
+                  {tx('配置 schema、资源画像、约束与元数据将使用默认值。', 'Using defaults for config schema, resource profile, constraints, and metadata.')}
                 </p>
               )}
               <div className="pt-4 flex justify-end gap-3 sticky bottom-0 bg-white pb-2">
-                <button type="button" onClick={() => { setIsVersionModalOpen(false); setVersionTarget(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Create Version</button>
+                <button type="button" onClick={() => { setIsVersionModalOpen(false); setVersionTarget(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('创建版本', 'Create Version')}</button>
               </div>
             </form>
           </div>
@@ -996,7 +1013,7 @@ export const AlgorithmRegistry: React.FC = () => {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">Manage Versions</h2>
+                <h2 className="text-lg font-bold text-gray-900">{tx('版本管理', 'Manage Versions')}</h2>
                 <p className="text-xs text-gray-500">{manageAlgo.name}</p>
               </div>
               <button onClick={() => { setIsManageOpen(false); setManageAlgo(null); }} className="text-gray-400 hover:text-gray-600">
@@ -1010,14 +1027,14 @@ export const AlgorithmRegistry: React.FC = () => {
                   className="px-3 py-1.5 border border-gray-300 rounded-md text-sm hover:bg-gray-50 flex items-center"
                 >
                   <Archive className="w-4 h-4 mr-2" />
-                  {manageAlgo.archived ? 'Restore' : 'Archive'}
+                  {manageAlgo.archived ? tx('恢复', 'Restore') : tx('归档', 'Archive')}
                 </button>
                 <div className="flex gap-2">
                   <button
                     onClick={() => openAlgoEditModal(manageAlgo)}
                     className="px-3 py-1.5 border border-gray-300 rounded-md text-sm hover:bg-gray-50"
                   >
-                    Edit
+                    {tx('编辑', 'Edit')}
                   </button>
                   <button
                     onClick={() => {
@@ -1030,7 +1047,7 @@ export const AlgorithmRegistry: React.FC = () => {
                     disabled={manageAlgo.archived}
                     className="px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-50"
                   >
-                    Add Version
+                    {tx('新增版本', 'Add Version')}
                   </button>
                 </div>
               </div>
@@ -1038,13 +1055,13 @@ export const AlgorithmRegistry: React.FC = () => {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-gray-50 text-xs text-gray-500 uppercase font-semibold">
                     <tr>
-                      <th className="px-4 py-2">Version</th>
-                      <th className="px-4 py-2">Entrypoint</th>
-                      <th className="px-4 py-2">Package</th>
-                      <th className="px-4 py-2">Status</th>
-                      <th className="px-4 py-2">Manifest</th>
-                      <th className="px-4 py-2">Frozen</th>
-                      <th className="px-4 py-2 text-right">Actions</th>
+                      <th className="px-4 py-2">{tx('版本', 'Version')}</th>
+                      <th className="px-4 py-2">{tx('入口点', 'Entrypoint')}</th>
+                      <th className="px-4 py-2">{tx('依赖包', 'Package')}</th>
+                      <th className="px-4 py-2">{tx('状态', 'Status')}</th>
+                      <th className="px-4 py-2">{tx('Manifest', 'Manifest')}</th>
+                      <th className="px-4 py-2">{tx('冻结', 'Frozen')}</th>
+                      <th className="px-4 py-2 text-right">{tx('操作', 'Actions')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -1057,43 +1074,43 @@ export const AlgorithmRegistry: React.FC = () => {
                           <span className={`text-xs px-2 py-0.5 rounded-full border ${
                             version.active === false ? 'bg-gray-100 text-gray-600 border-gray-200' : 'bg-green-50 text-green-700 border-green-200'
                           }`}>
-                            {version.active === false ? 'Disabled' : 'Active'}
+                            {version.active === false ? tx('禁用', 'Disabled') : tx('激活', 'Active')}
                           </span>
                         </td>
                         <td className="px-4 py-2">
                           <span className={`text-xs px-2 py-0.5 rounded-full border ${
                             version.metadata?.manifest ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-700 border-amber-200'
                           }`}>
-                            {version.metadata?.manifest ? 'Manifest' : 'Legacy'}
+                            {version.metadata?.manifest ? tx('Manifest', 'Manifest') : tx('旧版', 'Legacy')}
                           </span>
                         </td>
                         <td className="px-4 py-2">
                           <span className={`text-xs px-2 py-0.5 rounded-full border ${
                             version.frozen ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-100 text-gray-600 border-gray-200'
                           }`}>
-                            {version.frozen ? 'Frozen' : 'Mutable'}
+                            {version.frozen ? tx('已冻结', 'Frozen') : tx('可变更', 'Mutable')}
                           </span>
                         </td>
                         <td className="px-4 py-2 text-right space-x-2">
                           <button onClick={() => openEditModal(version)} className="text-xs text-blue-600 hover:text-blue-800">
-                            Edit
+                            {tx('编辑', 'Edit')}
                           </button>
                           <button onClick={() => toggleVersionActive(version)} className="text-xs text-gray-600 hover:text-gray-800">
-                            {version.active === false ? 'Enable' : 'Disable'}
+                            {version.active === false ? tx('启用', 'Enable') : tx('禁用', 'Disable')}
                           </button>
                           <button
                             onClick={() => handleFreezeVersion(version)}
                             disabled={version.frozen}
                             className="text-xs text-blue-600 hover:text-blue-800 disabled:text-gray-400"
                           >
-                            Freeze
+                            {tx('冻结', 'Freeze')}
                           </button>
                         </td>
                       </tr>
                     ))}
                     {(algoVersions[manageAlgo.id] || []).length === 0 && (
                       <tr>
-                        <td className="px-4 py-4 text-sm text-gray-400" colSpan={7}>No versions registered.</td>
+                        <td className="px-4 py-4 text-sm text-gray-400" colSpan={7}>{tx('暂无已注册版本。', 'No versions registered.')}</td>
                       </tr>
                     )}
                   </tbody>
@@ -1108,14 +1125,14 @@ export const AlgorithmRegistry: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-xl animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Edit Algorithm Version</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('编辑算法版本', 'Edit Algorithm Version')}</h2>
               <button onClick={() => { setIsEditOpen(false); setEditTarget(null); resetEditFields(); }} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleUpdateVersion} className="p-6 flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm Manifest (required)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('算法 Manifest（必填）', 'Algorithm Manifest (required)')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-44 font-mono text-xs"
                   value={editManifest}
@@ -1126,13 +1143,13 @@ export const AlgorithmRegistry: React.FC = () => {
                 )}
                 {!editManifestParsed.error && editManifestParsed.manifest && (
                   <p className="text-xs text-green-700 mt-1">
-                    Manifest OK: {editManifestParsed.manifest.name} v{editManifestParsed.manifest.version}
+                    {tx('Manifest 校验通过：', 'Manifest OK:')} {editManifestParsed.manifest.name} v{editManifestParsed.manifest.version}
                   </p>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Entrypoint</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('入口点', 'Entrypoint')}</label>
                   <input
                     type="text"
                     required
@@ -1143,30 +1160,30 @@ export const AlgorithmRegistry: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Active</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('激活状态', 'Active')}</label>
                   <select
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={editActive ? 'true' : 'false'}
                     onChange={e => setEditActive(e.target.value === 'true')}
                   >
-                    <option value="true">Active</option>
-                    <option value="false">Disabled</option>
+                    <option value="true">{tx('激活', 'Active')}</option>
+                    <option value="false">{tx('禁用', 'Disabled')}</option>
                   </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Dependencies</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('依赖', 'Dependencies')}</label>
                   <input
                     type="text"
                     readOnly
                     className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
-                    value={(editManifestParsed.manifest?.dependencies || []).join(', ') || 'None'}
+                    value={(editManifestParsed.manifest?.dependencies || []).join(', ') || tx('无', 'None')}
                   />
-                  <p className="text-xs text-gray-500 mt-1">Derived from manifest.dependencies.</p>
+                  <p className="text-xs text-gray-500 mt-1">{tx('来自 manifest.dependencies。', 'Derived from manifest.dependencies.')}</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Artifact URI</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('产物 URI', 'Artifact URI')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -1176,32 +1193,32 @@ export const AlgorithmRegistry: React.FC = () => {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Source Override</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('来源覆盖', 'Source Override')}</label>
                 <select
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={editSourceType}
                   onChange={e => setEditSourceType(e.target.value as 'none' | 'code' | 'path' | 'git')}
                 >
-                  <option value="none">Keep existing source</option>
-                  <option value="code">Inline code</option>
-                  <option value="path">Server file path</option>
-                  <option value="git">Git repository</option>
+                  <option value="none">{tx('保持现有来源', 'Keep existing source')}</option>
+                  <option value="code">{tx('内联代码', 'Inline code')}</option>
+                  <option value="path">{tx('服务器文件路径', 'Server file path')}</option>
+                  <option value="git">{tx('Git 仓库', 'Git repository')}</option>
                 </select>
               </div>
               {editSourceType === 'code' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Inline Code</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('内联代码', 'Inline Code')}</label>
                   <textarea
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-40 font-mono text-xs"
                     value={editCode}
                     onChange={e => setEditCode(e.target.value)}
-                    placeholder="Paste updated Python code here."
+                    placeholder={tx('在此粘贴更新后的 Python 代码。', 'Paste updated Python code here.')}
                   />
                 </div>
               )}
               {editSourceType === 'path' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Server File Path</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('服务器文件路径', 'Server File Path')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -1214,63 +1231,63 @@ export const AlgorithmRegistry: React.FC = () => {
               {editSourceType === 'git' && (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Repo URL</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('仓库 URL', 'Repo URL')}</label>
                     <input
                       type="text"
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                       value={editGitRepo}
                       onChange={e => setEditGitRepo(e.target.value)}
-                      placeholder="https://github.com/org/repo.git"
+                      placeholder={tx('https://github.com/org/repo.git', 'https://github.com/org/repo.git')}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Branch (optional)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('分支（可选）', 'Branch (optional)')}</label>
                       <input
                         type="text"
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={editGitBranch}
                         onChange={e => setEditGitBranch(e.target.value)}
-                        placeholder="main"
+                        placeholder={tx('main', 'main')}
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Commit (optional)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('Commit（可选）', 'Commit (optional)')}</label>
                       <input
                         type="text"
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={editGitCommit}
                         onChange={e => setEditGitCommit(e.target.value)}
-                        placeholder="abc123"
+                        placeholder={tx('abc123', 'abc123')}
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Subdirectory (optional)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('子目录（可选）', 'Subdirectory (optional)')}</label>
                     <input
                       type="text"
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                       value={editGitSubdir}
                       onChange={e => setEditGitSubdir(e.target.value)}
-                      placeholder="src/algos"
+                      placeholder={tx('src/algos', 'src/algos')}
                     />
                   </div>
                 </div>
               )}
               <div className="flex items-center justify-between border-t border-gray-100 pt-4">
-                <div className="text-sm font-medium text-gray-700">Advanced fields</div>
+                <div className="text-sm font-medium text-gray-700">{tx('高级字段', 'Advanced fields')}</div>
                 <button
                   type="button"
                   onClick={() => setEditShowAdvanced(!editShowAdvanced)}
                   className="text-sm text-blue-600 hover:text-blue-700"
                 >
-                  {editShowAdvanced ? 'Hide' : 'Show'}
+                  {editShowAdvanced ? tx('隐藏', 'Hide') : tx('显示', 'Show')}
                 </button>
               </div>
               {editShowAdvanced ? (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Config Schema (JSON)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('配置 Schema (JSON)', 'Config Schema (JSON)')}</label>
                     <textarea
                       readOnly={!!editManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -1283,7 +1300,7 @@ export const AlgorithmRegistry: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Default Config (JSON)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('默认配置 (JSON)', 'Default Config (JSON)')}</label>
                     <textarea
                       readOnly={!!editManifestParsed.manifest}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -1297,7 +1314,7 @@ export const AlgorithmRegistry: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Resource Profile (JSON)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('资源画像 (JSON)', 'Resource Profile (JSON)')}</label>
                       <textarea
                         readOnly={!!editManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -1310,7 +1327,7 @@ export const AlgorithmRegistry: React.FC = () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Env Constraints (JSON)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{tx('环境约束 (JSON)', 'Env Constraints (JSON)')}</label>
                       <textarea
                         readOnly={!!editManifestParsed.manifest}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
@@ -1324,23 +1341,23 @@ export const AlgorithmRegistry: React.FC = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Metadata (JSON)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('元数据 (JSON)', 'Metadata (JSON)')}</label>
                     <textarea
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
                       value={editMetadata}
                       onChange={e => setEditMetadata(e.target.value)}
                     />
-                    <p className="text-xs text-gray-500 mt-1">Reserved keys: path, git (auto-filled by Source).</p>
+                    <p className="text-xs text-gray-500 mt-1">{tx('保留字段：path、git（由来源自动填充）。', 'Reserved keys: path, git (auto-filled by Source).')}</p>
                   </div>
                 </>
               ) : (
                 <p className="text-xs text-gray-500">
-                  Advanced config fields hidden. Defaults will be preserved.
+                  {tx('高级配置字段已隐藏，将保留默认值。', 'Advanced config fields hidden. Defaults will be preserved.')}
                 </p>
               )}
               <div className="pt-4 flex justify-end gap-3 sticky bottom-0 bg-white pb-2">
-                <button type="button" onClick={() => { setIsEditOpen(false); setEditTarget(null); resetEditFields(); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Save</button>
+                <button type="button" onClick={() => { setIsEditOpen(false); setEditTarget(null); resetEditFields(); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('保存', 'Save')}</button>
               </div>
             </form>
           </div>
@@ -1351,14 +1368,14 @@ export const AlgorithmRegistry: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Edit Algorithm</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('编辑算法', 'Edit Algorithm')}</h2>
               <button onClick={() => { setIsAlgoEditOpen(false); setEditAlgoTarget(null); }} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleUpdateAlgo} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('名称', 'Name')}</label>
                 <input
                   type="text"
                   required
@@ -1368,7 +1385,7 @@ export const AlgorithmRegistry: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('描述', 'Description')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-20 resize-none"
                   value={editAlgoDescription}
@@ -1376,8 +1393,8 @@ export const AlgorithmRegistry: React.FC = () => {
                 />
               </div>
               <div className="pt-4 flex justify-end gap-3">
-                <button type="button" onClick={() => { setIsAlgoEditOpen(false); setEditAlgoTarget(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Save</button>
+                <button type="button" onClick={() => { setIsAlgoEditOpen(false); setEditAlgoTarget(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('保存', 'Save')}</button>
               </div>
             </form>
           </div>

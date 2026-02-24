@@ -8,7 +8,7 @@ import subprocess
 import sys
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -118,6 +118,29 @@ from app.schemas.models import (
     ModelVersionCreate,
     ModelVersionUpdate,
 )
+from app.schemas.agentic_os import (
+    AgenticApproverListResponse,
+    AgenticApproverRecord,
+    AgenticApprovalPolicyTemplate,
+    AgenticApprovalPolicyTemplateListResponse,
+    AgenticActionResponse,
+    AgenticApproveRequest,
+    AgenticAuditReplayResponse,
+    AgenticBranchRequest,
+    AgenticExecuteRequest,
+    AgenticIdeaInput,
+    AgenticListResponse,
+    AgenticMatrixRequest,
+    AgenticMatrixResponse,
+    AgenticReproResponse,
+    AgenticRunCreateRequest,
+    AgenticRunCreateResponse,
+    AgenticRunDetail,
+    AgenticRunReportResponse,
+    AgenticSubAgentListResponse,
+    AgenticSpecValidationResponse,
+)
+from app.services.agentic_os import agentic_os_service
 
 router = APIRouter(dependencies=[Depends(require_api_token)])
 
@@ -1444,7 +1467,7 @@ def create_notebook(payload: NotebookCreate, db: Session = Depends(get_db)) -> N
     
     run = models.Run(
         project_id=project.id,
-        name=payload.name or f"notebook-{datetime.utcnow().strftime('%H%M%S')}",
+        name=payload.name or f"notebook-{datetime.now(timezone.utc).strftime('%H%M%S')}",
         type="NOTEBOOK",
         status="PENDING",
         algo="notebook",
@@ -1610,7 +1633,7 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
     run = models.Run(
         project_id=payload.project_id,
         template_version_id=payload.template_version_id,
-        name=f"train-{payload.project_id}-{datetime.utcnow().strftime('%H%M%S')}",
+        name=f"train-{payload.project_id}-{datetime.now(timezone.utc).strftime('%H%M%S')}",
         type="TRAIN",
         status="PENDING",
         algo=algo_id,
@@ -1812,7 +1835,7 @@ def export_run_template(
         db.commit()
         db.refresh(template)
 
-    version_label = payload.version or f"export-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+    version_label = payload.version or f"export-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     version = models.TemplateVersion(
         template_id=template.id,
         algo_version_id=algo_version_id,
@@ -2712,7 +2735,7 @@ def submit_eval_job(payload: EvalJobRequest, db: Session = Depends(get_db)) -> E
     project = get_or_create_system_project(db)
     run = models.Run(
         project_id=project.id,
-        name=f"eval-{payload.protocol_id}-{datetime.utcnow().strftime('%H%M%S')}",
+        name=f"eval-{payload.protocol_id}-{datetime.now(timezone.utc).strftime('%H%M%S')}",
         type="EVAL",
         status="PENDING",
         algo=settings.eval_algo_name,
@@ -2799,7 +2822,7 @@ def submit_matrix_job(payload: MatrixJobRequest, db: Session = Depends(get_db)) 
     project = get_or_create_system_project(db)
     run = models.Run(
         project_id=project.id,
-        name=f"matrix-{payload.protocol_id}-{datetime.utcnow().strftime('%H%M%S')}",
+        name=f"matrix-{payload.protocol_id}-{datetime.now(timezone.utc).strftime('%H%M%S')}",
         type="MATRIX",
         status="PENDING",
         algo=settings.matrix_algo_name,
@@ -3047,7 +3070,7 @@ def get_artifact_download_url(artifact_id: str, db: Session = Depends(get_db)) -
     if not artifact:
         raise HTTPException(status_code=404, detail="artifact_not_found")
     url = s3_client.presigned_get_url(artifact.object_key)
-    return ArtifactDownloadResponse(url=url, expires_at=(datetime.utcnow().isoformat()))
+    return ArtifactDownloadResponse(url=url, expires_at=(datetime.now(timezone.utc).isoformat()))
 
 
 @router.get("/runs/{run_id}/repro-bundle", response_model=ReproBundleResponse)
@@ -3090,16 +3113,41 @@ def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db)) -> Dat
     return Dataset.model_validate(dataset)
 
 
-@router.post("/datasets/upload", response_model=Dataset, status_code=201)
-def upload_dataset(
-    name: str = Form(...),
-    format: str = Form("jsonl"),
-    description: Optional[str] = Form(None),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> Dataset:
-    dataset = dataset_service.create_dataset_from_upload(db, name, description, format, file)
-    return Dataset.model_validate(dataset)
+def _multipart_available() -> bool:
+    try:
+        from python_multipart import __version__ as multipart_version
+
+        return bool(multipart_version)
+    except Exception:
+        try:
+            from multipart.multipart import parse_options_header
+
+            return parse_options_header is not None
+        except Exception:
+            return False
+
+
+if _multipart_available():
+
+    @router.post("/datasets/upload", response_model=Dataset, status_code=201)
+    def upload_dataset(
+        name: str = Form(...),
+        format: str = Form("jsonl"),
+        description: Optional[str] = Form(None),
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+    ) -> Dataset:
+        dataset = dataset_service.create_dataset_from_upload(db, name, description, format, file)
+        return Dataset.model_validate(dataset)
+
+else:
+
+    @router.post("/datasets/upload", status_code=503)
+    def upload_dataset_unavailable() -> Dict[str, Any]:
+        raise HTTPException(
+            status_code=503,
+            detail="python_multipart_not_installed",
+        )
 
 
 @router.get("/datasets/{dataset_id}/download")
@@ -3137,3 +3185,188 @@ def create_webhook(payload: WebhookCreate, db: Session = Depends(get_db)) -> Web
     db.commit()
     db.refresh(webhook)
     return Webhook.model_validate(webhook)
+
+
+@router.post("/agentic/specs/validate", response_model=AgenticSpecValidationResponse)
+def validate_agentic_spec(payload: AgenticIdeaInput) -> AgenticSpecValidationResponse:
+    return agentic_os_service.validate_spec_input(payload)
+
+
+@router.get("/agentic/approval-policy/templates", response_model=AgenticApprovalPolicyTemplateListResponse)
+def list_agentic_approval_policy_templates() -> AgenticApprovalPolicyTemplateListResponse:
+    payload = agentic_os_service.list_approval_policy_templates()
+    rows = [AgenticApprovalPolicyTemplate.model_validate(item) for item in (payload.get("items") or [])]
+    return AgenticApprovalPolicyTemplateListResponse(
+        recommended_template_id=payload.get("recommendedTemplateId"),
+        context_summary=payload.get("contextSummary") or {},
+        items=rows,
+    )
+
+
+@router.post("/agentic/approval-policy/templates/suggest", response_model=AgenticApprovalPolicyTemplateListResponse)
+def suggest_agentic_approval_policy_templates(payload: AgenticIdeaInput) -> AgenticApprovalPolicyTemplateListResponse:
+    suggestion = agentic_os_service.list_approval_policy_templates(payload)
+    rows = [AgenticApprovalPolicyTemplate.model_validate(item) for item in (suggestion.get("items") or [])]
+    return AgenticApprovalPolicyTemplateListResponse(
+        recommended_template_id=suggestion.get("recommendedTemplateId"),
+        context_summary=suggestion.get("contextSummary") or {},
+        items=rows,
+    )
+
+
+@router.get("/agentic/approvers", response_model=AgenticApproverListResponse)
+def list_agentic_approvers() -> AgenticApproverListResponse:
+    payload = agentic_os_service.list_approvers()
+    rows = [AgenticApproverRecord.model_validate(item) for item in (payload.get("items") or [])]
+    return AgenticApproverListResponse(
+        strict_mode=bool(payload.get("strictMode")),
+        total=int(payload.get("total") or len(rows)),
+        items=rows,
+    )
+
+
+@router.post("/agentic/runs", response_model=AgenticRunCreateResponse, status_code=201)
+def create_agentic_run(payload: AgenticRunCreateRequest) -> AgenticRunCreateResponse:
+    detail = agentic_os_service.create_run(payload)
+    return AgenticRunCreateResponse(run_id=detail.run_id, status=detail.status, detail=detail)
+
+
+@router.get("/agentic/runs", response_model=AgenticListResponse)
+def list_agentic_runs(page: int = 1, page_size: int = 20) -> AgenticListResponse:
+    items, total = agentic_os_service.list_runs(page=page, page_size=page_size)
+    return AgenticListResponse(page=page, page_size=page_size, total=total, items=items)
+
+
+@router.get("/agentic/runs/{run_id}", response_model=AgenticRunDetail)
+def get_agentic_run(run_id: str) -> AgenticRunDetail:
+    try:
+        return agentic_os_service.get_run_detail(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/agentic/runs/{run_id}/report", response_model=AgenticRunReportResponse)
+def get_agentic_run_report(run_id: str) -> AgenticRunReportResponse:
+    try:
+        payload = agentic_os_service.get_run_report(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return AgenticRunReportResponse(
+        run_id=run_id,
+        generated_at=str(payload.get("generatedAt") or ""),
+        report=payload.get("report") or {},
+        markdown=str(payload.get("markdown") or ""),
+        artifact_json_path=str(payload.get("artifactJsonPath") or ""),
+        artifact_markdown_path=str(payload.get("artifactMarkdownPath") or ""),
+    )
+
+
+@router.get("/agentic/runs/{run_id}/sub-agents", response_model=AgenticSubAgentListResponse)
+def list_agentic_sub_agents(
+    run_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    node_id: Optional[str] = None,
+    status: Optional[str] = None,
+) -> AgenticSubAgentListResponse:
+    try:
+        items, total = agentic_os_service.list_sub_agents(
+            run_id=run_id,
+            page=page,
+            page_size=page_size,
+            node_id=node_id,
+            status=status,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return AgenticSubAgentListResponse(run_id=run_id, page=page, page_size=page_size, total=total, items=items)
+
+
+@router.post("/agentic/runs/{run_id}/execute", response_model=AgenticActionResponse)
+def execute_agentic_run(run_id: str, payload: AgenticExecuteRequest) -> AgenticActionResponse:
+    try:
+        state = agentic_os_service.execute_run(run_id, payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    detail = agentic_os_service.get_run_detail(run_id)
+    return AgenticActionResponse(ok=True, message=f"run_status={state.get('status')}", detail=detail)
+
+
+@router.post("/agentic/runs/{run_id}/approvals", response_model=AgenticActionResponse)
+def update_agentic_approvals(run_id: str, payload: AgenticApproveRequest) -> AgenticActionResponse:
+    try:
+        state = agentic_os_service.approve_actions(run_id, payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    detail = agentic_os_service.get_run_detail(run_id)
+    return AgenticActionResponse(ok=True, message=f"approval_updated status={state.get('status')}", detail=detail)
+
+
+@router.post("/agentic/runs/{run_id}/nodes/{node_id}/branch", response_model=AgenticActionResponse)
+def add_agentic_branch(run_id: str, node_id: str, payload: AgenticBranchRequest) -> AgenticActionResponse:
+    try:
+        state = agentic_os_service.add_branch(run_id, node_id, payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    detail = agentic_os_service.get_run_detail(run_id)
+    return AgenticActionResponse(ok=True, message=f"branch_added status={state.get('status')}", detail=detail)
+
+
+@router.delete("/agentic/runs/{run_id}/nodes/{node_id}", response_model=AgenticActionResponse)
+def delete_agentic_branch(run_id: str, node_id: str) -> AgenticActionResponse:
+    try:
+        state = agentic_os_service.delete_branch(run_id, node_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    detail = agentic_os_service.get_run_detail(run_id)
+    return AgenticActionResponse(ok=True, message=f"branch_deleted status={state.get('status')}", detail=detail)
+
+
+@router.post("/agentic/runs/{run_id}/recover", response_model=AgenticActionResponse)
+def recover_agentic_run(run_id: str) -> AgenticActionResponse:
+    try:
+        state = agentic_os_service.recover_run(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    detail = agentic_os_service.get_run_detail(run_id)
+    return AgenticActionResponse(ok=True, message=f"run_recovered status={state.get('status')}", detail=detail)
+
+
+@router.post("/agentic/runs/{run_id}/matrix", response_model=AgenticMatrixResponse)
+def generate_agentic_matrix(run_id: str, payload: AgenticMatrixRequest) -> AgenticMatrixResponse:
+    try:
+        matrix = agentic_os_service.build_matrix(run_id, payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return AgenticMatrixResponse(run_id=run_id, matrix=matrix)
+
+
+@router.post("/agentic/runs/{run_id}/repro-bundle", response_model=AgenticReproResponse)
+def export_agentic_repro_bundle(run_id: str) -> AgenticReproResponse:
+    try:
+        bundle = agentic_os_service.export_repro_bundle(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return AgenticReproResponse(run_id=run_id, bundle_path=bundle["bundle_path"], manifest=bundle["manifest"])
+
+
+@router.get("/agentic/runs/{run_id}/audit-replay", response_model=AgenticAuditReplayResponse)
+def replay_agentic_audit(run_id: str, upto_event_seq: Optional[int] = None) -> AgenticAuditReplayResponse:
+    try:
+        replay = agentic_os_service.replay_run(run_id, upto_event_seq=upto_event_seq)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return AgenticAuditReplayResponse(
+        run_id=run_id,
+        verified=bool(replay.get("verified")),
+        checked_events=int(replay.get("checkedEvents") or 0),
+        chain_head=replay.get("chainHead"),
+        failure_reason=replay.get("failureReason"),
+        replay=replay.get("replay") or {},
+    )

@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 import yaml
@@ -17,7 +17,7 @@ class ReproBundleService:
             "run_id": run.id,
             "project_id": run.project_id,
             "template_version_id": run.template_version_id,
-            "created_at": run.created.isoformat() if hasattr(run, "created") else datetime.utcnow().isoformat(),
+            "created_at": run.created.isoformat() if hasattr(run, "created") else datetime.now(timezone.utc).isoformat(),
             "config": run.config,
             "git": {
                 "repo": git_config.get("repo") if isinstance(git_config, dict) else None,

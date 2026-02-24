@@ -1,4 +1,20 @@
 import {
+  type AgenticApproverListResponse,
+  type AgenticApprovalPolicyTemplateListResponse,
+  type AgenticAuditReplayResponse,
+  type AgenticActionResponse,
+  type AgenticContractReport,
+  type AgenticIdeaInput,
+  type AgenticListResponse,
+  type AgenticMatrixResponse,
+  type AgenticNode,
+  type AgenticReproResponse,
+  type AgenticRunReportResponse,
+  type AgenticRunCreateResponse,
+  type AgenticRunDetail,
+  type AgenticRunSummary,
+  type AgenticSubAgentListResponse,
+  type AgenticSpecValidationResponse,
   JobStatus,
   RunType,
   type Algo,
@@ -130,6 +146,7 @@ type DemoState = {
   artifactById: Record<string, ArtifactRecord>;
   runGroupIndex: Record<string, string[]>;
   baseSystemResources: Record<string, unknown>;
+  agenticRuns: Record<string, AgenticRunDetail>;
 };
 
 const isoMinutesAgo = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
@@ -296,6 +313,21 @@ const hashSeed = (text: string) => {
   }
   return hash >>> 0;
 };
+
+const stableSerialize = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableSerialize(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, nested]) => `${key}:${stableSerialize(nested)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const mockHash64 = (value: unknown): string => hashSeed(stableSerialize(value)).toString(16).padStart(8, '0').repeat(8);
 
 const createSeededRandom = (seed: number) => {
   let state = seed >>> 0;
@@ -1519,6 +1551,7 @@ const makeInitialState = (): DemoState => {
     artifacts,
     artifactById,
     runGroupIndex,
+    agenticRuns: {},
     baseSystemResources: {
       cpuPercent: 52,
       memoryPercent: 68,
@@ -1698,6 +1731,733 @@ const tuneStudy = (studyName: string) => {
     },
   };
 };
+
+const makeAgenticContract = (): AgenticContractReport => ({
+  totalRequired: 19,
+  present: 19,
+  passRate: 100,
+  missing: [],
+});
+
+const createAgenticNode = (
+  nodeId: string,
+  agent: string,
+  title: string,
+  parentId: string | null,
+  risk: string,
+  status = 'PENDING',
+): AgenticNode => ({
+  nodeId,
+  parentId,
+  agent,
+  title,
+  hypothesis: `${title} hypothesis`,
+  executionPlan: `${title} execution plan`,
+  expectedMetrics: { winRate: '>=0.6' },
+  budget: { gpuHours: 0.2, wallclockMinutes: 10 },
+  risk,
+  status,
+  rationale: `${agent} rationale`,
+  evidence: {},
+  subAgents: [],
+  nextSuggestions: ['Execute next', 'Inspect evidence'],
+  children: [],
+});
+
+const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const parseMetricTarget = (raw: unknown): number | null => {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string') {
+    const match = raw.match(/-?\d+(\.\d+)?/);
+    if (!match) return null;
+    const parsed = Number(match[0]);
+    if (!Number.isFinite(parsed)) return null;
+    if (raw.includes('%')) return parsed / 100;
+    return parsed;
+  }
+  return null;
+};
+
+const AGENTIC_DEFAULT_SUB_AGENT_POLICY = {
+  enabled: true,
+  maxDepth: 2,
+  maxPerNode: 3,
+  maxTotal: 24,
+  timeoutMs: 1500,
+};
+
+const AGENTIC_DEFAULT_APPROVAL_POLICY = {
+  mode: 'balanced' as const,
+  highRiskActions: ['external_dependency_install', 'unknown_script_execution', 'data_exfiltration'],
+  blockedActionRoles: ['admin', 'security'] as Array<'admin' | 'ops' | 'security'>,
+  highRiskActionRoles: ['admin', 'ops', 'security'] as Array<'admin' | 'ops' | 'security'>,
+  requireApprovalForUnknownActions: true,
+  minApprovals: 1,
+  requireDistinctRoles: false,
+  approvalTtlMinutes: 120,
+};
+
+const resolveAgenticSubAgentPolicy = (idea: AgenticIdeaInput) => {
+  const row = { ...AGENTIC_DEFAULT_SUB_AGENT_POLICY, ...(idea.subAgentPolicy || {}) };
+  return {
+    enabled: Boolean(row.enabled),
+    maxDepth: clampNumber(Number(row.maxDepth || 1), 1, 4),
+    maxPerNode: clampNumber(Number(row.maxPerNode || 1), 1, 8),
+    maxTotal: clampNumber(Number(row.maxTotal || 1), 1, 128),
+    timeoutMs: clampNumber(Number(row.timeoutMs || 50), 50, 10000),
+  };
+};
+
+const resolveAgenticApprovalPolicy = (idea: AgenticIdeaInput) => {
+  const raw = { ...AGENTIC_DEFAULT_APPROVAL_POLICY, ...(idea.approvalPolicy || {}) };
+  const highRiskActions = uniqueRows(
+    [...(raw.highRiskActions || []), ...(idea.requestedActions || [])]
+      .map(item => String(item || '').trim())
+      .filter(Boolean),
+  );
+  return {
+    mode: raw.mode,
+    highRiskActions,
+    blockedActionRoles: (raw.blockedActionRoles || []).filter(Boolean),
+    highRiskActionRoles: (raw.highRiskActionRoles || []).filter(Boolean),
+    requireApprovalForUnknownActions: Boolean(raw.requireApprovalForUnknownActions),
+    minApprovals: clampNumber(Number(raw.minApprovals || 1), 1, 3),
+    requireDistinctRoles: Boolean(raw.requireDistinctRoles),
+    approvalTtlMinutes: clampNumber(Number(raw.approvalTtlMinutes || 120), 5, 10080),
+  };
+};
+
+const inferAgenticPrimaryMetric = (successMetrics?: Record<string, unknown>) => {
+  const metrics = successMetrics || {};
+  const preferred = ['winRate', 'eloLift', 'returnMean'];
+  let key = preferred.find(item => Object.prototype.hasOwnProperty.call(metrics, item)) || Object.keys(metrics)[0] || 'winRate';
+  if (!key) key = 'winRate';
+  const targetRaw = (metrics as Record<string, unknown>)[key];
+  const target = parseMetricTarget(targetRaw);
+  return { key, target, targetRaw };
+};
+
+const inferEnvironmentComplexity = (envName: string) => {
+  const env = String(envName || '').toLowerCase();
+  if (env.includes('smac') || env.includes('football') || env.includes('magent')) return 3;
+  if (env.includes('pettingzoo') || env.includes('mpe') || env.includes('atari')) return 2;
+  return 1;
+};
+
+const buildAgenticDraftsFromIdea = (idea: AgenticIdeaInput) => {
+  const now = new Date().toISOString();
+  const context = buildAgenticApprovalContext(idea);
+  const riskScore = scoreAgenticApprovalRisk(context);
+  const primaryMetric = inferAgenticPrimaryMetric(idea.successMetrics || {});
+  const envComplexity = inferEnvironmentComplexity(idea.environment);
+  const subAgentPolicy = resolveAgenticSubAgentPolicy(idea);
+  const approvalPolicy = resolveAgenticApprovalPolicy(idea);
+  const approvalPolicyMeta = buildAgenticApprovalPolicyMeta(approvalPolicy as Record<string, unknown>);
+
+  const budgetGpuHours = Math.max(0, Number(idea.budget?.gpuHours || 0));
+  const budgetMinutes = Math.max(0, Number(idea.budget?.wallclockMinutes || 0));
+  const budgetScale = clampNumber((budgetGpuHours * 0.75) + (budgetMinutes / 120), 0.5, 6);
+
+  const baseSteps = envComplexity === 3 ? 36000 : envComplexity === 2 ? 22000 : 12000;
+  const totalEnvSteps = Math.round((baseSteps * budgetScale) / 1000) * 1000;
+  const rolloutLen = envComplexity >= 2 ? 256 : 128;
+  const batchSizeBase = envComplexity === 3 ? 4096 : envComplexity === 2 ? 3072 : 2048;
+  const batchSize = Math.round(clampNumber(batchSizeBase * Math.max(0.75, budgetScale / 2), 512, 8192) / 256) * 256;
+  const lr = Number((envComplexity === 3 ? 2.5e-4 : 3e-4).toFixed(6));
+
+  const gamesPerPair = clampNumber(Math.round(4 + budgetScale * 2), 4, 16);
+  const seedCount = clampNumber(Math.round(2 + budgetScale), 2, 6);
+  const seeds = Array.from({ length: seedCount }, (_, i) => i + 1);
+  const matrixK = clampNumber(Math.round(3 + budgetScale), 3, 10);
+
+  const riskParts: string[] = [];
+  riskParts.push(`riskScore=${riskScore}`);
+  riskParts.push(`approvalMode=${approvalPolicy.mode}`);
+  riskParts.push(`approvalRulesVersion=${approvalPolicyMeta.rulesVersion}`);
+  riskParts.push(`approvalPolicyHash=${approvalPolicyMeta.policyHash}`);
+  riskParts.push(`executionMode=${idea.executionMode || 'offline_stub'}`);
+  riskParts.push(`forbiddenActions=${context.forbiddenActions.join(',') || 'none'}`);
+  riskParts.push(`unknownActions=${context.unknownActions.join(',') || 'none'}`);
+  if (context.allowNetwork) riskParts.push('network=enabled');
+  if (context.allowDependencyInstall) riskParts.push('dependencyInstall=enabled');
+  if (context.blockedRequestedActions.length > 0) {
+    riskParts.push(`blockedRequested=${context.blockedRequestedActions.join(',')}`);
+  }
+
+  const normalizedSpec = {
+    title: idea.title,
+    taskGoal: idea.taskGoal,
+    environment: { name: idea.environment, dataSources: idea.dataSources || [] },
+    successMetrics: idea.successMetrics,
+    budget: idea.budget,
+    constraints: idea.constraints,
+    execution: {
+      mode: idea.executionMode || 'offline_stub',
+      localCommand: idea.localCommand || null,
+    },
+    requestedActions: context.requestedActions,
+    subAgentPolicy,
+    approvalPolicy,
+    approvalPolicyMeta,
+    generatedAt: now,
+  };
+
+  const rootConfigDraft = {
+    algo: {
+      family: envComplexity >= 2 ? 'mappo' : 'ppo',
+      entrypoint: envComplexity >= 2 ? 'algorithms.simple_train:train' : 'algorithms.single_train:train',
+      adapterMode: idea.executionMode || 'offline_stub',
+      objective: idea.taskGoal,
+      ...(idea.localCommand ? { localCommand: idea.localCommand } : {}),
+    },
+    train: {
+      totalEnvSteps,
+      rolloutLen,
+      batchSize,
+      lr,
+      entropyCoef: envComplexity >= 2 ? 0.01 : 0.02,
+      gamma: 0.99,
+      gaeLambda: 0.95,
+    },
+    resources: {
+      gpus: budgetGpuHours > 0 ? 1 : 0,
+      wallclockMinutes: budgetMinutes,
+      gpuHoursBudget: budgetGpuHours,
+    },
+    safety: {
+      approvalPolicy,
+      constraints: idea.constraints,
+    },
+  };
+
+  const evalProtocolDraft = {
+    metric: primaryMetric.key,
+    target: primaryMetric.targetRaw ?? null,
+    gamesPerPair,
+    seeds,
+    matrixPlan: { mode: 'NxN', k: matrixK },
+    confidence: { method: 'wilson', alpha: 0.05 },
+  };
+
+  const retrievalContext = [
+    {
+      source: 'demo://runner_contract',
+      score: 4,
+      snippet: `Runner mode ${idea.executionMode || 'offline_stub'} for ${idea.environment}`,
+    },
+    {
+      source: 'demo://runs/history',
+      score: 3,
+      snippet: `Budget ${budgetGpuHours} GPUh / ${budgetMinutes} min with metric ${primaryMetric.key}`,
+    },
+    {
+      source: 'demo://safety/policy_templates',
+      score: 2,
+      snippet: `Approval mode ${approvalPolicy.mode}, unknownActions=${context.unknownActions.length}`,
+    },
+  ];
+
+  return {
+    normalizedSpec,
+    rootConfigDraft,
+    evalProtocolDraft,
+    riskStatement: riskParts.join(' | '),
+    retrievalContext,
+    riskScore,
+    primaryMetric,
+  };
+};
+
+const riskFromScore = (base: 'low' | 'medium' | 'high', riskScore: number): 'low' | 'medium' | 'high' => {
+  if (riskScore >= 10) return 'high';
+  if (riskScore >= 5 && base === 'low') return 'medium';
+  if (riskScore <= 2 && base === 'high') return 'medium';
+  return base;
+};
+
+const buildAgenticTotTree = (idea: AgenticIdeaInput, drafts: ReturnType<typeof buildAgenticDraftsFromIdea>): AgenticNode[] => {
+  const metricKey = String((drafts.evalProtocolDraft as Record<string, unknown>).metric || 'winRate');
+  const budgetGpu = Math.max(0.06, Number(idea.budget?.gpuHours || 0) / 6 || 0.16);
+  const budgetMinutes = Math.max(6, Math.round(Number(idea.budget?.wallclockMinutes || 0) / 6) || 12);
+  const safetyMode = String((drafts.normalizedSpec as any)?.approvalPolicy?.mode || 'balanced');
+
+  const root = createAgenticNode('n0', 'ResearchAgent', `Research Spec · ${idea.title}`, null, 'low', 'SUCCEEDED');
+  root.hypothesis = `Formalize objective and constraints for ${idea.environment}.`;
+  root.executionPlan = 'Compile normalized spec, training draft, evaluation protocol, and safety policy.';
+  root.expectedMetrics = idea.successMetrics || {};
+  root.budget = { gpuHours: Number((budgetGpu * 1.2).toFixed(2)), wallclockMinutes: budgetMinutes };
+  root.evidence = {
+    normalizedSpec: drafts.normalizedSpec,
+    rootConfigDraft: drafts.rootConfigDraft,
+    evalProtocolDraft: drafts.evalProtocolDraft,
+  };
+  root.nextSuggestions = ['Expand candidate branches', 'Run safety gate'];
+
+  const stageRows: Array<{
+    id: string;
+    agent: string;
+    title: string;
+    risk: 'low' | 'medium' | 'high';
+    hypothesis: string;
+    executionPlan: string;
+    suggestions: string[];
+    budgetScale: number;
+  }> = [
+    {
+      id: 'n1',
+      agent: 'ResearchAgent',
+      title: `Hypothesis Proposal (${metricKey})`,
+      risk: 'medium',
+      hypothesis: `A constrained branch can raise ${metricKey} under budget.`,
+      executionPlan: 'Generate branch candidates and estimate cost/benefit/risk for each.',
+      suggestions: ['Run top branch', 'Compare sibling nodes'],
+      budgetScale: 0.8,
+    },
+    {
+      id: 'n2',
+      agent: 'IntegrationAgent',
+      title: `Adapter Strategy (${idea.executionMode || 'offline_stub'})`,
+      risk: 'high',
+      hypothesis: 'Adapter/runner alignment determines execution stability.',
+      executionPlan: 'Verify runner interface, materialize adapter draft, and add fallback path.',
+      suggestions: ['Inspect adapter evidence', 'Trigger recovery if blocked'],
+      budgetScale: 1.05,
+    },
+    {
+      id: 'n3',
+      agent: 'OpsAgent',
+      title: 'Budget and Ops Guard',
+      risk: 'medium',
+      hypothesis: 'Budget guardrails reduce drift and avoid overrun.',
+      executionPlan: 'Track GPU/time, enforce stop conditions, and schedule retries.',
+      suggestions: ['Review progress board', 'Tune retry policy'],
+      budgetScale: 0.75,
+    },
+    {
+      id: 'n4',
+      agent: 'EvalAgent',
+      title: `Evaluation Protocol (${metricKey})`,
+      risk: 'low',
+      hypothesis: 'Evaluation confidence controls true signal quality.',
+      executionPlan: 'Generate matrix plan, confidence thresholds, and verdict criteria.',
+      suggestions: ['Generate league matrix', 'Inspect confidence cells'],
+      budgetScale: 0.7,
+    },
+    {
+      id: 'n5',
+      agent: 'SafetyAgent',
+      title: `Safety Gate (${safetyMode})`,
+      risk: 'high',
+      hypothesis: 'Policy gating prevents unsafe execution paths.',
+      executionPlan: 'Check requested actions and create approvals for high-risk operations.',
+      suggestions: ['Approve pending actions', 'Adjust policy and retry'],
+      budgetScale: 0.6,
+    },
+    {
+      id: 'n6',
+      agent: 'OpsAgent',
+      title: 'Execute Candidate Run',
+      risk: 'medium',
+      hypothesis: 'Selected branch can meet target metric within budget.',
+      executionPlan: 'Execute selected branch and record timeline, artifacts, and diagnostics.',
+      suggestions: ['Play timeline', 'Export repro bundle'],
+      budgetScale: 1.1,
+    },
+  ];
+
+  const nodes = stageRows.map(row => {
+    const node = createAgenticNode(
+      row.id,
+      row.agent,
+      row.title,
+      'n0',
+      riskFromScore(row.risk, drafts.riskScore),
+      'PENDING',
+    );
+    node.hypothesis = row.hypothesis;
+    node.executionPlan = row.executionPlan;
+    node.expectedMetrics = {
+      [metricKey]: (idea.successMetrics || {})[metricKey] || drafts.primaryMetric.targetRaw || 'optimize',
+    };
+    node.budget = {
+      gpuHours: Number((budgetGpu * row.budgetScale).toFixed(2)),
+      wallclockMinutes: Math.max(4, Math.round(budgetMinutes * row.budgetScale)),
+    };
+    node.rationale = `${row.agent} generates step-level decision evidence from spec context.`;
+    node.nextSuggestions = row.suggestions;
+    return node;
+  });
+
+  root.children = nodes.map(node => node.nodeId);
+  return [root, ...nodes];
+};
+
+const countAgenticSubAgents = (detail: AgenticRunDetail) =>
+  detail.totTree.reduce((acc, node) => acc + (node.subAgents || []).length, 0);
+
+const AGENTIC_SUB_AGENT_ROLE_TEMPLATES: Record<string, string[]> = {
+  ResearchAgent: ['HypothesisMiner', 'CounterExampleScout', 'AblationPlanner'],
+  IntegrationAgent: ['AdapterBuilder', 'InterfaceValidator', 'FallbackPlanner'],
+  OpsAgent: ['BudgetSentinel', 'RetryPlanner', 'RunnerHealthMonitor'],
+  EvalAgent: ['MetricAuditor', 'MatrixBuilder', 'ConfidenceCalibrator'],
+  SafetyAgent: ['PolicyChecker', 'ApprovalOrchestrator', 'RiskExplainer'],
+  default: ['TaskWorker', 'Verifier', 'Reporter'],
+};
+
+const spawnSubAgentsForNode = (detail: AgenticRunDetail, node: AgenticNode) => {
+  const spec = (detail.researchSpec || {}) as Record<string, unknown>;
+  const policy = {
+    ...AGENTIC_DEFAULT_SUB_AGENT_POLICY,
+    ...((spec.subAgentPolicy as Record<string, unknown>) || {}),
+  };
+  if (!policy.enabled) return [] as Array<Record<string, unknown>>;
+  if ((node.subAgents || []).length > 0) return [] as Array<Record<string, unknown>>;
+
+  const maxDepth = clampNumber(Number(policy.maxDepth || 1), 1, 4);
+  const maxPerNode = clampNumber(Number(policy.maxPerNode || 1), 1, 8);
+  const maxTotal = clampNumber(Number(policy.maxTotal || 1), 1, 128);
+  let remaining = maxTotal - countAgenticSubAgents(detail);
+  if (remaining <= 0) return [] as Array<Record<string, unknown>>;
+
+  const roleRows = AGENTIC_SUB_AGENT_ROLE_TEMPLATES[node.agent] || AGENTIC_SUB_AGENT_ROLE_TEMPLATES.default;
+  const rootCount = Math.min(maxPerNode, remaining);
+  if (rootCount <= 0) return [] as Array<Record<string, unknown>>;
+
+  const now = new Date().toISOString();
+  const created: Array<Record<string, unknown>> = [];
+
+  for (let i = 0; i < rootCount; i += 1) {
+    const subAgentId = `sa_${node.nodeId}_${randomToken('')}`;
+    const role = roleRows[i % roleRows.length];
+    created.push({
+      subAgentId,
+      parentNodeId: node.nodeId,
+      parentSubAgentId: null,
+      ownerAgent: node.agent,
+      role,
+      objective: `${role} for ${node.nodeId}: ${node.title}`,
+      depth: 1,
+      status: 'SUCCEEDED',
+      startedAt: now,
+      finishedAt: now,
+      evidence: {
+        summary: `${role} completed`,
+        linkedNode: node.nodeId,
+      },
+      children: [],
+    });
+    remaining -= 1;
+  }
+
+  if (maxDepth > 1 && remaining > 0 && created.length > 0) {
+    const depthRoles = ['Verifier', 'Critic', 'Synthesizer', 'Reporter'];
+    let frontier = created.slice();
+    let depth = 1;
+    while (depth < maxDepth && remaining > 0 && frontier.length > 0) {
+      const next: Array<Record<string, unknown>> = [];
+      frontier.forEach((parent, idx) => {
+        if (remaining <= 0) return;
+        const childId = `sa_${node.nodeId}_${randomToken('')}`;
+        const childRole = depthRoles[Math.min(depthRoles.length - 1, depth - 1)];
+        const child = {
+          subAgentId: childId,
+          parentNodeId: node.nodeId,
+          parentSubAgentId: String(parent.subAgentId),
+          ownerAgent: node.agent,
+          role: childRole,
+          objective: `${childRole} check for ${String(parent.role || 'sub-agent')} (#${idx + 1})`,
+          depth: depth + 1,
+          status: 'SUCCEEDED',
+          startedAt: now,
+          finishedAt: now,
+          evidence: {
+            summary: `${childRole} checks passed`,
+            parentSubAgentId: String(parent.subAgentId),
+          },
+          children: [],
+        } as Record<string, unknown>;
+        const parentChildren = Array.isArray(parent.children) ? (parent.children as unknown[]).map(v => String(v)) : [];
+        parent.children = [...parentChildren, childId];
+        created.push(child);
+        next.push(child);
+        remaining -= 1;
+      });
+      frontier = next;
+      depth += 1;
+    }
+  }
+
+  node.subAgents = created;
+  return created;
+};
+
+const makeAgenticRunDetail = (runId: string, idea: AgenticIdeaInput): AgenticRunDetail => {
+  const now = new Date().toISOString();
+  const drafts = buildAgenticDraftsFromIdea(idea);
+  const tree = buildAgenticTotTree(idea, drafts);
+
+  return {
+    runId,
+    status: 'PENDING',
+    createdAt: now,
+    updatedAt: now,
+    idea: idea as unknown as Record<string, unknown>,
+    researchSpec: drafts.normalizedSpec,
+    rootConfigDraft: drafts.rootConfigDraft,
+    evalProtocolDraft: drafts.evalProtocolDraft,
+    riskStatement: drafts.riskStatement,
+    totTree: tree,
+    timeline: [
+      {
+        ts: now,
+        nodeId: 'n0',
+        phase: 'spec_modeled',
+        status: 'SUCCEEDED',
+        cost: 0.011,
+      },
+      {
+        ts: now,
+        nodeId: 'n0',
+        phase: 'tot_planned',
+        status: 'SUCCEEDED',
+        cost: 0.019,
+      },
+    ],
+    events: [
+      {
+        ts: now,
+        event: 'run_created',
+        message: 'Demo agentic run created',
+        payload: {
+          runId,
+          metric: (drafts.evalProtocolDraft as Record<string, unknown>).metric,
+          riskScore: drafts.riskScore,
+        },
+      },
+    ],
+    pendingApprovals: [],
+    contract: makeAgenticContract(),
+    matrix: null,
+    registryRecord: {
+      runId,
+      status: 'PENDING',
+      specHash: randomToken('spec'),
+      configHash: randomToken('cfg'),
+      contractPassRate: 100,
+      approvalPolicyMeta: (drafts.normalizedSpec as Record<string, unknown>)?.approvalPolicyMeta || {},
+    },
+    reproBundle: null,
+  };
+};
+
+const AGENTIC_HIGH_RISK_BASELINE = ['external_dependency_install', 'unknown_script_execution', 'data_exfiltration'];
+const AGENTIC_KNOWN_ACTIONS = [
+  ...AGENTIC_HIGH_RISK_BASELINE,
+  'switch_offline_stub',
+  'reduce_scope',
+  'retry_with_debug',
+];
+const AGENTIC_APPROVAL_TEMPLATE_RULES = {
+  strict: {
+    label: 'Strict',
+    description: 'Unknown actions and blocked actions require stricter approval gates.',
+    mode: 'strict',
+    minRiskScore: 8,
+    minApprovals: 1,
+    requireDistinctRoles: true,
+    approvalTtlMinutes: 120,
+    blockedActionRoles: ['security'],
+    highRiskActionRoles: ['admin', 'security'],
+    requireApprovalForUnknownActions: true,
+  },
+  balanced: {
+    label: 'Balanced',
+    description: 'Default production profile balancing safety and execution throughput.',
+    mode: 'balanced',
+    minRiskScore: 3,
+    minApprovals: 1,
+    requireDistinctRoles: false,
+    approvalTtlMinutes: 120,
+    blockedActionRoles: ['admin', 'security'],
+    highRiskActionRoles: ['admin', 'ops', 'security'],
+    requireApprovalForUnknownActions: true,
+  },
+  permissive: {
+    label: 'Permissive',
+    description: 'Allows faster local iteration while keeping explicit high-risk approvals.',
+    mode: 'permissive',
+    minRiskScore: 0,
+    minApprovals: 1,
+    requireDistinctRoles: false,
+    approvalTtlMinutes: 180,
+    blockedActionRoles: ['admin'],
+    highRiskActionRoles: ['admin', 'ops', 'security'],
+    requireApprovalForUnknownActions: false,
+  },
+} as const;
+const AGENTIC_APPROVAL_RULES_VERSION = '1.0';
+const AGENTIC_APPROVAL_RULES_HASH = mockHash64({
+  version: AGENTIC_APPROVAL_RULES_VERSION,
+  templates: AGENTIC_APPROVAL_TEMPLATE_RULES,
+  baselineHighRiskActions: AGENTIC_HIGH_RISK_BASELINE,
+});
+const AGENTIC_APPROVAL_RISK_WEIGHTS = {
+  forbiddenAction: 2,
+  blockedRequestedAction: 4,
+  requestedHighRiskAction: 3,
+  requestedUnknownAction: 2,
+  complianceNoExternalPush: 3,
+  complianceNoPII: 1,
+  allowNetwork: 2,
+  allowDependencyInstall: 1,
+};
+
+const buildAgenticApprovalPolicyMeta = (approvalPolicy: Record<string, unknown>) => {
+  const mode = String(approvalPolicy.mode || 'balanced').toLowerCase();
+  const matchedTemplates = Object.entries(AGENTIC_APPROVAL_TEMPLATE_RULES)
+    .filter(([, item]) => String(item.mode || '').toLowerCase() === mode)
+    .map(([templateId]) => templateId)
+    .sort();
+  return {
+    rulesVersion: AGENTIC_APPROVAL_RULES_VERSION,
+    rulesHash: AGENTIC_APPROVAL_RULES_HASH,
+    policyHash: mockHash64(approvalPolicy),
+    mode,
+    matchedTemplates,
+    highRiskActionCount: Array.isArray(approvalPolicy.highRiskActions) ? approvalPolicy.highRiskActions.length : 0,
+    minApprovals: Number(approvalPolicy.minApprovals || 1),
+    requireDistinctRoles: Boolean(approvalPolicy.requireDistinctRoles),
+  };
+};
+
+const uniqueRows = (values: string[]) => Array.from(new Set(values));
+
+const buildAgenticApprovalContext = (idea?: AgenticIdeaInput) => {
+  const constraints = idea?.constraints || {
+    compliance: [],
+    forbiddenActions: [],
+    allowNetwork: false,
+    allowDependencyInstall: false,
+  };
+  const requestedActions = uniqueRows((idea?.requestedActions || []).map(item => String(item || '').trim()).filter(Boolean));
+  const forbidden = new Set((constraints.forbiddenActions || []).map(item => String(item || '').trim()).filter(Boolean));
+  const compliance = new Set((constraints.compliance || []).map(item => String(item || '').trim()).filter(Boolean));
+  const requestedHighRiskActions = requestedActions.filter(action => AGENTIC_HIGH_RISK_BASELINE.includes(action));
+  const blockedRequestedActions = requestedActions.filter(action => forbidden.has(action));
+  const knownActions = new Set(AGENTIC_KNOWN_ACTIONS);
+  const unknownActions = requestedActions.filter(action => !knownActions.has(action));
+
+  return {
+    requestedActions,
+    requestedHighRiskActions,
+    blockedRequestedActions,
+    unknownActions,
+    forbiddenActions: Array.from(forbidden).sort(),
+    compliance: Array.from(compliance).sort(),
+    allowNetwork: Boolean(constraints.allowNetwork),
+    allowDependencyInstall: Boolean(constraints.allowDependencyInstall),
+  };
+};
+
+const scoreAgenticApprovalRisk = (context: ReturnType<typeof buildAgenticApprovalContext>) => {
+  let score = 0;
+  score += context.forbiddenActions.length * AGENTIC_APPROVAL_RISK_WEIGHTS.forbiddenAction;
+  score += context.blockedRequestedActions.length * AGENTIC_APPROVAL_RISK_WEIGHTS.blockedRequestedAction;
+  score += context.requestedHighRiskActions.length * AGENTIC_APPROVAL_RISK_WEIGHTS.requestedHighRiskAction;
+  score += context.unknownActions.length * AGENTIC_APPROVAL_RISK_WEIGHTS.requestedUnknownAction;
+  if (context.compliance.includes('no_external_data_push')) score += AGENTIC_APPROVAL_RISK_WEIGHTS.complianceNoExternalPush;
+  if (context.compliance.includes('no_pii')) score += AGENTIC_APPROVAL_RISK_WEIGHTS.complianceNoPII;
+  if (context.allowNetwork) score += AGENTIC_APPROVAL_RISK_WEIGHTS.allowNetwork;
+  if (context.allowDependencyInstall) score += AGENTIC_APPROVAL_RISK_WEIGHTS.allowDependencyInstall;
+  return score;
+};
+
+const templateRationale = (templateId: string, riskScore: number, threshold: number, blocked: number, unknown: number) => {
+  if (templateId === 'strict') {
+    return `riskScore=${riskScore} (threshold=${threshold}); blocked=${blocked}, unknown=${unknown}. Strict gate reduces unsafe overrides.`;
+  }
+  if (templateId === 'permissive') {
+    return `riskScore=${riskScore} (threshold=${threshold}); blocked=${blocked}, unknown=${unknown}. Permissive profile favors speed with explicit high-risk controls.`;
+  }
+  return `riskScore=${riskScore} (threshold=${threshold}); blocked=${blocked}, unknown=${unknown}. Balanced profile fits mixed workloads.`;
+};
+
+const AGENTIC_APPROVERS_FALLBACK: AgenticApproverListResponse = {
+  strictMode: true,
+  total: 6,
+  items: [
+    { actorId: 'ui:local_admin', roles: ['admin'], scopes: ['*'], actionAllowlist: ['*'], actionDenylist: [], active: true, note: 'local ui default admin' },
+    { actorId: 'ui:local_ops', roles: ['ops'], scopes: ['*'], actionAllowlist: ['switch_offline_stub', 'reduce_scope', 'retry_with_debug'], actionDenylist: [], active: true, note: 'local ui ops reviewer' },
+    { actorId: 'ui:local_security', roles: ['security'], scopes: ['*'], actionAllowlist: ['*'], actionDenylist: [], active: true, note: 'local ui security reviewer' },
+    { actorId: 'ui:admin_reviewer', roles: ['admin'], scopes: ['*'], actionAllowlist: ['*'], actionDenylist: [], active: true },
+    { actorId: 'ui:ops_reviewer', roles: ['ops'], scopes: ['*'], actionAllowlist: ['switch_offline_stub', 'reduce_scope', 'retry_with_debug'], actionDenylist: [], active: true },
+    { actorId: 'ui:security_reviewer', roles: ['security'], scopes: ['*'], actionAllowlist: ['*'], actionDenylist: [], active: true },
+  ],
+};
+
+const agenticApprovalPolicyTemplates = (idea?: AgenticIdeaInput): AgenticApprovalPolicyTemplateListResponse => {
+  const context = buildAgenticApprovalContext(idea);
+  const riskScore = scoreAgenticApprovalRisk(context);
+  const templates = Object.entries(AGENTIC_APPROVAL_TEMPLATE_RULES)
+    .map(([templateId, row]) => ({ templateId, ...row }))
+    .sort((a, b) => a.minRiskScore - b.minRiskScore);
+
+  let recommendedTemplateId: string = 'balanced';
+  if (idea) {
+    for (const row of templates) {
+      if (riskScore >= row.minRiskScore) {
+        recommendedTemplateId = row.templateId;
+      }
+    }
+  }
+  if (context.blockedRequestedActions.length > 0) {
+    recommendedTemplateId = 'strict';
+  }
+
+  const highRiskActions = uniqueRows([...AGENTIC_HIGH_RISK_BASELINE, ...context.requestedHighRiskActions, ...context.unknownActions]).sort();
+  const items = templates
+    .map(row => ({
+      templateId: row.templateId,
+      label: row.label,
+      description: row.description,
+      rationale: templateRationale(row.templateId, riskScore, row.minRiskScore, context.blockedRequestedActions.length, context.unknownActions.length),
+      recommended: row.templateId === recommendedTemplateId,
+      policy: {
+        mode: row.mode,
+        highRiskActions,
+        blockedActionRoles: [...row.blockedActionRoles],
+        highRiskActionRoles: [...row.highRiskActionRoles],
+        requireApprovalForUnknownActions: row.requireApprovalForUnknownActions,
+        minApprovals: row.minApprovals,
+        requireDistinctRoles: row.requireDistinctRoles,
+        approvalTtlMinutes: row.approvalTtlMinutes,
+      },
+    }))
+    .sort((a, b) => a.templateId.localeCompare(b.templateId));
+
+  return {
+    recommendedTemplateId,
+    contextSummary: {
+      ...context,
+      riskScore,
+      policyRulesVersion: AGENTIC_APPROVAL_RULES_VERSION,
+      policyRulesHash: AGENTIC_APPROVAL_RULES_HASH,
+    },
+    items,
+  };
+};
+
+const summarizeAgenticRun = (detail: AgenticRunDetail): AgenticRunSummary => ({
+  runId: detail.runId,
+  title: String((detail.researchSpec as any)?.title || 'Agentic Run'),
+  objective: String((detail.researchSpec as any)?.taskGoal || ''),
+  status: detail.status,
+  createdAt: detail.createdAt,
+  updatedAt: detail.updatedAt,
+  contractPassRate: detail.contract.passRate,
+  failureReason: (detail.registryRecord as any)?.failureReason || null,
+});
 
 export const resetMockState = () => {
   if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
@@ -2884,6 +3644,660 @@ export const createMockApi = (_apiBaseUrl: string) => ({
     const target = must(entry, `model_version_not_found:${versionId}`);
     target.stage = stage;
     return respond(target);
+  },
+
+  listAgenticApprovalPolicyTemplates: async (): Promise<AgenticApprovalPolicyTemplateListResponse> =>
+    respond(agenticApprovalPolicyTemplates()),
+  suggestAgenticApprovalPolicyTemplates: async (idea: AgenticIdeaInput): Promise<AgenticApprovalPolicyTemplateListResponse> =>
+    respond(agenticApprovalPolicyTemplates(idea)),
+  listAgenticApprovers: async (): Promise<AgenticApproverListResponse> =>
+    respond(AGENTIC_APPROVERS_FALLBACK),
+
+  validateAgenticSpec: async (idea: AgenticIdeaInput): Promise<AgenticSpecValidationResponse> => {
+    const drafts = buildAgenticDraftsFromIdea(idea);
+    return respond({
+      valid: true,
+      normalizedSpec: drafts.normalizedSpec,
+      rootConfigDraft: drafts.rootConfigDraft,
+      evalProtocolDraft: drafts.evalProtocolDraft,
+      riskStatement: drafts.riskStatement,
+      retrievalContext: drafts.retrievalContext,
+    });
+  },
+
+  createAgenticRun: async (payload: {
+    idea: AgenticIdeaInput;
+    autoExecute?: boolean;
+    induceFailure?: boolean;
+  }): Promise<AgenticRunCreateResponse> => {
+    const runId = `agentic_${randomToken('run')}`;
+    const detail = makeAgenticRunDetail(runId, payload.idea);
+    if (payload.induceFailure) {
+      const integrationNode = detail.totTree.find(node => node.agent === 'IntegrationAgent');
+      if (integrationNode) {
+        integrationNode.status = 'FAILED';
+        integrationNode.evidence = {
+          reason: "ModuleNotFoundError: No module named 'pettingzoo'",
+          fixSuggestion: 'switch_offline_stub',
+        };
+        const repairNode = createAgenticNode(
+          `n${detail.totTree.length}`,
+          'IntegrationAgent',
+          `Repair Branch for ${integrationNode.nodeId}`,
+          integrationNode.nodeId,
+          'medium',
+          'PENDING',
+        );
+        detail.totTree.push(repairNode);
+      }
+    }
+    if (payload.autoExecute) {
+      detail.status = 'SUCCEEDED';
+      detail.totTree = detail.totTree.map(node => ({
+        ...node,
+        status: node.status === 'FAILED' ? 'SUCCEEDED' : (node.status === 'PENDING' ? 'SUCCEEDED' : node.status),
+      }));
+      detail.events.push({
+        ts: new Date().toISOString(),
+        event: 'run_completed',
+        message: 'Auto-executed in demo mode',
+        payload: { runId },
+      });
+    }
+    state.agenticRuns[runId] = detail;
+    return respond({ runId, status: detail.status, detail });
+  },
+
+  listAgenticRuns: async (params?: { page?: number; pageSize?: number }): Promise<AgenticListResponse> => {
+    const pageSize = Math.max(1, params?.pageSize || 20);
+    const page = Math.max(1, params?.page || 1);
+    const list = Object.values(state.agenticRuns)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .map(detail => summarizeAgenticRun(detail));
+    const start = (page - 1) * pageSize;
+    return respond({
+      page,
+      pageSize,
+      total: list.length,
+      items: list.slice(start, start + pageSize),
+    });
+  },
+
+  getAgenticRun: async (runId: string): Promise<AgenticRunDetail> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    return respond(detail);
+  },
+  getAgenticRunReport: async (runId: string): Promise<AgenticRunReportResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const generatedAt = new Date().toISOString();
+    const approvals = (detail.pendingApprovals || []).reduce(
+      (acc, item) => {
+        const status = String((item as Record<string, unknown>).status || '').toUpperCase();
+        if (status === 'PENDING') acc.pending += 1;
+        else if (status === 'APPROVED') acc.approved += 1;
+        else if (status === 'REJECTED') acc.rejected += 1;
+        else if (status === 'EXPIRED') acc.expired += 1;
+        else if (status === 'REOPENED') acc.reopened += 1;
+        return acc;
+      },
+      { pending: 0, approved: 0, rejected: 0, expired: 0, reopened: 0 },
+    );
+    const subAgents = (detail.totTree || []).flatMap(node => (node.subAgents || []));
+    const roleMap = new Map<string, number>();
+    const subStats = { total: 0, running: 0, succeeded: 0, failed: 0 };
+    subAgents.forEach(item => {
+      const row = item as Record<string, unknown>;
+      const status = String(row.status || '').toUpperCase();
+      subStats.total += 1;
+      if (status === 'RUNNING') subStats.running += 1;
+      else if (status === 'SUCCEEDED') subStats.succeeded += 1;
+      else if (status === 'FAILED') subStats.failed += 1;
+      const role = String(row.role || 'SubAgent');
+      roleMap.set(role, (roleMap.get(role) || 0) + 1);
+    });
+    const topRoles = Array.from(roleMap.entries())
+      .map(([role, count]) => ({ role, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+
+    const timelineEvents = (detail.timeline?.length || 0) + (detail.events?.length || 0);
+    const eventBlob = (detail.events || []).map(evt => `${String(evt.event || '')} ${String(evt.message || '')}`.toLowerCase());
+    const timelineBlob = (detail.timeline || []).map(item => `${String((item as any).phase || '')} ${String((item as any).status || '')}`.toLowerCase());
+    const allBlob = [...eventBlob, ...timelineBlob];
+    const countByTokens = (tokens: string[]) => allBlob.filter(text => tokens.some(token => text.includes(token))).length;
+    const ranking = (detail.matrix?.ranking || []).slice(0, 5).map((item, idx) => ({
+      rank: idx + 1,
+      id: item.id,
+      score: Number(item.score || 0),
+    }));
+
+    const report = {
+      runId,
+      title: String((detail.idea as Record<string, unknown>)?.title || 'Agentic Demo Run'),
+      status: detail.status,
+      generatedAt,
+      objective: String((detail.idea as Record<string, unknown>)?.taskGoal || ''),
+      contractPassRate: Number((detail.contract?.passRate || 0)),
+      contractMissing: (detail.contract?.missing || []).map(item => String(item)),
+      totNodes: detail.totTree.length,
+      timelineEvents,
+      failureEvents: countByTokens(['fail', 'blocked', 'error']),
+      recoveryEvents: countByTokens(['repair', 'retry', 'recover', 'reopen']),
+      safetyEvents: countByTokens(['approval', 'safety', 'policy', 'audit']),
+      leagueEvents: countByTokens(['matrix', 'league', 'ranking']),
+      approvals,
+      subAgents: {
+        ...subStats,
+        topRoles,
+      },
+      matrix: {
+        labels: detail.matrix?.labels?.length || 0,
+        topRanking: ranking,
+      },
+      reproScript: `.local/agentic_os/runs/${runId}/repro_bundle/reproduce.sh`,
+      replayCommand: `python scripts/agentic_marl_os.py replay --run-id ${runId}`,
+      nodeStatus: {
+        pending: detail.totTree.filter(node => ['PENDING', 'RETRY_PENDING'].includes(String(node.status).toUpperCase())).length,
+        running: detail.totTree.filter(node => String(node.status).toUpperCase() === 'RUNNING').length,
+        blocked: detail.totTree.filter(node => String(node.status).toUpperCase() === 'BLOCKED').length,
+        failed: detail.totTree.filter(node => String(node.status).toUpperCase() === 'FAILED').length,
+        succeeded: detail.totTree.filter(node => String(node.status).toUpperCase() === 'SUCCEEDED').length,
+      },
+      registryRecord: detail.registryRecord || {},
+      approvalPolicyMeta: ((detail.researchSpec as Record<string, unknown>)?.approvalPolicyMeta || {}) as Record<string, unknown>,
+    };
+
+    const markdown = [
+      `# Agentic Run Report - ${runId}`,
+      '',
+      `- generated_at: ${generatedAt}`,
+      `- title: ${report.title}`,
+      `- status: ${report.status}`,
+      `- objective: ${report.objective}`,
+      `- contract_pass_rate: ${Number(report.contractPassRate).toFixed(2)}%`,
+      '',
+      '## Repro & Replay',
+      `- reproduce_script: ${report.reproScript}`,
+      `- replay_command: ${report.replayCommand}`,
+      '',
+    ].join('\n');
+
+    return respond({
+      runId,
+      generatedAt,
+      report,
+      markdown,
+      artifactJsonPath: `demo://agentic/${runId}/run_report.json`,
+      artifactMarkdownPath: `demo://agentic/${runId}/run_report.md`,
+    });
+  },
+
+  listAgenticSubAgents: async (
+    runId: string,
+    params?: { page?: number; pageSize?: number; nodeId?: string; status?: string },
+  ): Promise<AgenticSubAgentListResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const pageSize = Math.max(1, params?.pageSize || 50);
+    const page = Math.max(1, params?.page || 1);
+    const rows = detail.totTree.flatMap(node =>
+      (node.subAgents || []).map((sa, idx) => {
+        const rec = sa as Record<string, unknown>;
+        return {
+          subAgentId: String(rec.subAgentId || `${node.nodeId}-sa-${idx}`),
+          parentNodeId: String(rec.parentNodeId || node.nodeId),
+          parentSubAgentId: (rec.parentSubAgentId as string | undefined) || null,
+          ownerAgent: String(rec.ownerAgent || node.agent),
+          role: String(rec.role || 'SubAgent'),
+          objective: String(rec.objective || ''),
+          depth: Number(rec.depth || 1),
+          status: String(rec.status || 'SUCCEEDED'),
+          startedAt: String(rec.startedAt || detail.updatedAt),
+          finishedAt: (rec.finishedAt as string | undefined) || null,
+          evidence: (rec.evidence as Record<string, unknown>) || {},
+          children: Array.isArray(rec.children) ? rec.children.map(v => String(v)) : [],
+        };
+      }),
+    );
+    const filtered = rows
+      .filter(row => !params?.nodeId || row.parentNodeId === params.nodeId)
+      .filter(row => !params?.status || row.status.toUpperCase() === String(params.status).toUpperCase())
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    const start = (page - 1) * pageSize;
+    return respond({
+      runId,
+      page,
+      pageSize,
+      total: filtered.length,
+      items: filtered.slice(start, start + pageSize),
+    });
+  },
+
+  executeAgenticRun: async (runId: string, payload?: { mode?: 'all' | 'next' }): Promise<AgenticActionResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const mode = payload?.mode || 'all';
+    const pending = detail.totTree.filter(node => node.status === 'PENDING' || node.status === 'RETRY_PENDING');
+    const targetNodes = mode === 'next' ? pending.slice(0, 1) : pending;
+    const forbidden = new Set(((detail.researchSpec as any)?.constraints?.forbiddenActions as string[]) || []);
+    const requested = ((detail.researchSpec as any)?.requestedActions as string[]) || [];
+    const executionMode = String((detail.researchSpec as any)?.execution?.mode || 'offline_stub');
+    const approvalPolicy = ((detail.researchSpec as any)?.approvalPolicy || {}) as Record<string, unknown>;
+    const minApprovals = Math.max(1, Math.min(3, Number(approvalPolicy.minApprovals || 1)));
+    const requireDistinctRoles = Boolean(approvalPolicy.requireDistinctRoles || approvalPolicy.require_distinct_roles || false);
+    const approvalTtlMinutes = Math.max(5, Math.min(10080, Number(approvalPolicy.approvalTtlMinutes || approvalPolicy.approval_ttl_minutes || 120)));
+    const highRiskRoles = Array.isArray(approvalPolicy.highRiskActionRoles)
+      ? (approvalPolicy.highRiskActionRoles as string[])
+      : ['admin', 'ops', 'security'];
+
+    const ensurePendingApproval = (nodeId: string, action: string, reason: string, requiredRoles: string[]) => {
+      const existing = detail.pendingApprovals.find(item => item.action === action && item.status === 'PENDING');
+      if (existing) return;
+      detail.pendingApprovals.push({
+        id: randomToken('appr'),
+        nodeId,
+        action,
+        reason,
+        status: 'PENDING',
+        requiredApprovals: minApprovals,
+        requireDistinctRoles,
+        approvalTtlMinutes,
+        approvalVotes: 0,
+        requiredRoles,
+        approvals: [],
+        expiresAt: new Date(Date.now() + approvalTtlMinutes * 60 * 1000).toISOString(),
+      } as any);
+    };
+
+    targetNodes.forEach(node => {
+      if (node.agent === 'SafetyAgent') {
+        const blocked = requested.filter(action => forbidden.has(action));
+        if (blocked.length > 0) {
+          node.status = 'BLOCKED';
+          detail.status = 'BLOCKED';
+          blocked.forEach(action => ensurePendingApproval(node.nodeId, action, 'policy_blocked', highRiskRoles));
+          detail.events.push({
+            ts: new Date().toISOString(),
+            event: 'approval_required',
+            message: 'Safety gate blocked high-risk actions',
+            payload: { blocked },
+          });
+          return;
+        }
+      }
+      if (node.title === 'Execute Candidate Run' && executionMode === 'local_shell') {
+        const hasApprovedScript = detail.pendingApprovals.some(
+          item => item.action === 'unknown_script_execution' && item.status === 'APPROVED',
+        );
+        if (!hasApprovedScript) {
+          node.status = 'BLOCKED';
+          detail.status = 'BLOCKED';
+          ensurePendingApproval(node.nodeId, 'unknown_script_execution', 'high_risk_requires_approval', highRiskRoles);
+          detail.events.push({
+            ts: new Date().toISOString(),
+            event: 'approval_required',
+            message: 'Execution adapter requires unknown_script_execution approval',
+            payload: { blocked: ['unknown_script_execution'] },
+          });
+          return;
+        }
+      }
+      node.status = 'SUCCEEDED';
+      const nodeTs = new Date().toISOString();
+      node.evidence = {
+        executedAt: nodeTs,
+        mode: executionMode,
+        ...(executionMode === 'mle_runner'
+          ? {
+              mle: {
+                dryRun: true,
+                summary: { bestRunId: 'mle-mock-001', bestScore: 0.63, runCount: 3 },
+              },
+            }
+          : {}),
+      };
+      const spawned = spawnSubAgentsForNode(detail, node);
+      if (spawned.length > 0) {
+        node.evidence = {
+          ...node.evidence,
+          subAgentsSpawned: spawned.length,
+          subAgentIds: spawned.map(item => String(item.subAgentId || '')).filter(Boolean),
+        };
+      }
+      detail.timeline.push({
+        ts: nodeTs,
+        nodeId: node.nodeId,
+        phase: 'executed',
+        status: node.status,
+        cost: Number((0.01 + spawned.length * 0.006).toFixed(3)),
+      });
+      detail.events.push({
+        ts: nodeTs,
+        event: 'node_succeeded',
+        message: `${node.nodeId} succeeded`,
+        payload: { nodeId: node.nodeId, subAgentsSpawned: spawned.length },
+      });
+      if (spawned.length > 0) {
+        detail.timeline.push({
+          ts: nodeTs,
+          nodeId: node.nodeId,
+          phase: 'sub_agents_spawned',
+          status: 'SUCCEEDED',
+          cost: Number((spawned.length * 0.003).toFixed(3)),
+        });
+        detail.events.push({
+          ts: nodeTs,
+          event: 'sub_agents_spawned',
+          message: `${node.nodeId} spawned ${spawned.length} sub-agents`,
+          payload: {
+            nodeId: node.nodeId,
+            count: spawned.length,
+            subAgents: spawned.map(item => ({
+              subAgentId: item.subAgentId,
+              role: item.role,
+              depth: item.depth,
+              parentSubAgentId: item.parentSubAgentId || null,
+            })),
+          },
+        });
+      }
+    });
+
+    if (!detail.totTree.some(node => node.status === 'PENDING' || node.status === 'RETRY_PENDING' || node.status === 'BLOCKED')) {
+      detail.status = 'SUCCEEDED';
+    } else if (detail.status !== 'BLOCKED') {
+      detail.status = 'RUNNING';
+    }
+    detail.updatedAt = new Date().toISOString();
+    detail.registryRecord = {
+      ...(detail.registryRecord || {}),
+      status: detail.status,
+      updatedAt: detail.updatedAt,
+    };
+    state.agenticRuns[runId] = detail;
+    return respond({ ok: true, message: `run_status=${detail.status}`, detail });
+  },
+
+  approveAgenticActions: async (
+    runId: string,
+    payload: {
+      approvalIds: string[];
+      decision: 'approve' | 'reject' | 'reopen';
+      actorId: string;
+      actorRole: 'admin' | 'ops' | 'security';
+      idempotencyKey?: string;
+      comment?: string;
+    },
+  ): Promise<AgenticActionResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const decidedAt = new Date().toISOString();
+    if (payload.decision === 'reopen') {
+      detail.pendingApprovals = detail.pendingApprovals.map(item => {
+        if (!payload.approvalIds.includes(item.id)) return item;
+        if (!['REJECTED', 'EXPIRED', 'APPROVED'].includes(String(item.status || ''))) return item;
+        return {
+          ...item,
+          status: 'PENDING',
+          approvals: [],
+          approvalVotes: 0,
+          reopenedAt: decidedAt,
+          reopenedBy: payload.actorId,
+          reopenedRole: payload.actorRole,
+        } as any;
+      });
+      detail.status = 'BLOCKED';
+      detail.updatedAt = decidedAt;
+      detail.events.push({
+        ts: detail.updatedAt,
+        event: 'approval_reopened',
+        message: 'Approvals reopened',
+        payload: { approvalIds: payload.approvalIds, actorId: payload.actorId, actorRole: payload.actorRole, comment: payload.comment || '' },
+      });
+      state.agenticRuns[runId] = detail;
+      return respond({ ok: true, message: 'approval_reopened', detail });
+    }
+
+    detail.pendingApprovals = detail.pendingApprovals.map(item => {
+      if (!payload.approvalIds.includes(item.id)) {
+        return item;
+      }
+      if (item.status !== 'PENDING') {
+        return item;
+      }
+      if (payload.decision === 'reject') {
+        return {
+          ...item,
+          status: 'REJECTED',
+          decidedAt,
+          decidedBy: payload.actorId,
+          decidedRole: payload.actorRole,
+          decisionComment: payload.comment || undefined,
+        };
+      }
+
+      const requiredRoles = Array.isArray((item as any).requiredRoles) ? ((item as any).requiredRoles as string[]) : [];
+      if (requiredRoles.length > 0 && !requiredRoles.includes(payload.actorRole)) {
+        return item;
+      }
+      const approvalRows = Array.isArray((item as any).approvals) ? ([...(item as any).approvals] as any[]) : [];
+      const actorVoted = approvalRows.some(row => String(row?.actorId || row?.actor_id || '') === payload.actorId);
+      if (!actorVoted) {
+        approvalRows.push({
+          actorId: payload.actorId,
+          actorRole: payload.actorRole,
+          at: decidedAt,
+          comment: payload.comment || '',
+        });
+      }
+      const requiredApprovals = Math.max(1, Math.min(3, Number((item as any).requiredApprovals || 1)));
+      const approvalVotes = approvalRows.length;
+      const requireDistinctRoles = Boolean((item as any).requireDistinctRoles || (item as any).require_distinct_roles);
+      const distinctRoles = new Set(approvalRows.map(row => String(row?.actorRole || row?.actor_role || '').trim()).filter(Boolean));
+      const roleQuorumMet = !requireDistinctRoles || distinctRoles.size >= requiredApprovals;
+      if (approvalVotes >= requiredApprovals && roleQuorumMet) {
+        return {
+          ...item,
+          status: 'APPROVED',
+          approvals: approvalRows,
+          approvalVotes,
+          requiredApprovals,
+          requireDistinctRoles,
+          approvalRoles: Array.from(distinctRoles),
+          decidedAt,
+          decidedBy: payload.actorId,
+          decidedRole: payload.actorRole,
+          decisionComment: payload.comment || undefined,
+        };
+      }
+      return {
+        ...item,
+        approvals: approvalRows,
+        approvalVotes,
+        requiredApprovals,
+        requireDistinctRoles,
+        approvalRoles: Array.from(distinctRoles),
+      };
+    });
+    if (payload.decision === 'approve') {
+      const pendingExists = detail.pendingApprovals.some(item => item.status === 'PENDING');
+      if (!pendingExists) {
+        detail.totTree = detail.totTree.map(node =>
+          node.status === 'BLOCKED' ? { ...node, status: 'RETRY_PENDING' } : node,
+        );
+        detail.status = 'RUNNING';
+      } else {
+        detail.status = 'BLOCKED';
+      }
+    }
+    detail.updatedAt = new Date().toISOString();
+    detail.events.push({
+      ts: detail.updatedAt,
+      event: 'approval_updated',
+      message: `Approval decision=${payload.decision}`,
+      payload: {
+        approvalIds: payload.approvalIds,
+        actorId: payload.actorId,
+        actorRole: payload.actorRole,
+        comment: payload.comment || '',
+      },
+    });
+    state.agenticRuns[runId] = detail;
+    return respond({ ok: true, message: 'approval_updated', detail });
+  },
+  recoverAgenticRun: async (runId: string): Promise<AgenticActionResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const pending = detail.totTree.some(node => node.status === 'PENDING' || node.status === 'RETRY_PENDING');
+    const blocked = detail.totTree.some(node => node.status === 'BLOCKED') || detail.pendingApprovals.some(item => item.status === 'PENDING');
+    const failed = detail.totTree.some(node => node.status === 'FAILED');
+    if (blocked) detail.status = 'BLOCKED';
+    else if (failed && !pending) detail.status = 'FAILED';
+    else if (pending) detail.status = 'RUNNING';
+    else detail.status = 'SUCCEEDED';
+    detail.updatedAt = new Date().toISOString();
+    detail.events.push({
+      ts: detail.updatedAt,
+      event: 'run_recovered',
+      message: `Recovered run status to ${detail.status}`,
+      payload: { runId },
+    });
+    state.agenticRuns[runId] = detail;
+    return respond({ ok: true, message: `run_recovered status=${detail.status}`, detail });
+  },
+
+  addAgenticBranch: async (
+    runId: string,
+    nodeId: string,
+    payload: {
+      title: string;
+      hypothesis: string;
+      executionPlan: string;
+      expectedMetrics?: Record<string, unknown>;
+      budget?: Record<string, unknown>;
+      risk?: string;
+    },
+  ): Promise<AgenticActionResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const newNodeId = `n${detail.totTree.length + 1}`;
+    const node: AgenticNode = {
+      nodeId: newNodeId,
+      parentId: nodeId,
+      agent: 'ResearchAgent',
+      title: payload.title,
+      hypothesis: payload.hypothesis,
+      executionPlan: payload.executionPlan,
+      expectedMetrics: payload.expectedMetrics || {},
+      budget: payload.budget || {},
+      risk: payload.risk || 'medium',
+      status: 'PENDING',
+      rationale: 'User-added branch in demo mode',
+      evidence: {},
+      nextSuggestions: ['Execute branch', 'Compare branch'],
+      children: [],
+    };
+    detail.totTree.push(node);
+    const parent = detail.totTree.find(item => item.nodeId === nodeId);
+    if (parent) parent.children = [...(parent.children || []), newNodeId];
+    detail.updatedAt = new Date().toISOString();
+    state.agenticRuns[runId] = detail;
+    return respond({ ok: true, message: 'branch_added', detail });
+  },
+
+  deleteAgenticBranch: async (runId: string, nodeId: string): Promise<AgenticActionResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    if (nodeId === 'n0') {
+      throw new Error('cannot_delete_root');
+    }
+    const removeIds = new Set<string>([nodeId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      detail.totTree.forEach(node => {
+        if (node.parentId && removeIds.has(node.parentId) && !removeIds.has(node.nodeId)) {
+          removeIds.add(node.nodeId);
+          changed = true;
+        }
+      });
+    }
+    detail.totTree = detail.totTree.filter(node => !removeIds.has(node.nodeId));
+    detail.totTree = detail.totTree.map(node => ({
+      ...node,
+      children: (node.children || []).filter(child => !removeIds.has(child)),
+    }));
+    detail.updatedAt = new Date().toISOString();
+    state.agenticRuns[runId] = detail;
+    return respond({ ok: true, message: 'branch_deleted', detail });
+  },
+
+  generateAgenticMatrix: async (
+    runId: string,
+    payload?: { checkpointIds?: string[]; maxSize?: number; downsample?: boolean },
+  ): Promise<AgenticMatrixResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const labels = payload?.checkpointIds?.length ? payload.checkpointIds : ['ckpt_0', 'ckpt_1', 'ckpt_2'];
+    const matrix = labels.map((row, rowIdx) =>
+      labels.map((col, colIdx) => (rowIdx === colIdx ? 0.5 : Number((0.35 + Math.abs(rowIdx - colIdx) * 0.12).toFixed(3)))),
+    );
+    const cells = labels.flatMap((row, rowIdx) =>
+      labels.map((col, colIdx) => ({
+        row,
+        col,
+        value: matrix[rowIdx][colIdx],
+        winRate: matrix[rowIdx][colIdx],
+        confidence: Number((0.5 + Math.abs(matrix[rowIdx][colIdx] - 0.5)).toFixed(3)),
+        verdict: rowIdx === colIdx ? 'draw' : `${row}>${col}`,
+        logUri: `demo://agentic/${row}__${col}.log`,
+        replayUri: `demo://agentic/${row}__${col}.replay.json`,
+      })),
+    );
+    const ranking = labels.map((id, idx) => ({ id, score: Number((1024 - idx * 17).toFixed(3)) }));
+    detail.matrix = {
+      labels,
+      matrix,
+      cells,
+      ranking,
+      meta: { metric: 'winRate', gamesPerPair: 1, generatedAt: new Date().toISOString() },
+    };
+    detail.updatedAt = new Date().toISOString();
+    state.agenticRuns[runId] = detail;
+    return respond({ runId, matrix: detail.matrix });
+  },
+
+  exportAgenticReproBundle: async (runId: string): Promise<AgenticReproResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const script = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo \"Replay agentic run ${runId}\"`,
+      'echo \"Demo bundle script\"',
+    ].join('\n');
+    const bundlePath = urlFromContent(`agentic_bundle_${runId}`, script, 'text/x-shellscript');
+    const manifest = {
+      runId,
+      status: detail.status,
+      createdAt: detail.createdAt,
+      updatedAt: detail.updatedAt,
+      decisionSnapshot: 'demo://decision_snapshot.json',
+    };
+    detail.reproBundle = { bundlePath, manifest };
+    state.agenticRuns[runId] = detail;
+    return respond({ runId, bundlePath, manifest });
+  },
+  replayAgenticAudit: async (runId: string, uptoEventSeq?: number): Promise<AgenticAuditReplayResponse> => {
+    const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
+    const replayedEvents = (detail.events || []).length;
+    return respond({
+      runId,
+      verified: true,
+      checkedEvents: replayedEvents,
+      chainHead: `demo_audit_${runId}_${replayedEvents}`,
+      failureReason: null,
+      replay: {
+        uptoEventSeq: typeof uptoEventSeq === 'number' ? uptoEventSeq : null,
+        replayedEvents,
+        replayStatus: detail.status,
+        matchesCurrentState: true,
+        semanticValid: true,
+        semanticIssues: [],
+      },
+    });
   },
 
   getSystemResources: async (): Promise<any> => {

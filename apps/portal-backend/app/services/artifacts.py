@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from sqlalchemy.orm import Session
@@ -53,7 +53,7 @@ class ArtifactService:
             existing.path = path
             existing.size = str(size_bytes)
             existing.type = "file"
-            existing.last_modified = datetime.utcnow().isoformat()
+            existing.last_modified = datetime.now(timezone.utc).isoformat()
             existing.object_key = object_key
             db.commit()
             db.refresh(existing)
@@ -65,7 +65,7 @@ class ArtifactService:
             path=path,
             size=str(size_bytes),
             type="file",
-            last_modified=datetime.utcnow().isoformat(),
+            last_modified=datetime.now(timezone.utc).isoformat(),
             object_key=object_key,
         )
         db.add(artifact)
@@ -105,7 +105,7 @@ class ArtifactService:
 
         manifest = {
             "run_id": run_id,
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "count": len(items),
             "total_bytes": total_bytes,
             "artifacts": items,

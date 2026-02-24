@@ -1,4 +1,17 @@
 import type {
+  AgenticApproverListResponse,
+  AgenticApprovalPolicyTemplateListResponse,
+  AgenticAuditReplayResponse,
+  AgenticActionResponse,
+  AgenticIdeaInput,
+  AgenticListResponse,
+  AgenticMatrixResponse,
+  AgenticReproResponse,
+  AgenticRunReportResponse,
+  AgenticRunCreateResponse,
+  AgenticRunDetail,
+  AgenticSubAgentListResponse,
+  AgenticSpecValidationResponse,
   Algo,
   AlgoVersion,
   ArtifactFile,
@@ -398,6 +411,218 @@ const realApi = {
   getMatrixResults: async (params?: { runId?: string; protocolId?: string; poolId?: string }): Promise<MatrixResult[]> =>
     apiClient.listMatrixResults(params),
   getMatrixResultById: async (id: string): Promise<MatrixResult> => apiClient.getMatrixResult(id),
+  listAgenticApprovalPolicyTemplates: async (): Promise<AgenticApprovalPolicyTemplateListResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/approval-policy/templates`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_approval_policy_templates_failed');
+    }
+    return res.json();
+  },
+  suggestAgenticApprovalPolicyTemplates: async (idea: AgenticIdeaInput): Promise<AgenticApprovalPolicyTemplateListResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/approval-policy/templates/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(idea),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_approval_policy_suggest_failed');
+    }
+    return res.json();
+  },
+  listAgenticApprovers: async (): Promise<AgenticApproverListResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/approvers`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_approvers_list_failed');
+    }
+    return res.json();
+  },
+  validateAgenticSpec: async (idea: AgenticIdeaInput): Promise<AgenticSpecValidationResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/specs/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(idea),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_spec_validate_failed');
+    }
+    return res.json();
+  },
+  createAgenticRun: async (payload: {
+    idea: AgenticIdeaInput;
+    autoExecute?: boolean;
+    induceFailure?: boolean;
+  }): Promise<AgenticRunCreateResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_run_create_failed');
+    }
+    return res.json();
+  },
+  listAgenticRuns: async (params?: { page?: number; pageSize?: number }): Promise<AgenticListResponse> => {
+    const query = new URLSearchParams();
+    if (typeof params?.page === 'number') query.set('page', String(params.page));
+    if (typeof params?.pageSize === 'number') query.set('page_size', String(params.pageSize));
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs${suffix}`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_runs_list_failed');
+    }
+    return res.json();
+  },
+  getAgenticRun: async (runId: string): Promise<AgenticRunDetail> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_run_get_failed');
+    }
+    return res.json();
+  },
+  getAgenticRunReport: async (runId: string): Promise<AgenticRunReportResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/report`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_run_report_get_failed');
+    }
+    return res.json();
+  },
+  listAgenticSubAgents: async (
+    runId: string,
+    params?: { page?: number; pageSize?: number; nodeId?: string; status?: string },
+  ): Promise<AgenticSubAgentListResponse> => {
+    const query = new URLSearchParams();
+    if (typeof params?.page === 'number') query.set('page', String(params.page));
+    if (typeof params?.pageSize === 'number') query.set('page_size', String(params.pageSize));
+    if (params?.nodeId) query.set('node_id', params.nodeId);
+    if (params?.status) query.set('status', params.status);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/sub-agents${suffix}`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_sub_agents_list_failed');
+    }
+    return res.json();
+  },
+  executeAgenticRun: async (runId: string, payload?: { mode?: 'all' | 'next' }): Promise<AgenticActionResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || { mode: 'all' }),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_run_execute_failed');
+    }
+    return res.json();
+  },
+  approveAgenticActions: async (
+    runId: string,
+    payload: {
+      approvalIds: string[];
+      decision: 'approve' | 'reject' | 'reopen';
+      actorId: string;
+      actorRole: 'admin' | 'ops' | 'security';
+      idempotencyKey?: string;
+      comment?: string;
+    },
+  ): Promise<AgenticActionResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/approvals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_approvals_failed');
+    }
+    return res.json();
+  },
+  recoverAgenticRun: async (runId: string): Promise<AgenticActionResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/recover`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_run_recover_failed');
+    }
+    return res.json();
+  },
+  addAgenticBranch: async (
+    runId: string,
+    nodeId: string,
+    payload: {
+      title: string;
+      hypothesis: string;
+      executionPlan: string;
+      expectedMetrics?: Record<string, unknown>;
+      budget?: Record<string, unknown>;
+      risk?: string;
+    },
+  ): Promise<AgenticActionResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/nodes/${nodeId}/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_branch_add_failed');
+    }
+    return res.json();
+  },
+  deleteAgenticBranch: async (runId: string, nodeId: string): Promise<AgenticActionResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/nodes/${nodeId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_branch_delete_failed');
+    }
+    return res.json();
+  },
+  generateAgenticMatrix: async (
+    runId: string,
+    payload?: { checkpointIds?: string[]; maxSize?: number; downsample?: boolean },
+  ): Promise<AgenticMatrixResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/matrix`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_matrix_failed');
+    }
+    return res.json();
+  },
+  exportAgenticReproBundle: async (runId: string): Promise<AgenticReproResponse> => {
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/repro-bundle`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_repro_failed');
+    }
+    return res.json();
+  },
+  replayAgenticAudit: async (runId: string, uptoEventSeq?: number): Promise<AgenticAuditReplayResponse> => {
+    const query = typeof uptoEventSeq === 'number' ? `?upto_event_seq=${encodeURIComponent(String(uptoEventSeq))}` : '';
+    const res = await authFetch(`${apiBaseUrl}/agentic/runs/${runId}/audit-replay${query}`);
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(detail || 'agentic_audit_replay_failed');
+    }
+    return res.json();
+  },
 
   getJobById: async (jobId: string) => apiClient.getJob(jobId),
   pauseJob: async (jobId: string, payload?: { reason?: string }) => apiClient.pauseJob(jobId, payload),

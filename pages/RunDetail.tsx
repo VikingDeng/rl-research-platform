@@ -8,9 +8,12 @@ import { AdversarialReplayPlayer, isAdversarialReplayData, type AdversarialRepla
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Terminal, Download, RefreshCw, FileText, Tag, PlayCircle, Folder, ChevronRight, GitFork, Grid3X3, Search, ArrowDownCircle, Calculator, Copy, X, HardDrive, AlertTriangle, Package } from 'lucide-react';
 import { useToast } from '../components/Toast.tsx';
+import { useI18n } from '../services/i18n';
 
 const LOG_PAGE_SIZE = 200;
 const LOG_HINT_WINDOW = 400;
+const LOG_LINE_HEIGHT = 20;
+const LOG_OVERSCAN = 18;
 
 type LogHint = {
   id: string;
@@ -41,7 +44,10 @@ const smoothSeries = (
   return output;
 };
 
-const deriveLogHints = (lines: string[]): LogHint[] => {
+const deriveLogHints = (
+  lines: string[],
+  tx: (zh: string, en: string) => string,
+): LogHint[] => {
   const recent = lines.slice(-LOG_HINT_WINDOW);
   const hints: LogHint[] = [];
   const missingModules = new Set<string>();
@@ -80,18 +86,27 @@ const deriveLogHints = (lines: string[]): LogHint[] => {
     const list = Array.from(missingModules).slice(0, 4).join(', ');
     addHint({
       id: 'missing-modules',
-      title: 'Missing Python dependency',
-      detail: `Python failed to import: ${list}${missingModules.size > 4 ? '…' : ''}.`,
-      action: 'Install the package in the runner env or add it to your algo requirements.',
+      title: tx('缺少 Python 依赖', 'Missing Python dependency'),
+      detail: tx(
+        `Python 导入失败：${list}${missingModules.size > 4 ? '…' : ''}。`,
+        `Python failed to import: ${list}${missingModules.size > 4 ? '…' : ''}.`,
+      ),
+      action: tx(
+        '请在 runner 环境安装依赖，或加入算法依赖清单。',
+        'Install the package in the runner env or add it to your algo requirements.',
+      ),
     });
   }
 
   if (entrypointError) {
     addHint({
       id: 'entrypoint-error',
-      title: 'Algorithm entrypoint not loading',
-      detail: 'The runner could not import the entrypoint module/function.',
-      action: 'Check that entrypoint is `module:function` and that the module is inside your algo source path.',
+      title: tx('算法入口加载失败', 'Algorithm entrypoint not loading'),
+      detail: tx('Runner 无法导入入口模块/函数。', 'The runner could not import the entrypoint module/function.'),
+      action: tx(
+        '检查入口是否为 `module:function`，并确认模块位于算法源码路径中。',
+        'Check that entrypoint is `module:function` and that the module is inside your algo source path.',
+      ),
     });
   }
 
@@ -99,27 +114,30 @@ const deriveLogHints = (lines: string[]): LogHint[] => {
     const list = Array.from(missingFiles).slice(0, 3).join(', ');
     addHint({
       id: 'missing-files',
-      title: 'Missing file or dataset path',
-      detail: `File not found: ${list}${missingFiles.size > 3 ? '…' : ''}.`,
-      action: 'Verify dataset paths, mounts, and working directory.',
+      title: tx('缺少文件或数据集路径', 'Missing file or dataset path'),
+      detail: tx(
+        `未找到文件：${list}${missingFiles.size > 3 ? '…' : ''}。`,
+        `File not found: ${list}${missingFiles.size > 3 ? '…' : ''}.`,
+      ),
+      action: tx('请检查数据路径、挂载与工作目录。', 'Verify dataset paths, mounts, and working directory.'),
     });
   }
 
   if (cudaOom) {
     addHint({
       id: 'cuda-oom',
-      title: 'CUDA out of memory',
-      detail: 'GPU memory exhausted during training.',
-      action: 'Reduce batch size, model size, or request more GPUs.',
+      title: tx('CUDA 显存不足', 'CUDA out of memory'),
+      detail: tx('训练期间 GPU 显存耗尽。', 'GPU memory exhausted during training.'),
+      action: tx('请降低 batch size、模型规模或申请更多 GPU。', 'Reduce batch size, model size, or request more GPUs.'),
     });
   }
 
   if (killed) {
     addHint({
       id: 'killed',
-      title: 'Process terminated (SIGKILL)',
-      detail: 'The process was killed by the OS or scheduler.',
-      action: 'Check memory limits, preemption, or long-running watchdogs.',
+      title: tx('进程被终止（SIGKILL）', 'Process terminated (SIGKILL)'),
+      detail: tx('进程被操作系统或调度器强制终止。', 'The process was killed by the OS or scheduler.'),
+      action: tx('请检查内存限制、抢占策略或超时守护。', 'Check memory limits, preemption, or long-running watchdogs.'),
     });
   }
 
@@ -130,6 +148,7 @@ export const RunDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { tx, locale } = useI18n();
   const [run, setRun] = useState<Run | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [protocols, setProtocols] = useState<EvalProtocol[]>([]);
@@ -148,6 +167,7 @@ export const RunDetail: React.FC = () => {
   const [logPage, setLogPage] = useState(1);
   const [logHasMore, setLogHasMore] = useState(false);
   const [logLoading, setLogLoading] = useState(false);
+  const [logScrollTop, setLogScrollTop] = useState(0);
 
   // Repro Bundle State
   const [reproBundleUrl, setReproBundleUrl] = useState<string | null>(null);
@@ -314,9 +334,17 @@ export const RunDetail: React.FC = () => {
   useEffect(() => {
       // Auto-scroll effect
       if (activeTab === 'logs' && autoScroll && logContainerRef.current) {
-          logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+          const el = logContainerRef.current;
+          el.scrollTop = el.scrollHeight;
+          setLogScrollTop(el.scrollTop);
       }
   }, [activeTab, autoScroll, logLines]);
+
+  useEffect(() => {
+      if (!logContainerRef.current) return;
+      logContainerRef.current.scrollTop = 0;
+      setLogScrollTop(0);
+  }, [logSearch, id]);
 
   const handleLaunchEval = () => {
       if (!selectedCkpt || !selectedProtocol) return;
@@ -324,7 +352,7 @@ export const RunDetail: React.FC = () => {
         .then(res => api.getJobById(res.jobId))
         .then(job => {
             setShowEvalModal(false);
-            showToast('Evaluation job submitted successfully.', 'success');
+            showToast(tx('评估任务提交成功。', 'Evaluation job submitted successfully.'), 'success');
             if (job?.runId) navigate(`/runs/${job.runId}`);
         });
   }
@@ -333,10 +361,10 @@ export const RunDetail: React.FC = () => {
       if (!job) return;
       api.pauseJob(job.id, { reason: 'paused' })
         .then(setJob)
-        .then(() => showToast('Job paused.', 'success'))
+        .then(() => showToast(tx('任务已暂停。', 'Job paused.'), 'success'))
         .catch((err) => {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to pause job: ${detail}`, 'error');
+          showToast(tx(`暂停任务失败：${detail}`, `Failed to pause job: ${detail}`), 'error');
         });
   }
 
@@ -344,22 +372,22 @@ export const RunDetail: React.FC = () => {
       if (!job) return;
       api.resumeJob(job.id)
         .then(setJob)
-        .then(() => showToast('Job resumed.', 'success'))
+        .then(() => showToast(tx('任务已恢复。', 'Job resumed.'), 'success'))
         .catch((err) => {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to resume job: ${detail}`, 'error');
+          showToast(tx(`恢复任务失败：${detail}`, `Failed to resume job: ${detail}`), 'error');
         });
   }
 
   const handleCancel = () => {
       if (!job) return;
-      if (!window.confirm('Cancel this job?')) return;
+      if (!window.confirm(tx('确认取消该任务？', 'Cancel this job?'))) return;
       api.cancelJob(job.id, { reason: 'canceled' })
         .then(setJob)
-        .then(() => showToast('Job canceled.', 'success'))
+        .then(() => showToast(tx('任务已取消。', 'Job canceled.'), 'success'))
         .catch((err) => {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to cancel job: ${detail}`, 'error');
+          showToast(tx(`取消任务失败：${detail}`, `Failed to cancel job: ${detail}`), 'error');
         });
   }
   
@@ -371,7 +399,7 @@ export const RunDetail: React.FC = () => {
               projectId: run.projectId,
               algoId: run.algo,
               envId: run.env,
-              config: JSON.stringify({ lr: 5e-4, notes: `Forked from ${run.name}` }, null, 2)
+              config: JSON.stringify({ lr: 5e-4, notes: tx(`由 ${run.name} 分叉`, `Forked from ${run.name}`) }, null, 2)
           }
       });
   }
@@ -379,8 +407,8 @@ export const RunDetail: React.FC = () => {
   const openSaveTemplateModal = () => {
       if (!run) return;
       const suggested = buildTemplateConfigFromRun(run);
-      setSaveTemplateName(`Template from ${run.name}`);
-      setSaveTemplateDescription(`Saved from run ${run.id}`);
+      setSaveTemplateName(tx(`来自 ${run.name} 的模板`, `Template from ${run.name}`));
+      setSaveTemplateDescription(tx(`保存自运行 ${run.id}`, `Saved from run ${run.id}`));
       setSaveTemplateType('Multi-Agent');
       setSaveTemplateConfig(JSON.stringify(suggested || {}, null, 2));
       setShowSaveTemplateModal(true);
@@ -390,18 +418,18 @@ export const RunDetail: React.FC = () => {
       if (!run) return;
       const algoVersionId = (run.config as any)?.algo?.algoVersionId as string | undefined;
       if (!algoVersionId) {
-          showToast('Cannot infer algorithm version for this run.', 'error');
+          showToast(tx('无法推断该运行对应的算法版本。', 'Cannot infer algorithm version for this run.'), 'error');
           return;
       }
       let parsedConfig: Record<string, unknown> | undefined = undefined;
       try {
           parsedConfig = saveTemplateConfig.trim() ? JSON.parse(saveTemplateConfig) : {};
       } catch {
-          showToast('Default config is not valid JSON.', 'error');
+          showToast(tx('默认配置不是合法 JSON。', 'Default config is not valid JSON.'), 'error');
           return;
       }
       if (!saveTemplateName.trim()) {
-          showToast('Template name is required.', 'error');
+          showToast(tx('模板名称不能为空。', 'Template name is required.'), 'error');
           return;
       }
       setSaveTemplateSubmitting(true);
@@ -418,11 +446,11 @@ export const RunDetail: React.FC = () => {
               algoVersionId,
               defaultConfig: parsedConfig,
           });
-          showToast('Template saved successfully.', 'success');
+          showToast(tx('模板保存成功。', 'Template saved successfully.'), 'success');
           setShowSaveTemplateModal(false);
       } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to save template: ${detail}`, 'error');
+          showToast(tx(`保存模板失败：${detail}`, `Failed to save template: ${detail}`), 'error');
       } finally {
           setSaveTemplateSubmitting(false);
       }
@@ -431,7 +459,7 @@ export const RunDetail: React.FC = () => {
   const handleCopyId = () => {
       if(run) {
           navigator.clipboard.writeText(run.id);
-          showToast(`Run ID ${run.id} copied to clipboard`, 'success');
+          showToast(tx(`运行 ID ${run.id} 已复制`, `Run ID ${run.id} copied to clipboard`), 'success');
       }
   }
 
@@ -460,17 +488,17 @@ export const RunDetail: React.FC = () => {
               modelId = newModel.id;
           }
           if (!modelId) {
-              showToast('Please select or create a model family.', 'error');
+              showToast(tx('请选择或创建模型家族。', 'Please select or create a model family.'), 'error');
               return;
           }
           await api.registerModelVersion(modelId, selectedCkpt.id);
-          showToast('Checkpoint registered as new model version.', 'success');
+          showToast(tx('检查点已注册为新模型版本。', 'Checkpoint registered as new model version.'), 'success');
           setShowRegisterModelModal(false);
           setRegisterNewModelName('');
           setRegisterNewModelDesc('');
       } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to register model: ${detail}`, 'error');
+          showToast(tx(`注册模型失败：${detail}`, `Failed to register model: ${detail}`), 'error');
       } finally {
           setIsRegisteringModel(false);
       }
@@ -480,7 +508,7 @@ export const RunDetail: React.FC = () => {
       const path = `/checkpoints/ckpt_${ckpt.step}.json`;
       const artifact = artifacts.find(item => item.path === path || item.name === `ckpt_${ckpt.step}.json`);
       if (!artifact) {
-          showToast('Checkpoint artifact not found yet.', 'error');
+          showToast(tx('尚未找到该检查点产物。', 'Checkpoint artifact not found yet.'), 'error');
           return;
       }
       handleArtifactDownload(artifact.id);
@@ -491,11 +519,11 @@ export const RunDetail: React.FC = () => {
       api.tagCheckpoint(run.id, ckpt.id, { tag: 'best' })
         .then(updated => {
             setCheckpoints(prev => prev.map(item => item.id === updated.id ? updated : item));
-            showToast('Tagged checkpoint as best.', 'success');
+            showToast(tx('已将检查点标记为 best。', 'Tagged checkpoint as best.'), 'success');
         })
         .catch(err => {
             const detail = err instanceof Error ? err.message : String(err);
-            showToast(`Failed to tag checkpoint: ${detail}`, 'error');
+            showToast(tx(`标记检查点失败：${detail}`, `Failed to tag checkpoint: ${detail}`), 'error');
         });
   }
 
@@ -512,7 +540,7 @@ export const RunDetail: React.FC = () => {
         })
         .catch((err) => {
             const detail = err instanceof Error ? err.message : String(err);
-            showToast(`Failed to download artifacts: ${detail}`, 'error');
+            showToast(tx(`下载产物失败：${detail}`, `Failed to download artifacts: ${detail}`), 'error');
         });
   }
 
@@ -564,32 +592,32 @@ export const RunDetail: React.FC = () => {
       return (
           <div className="bg-black/5 p-2 rounded-lg space-y-2">
              <div className="text-xs text-gray-500 mb-1 truncate font-mono">{file.name}</div>
-             {replayData ? (
-               <div className="space-y-2">
-                 <div className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
-                   Generated Adversarial Replay
-                 </div>
-                 <AdversarialReplayPlayer replay={replayData} />
-               </div>
-             ) : file.name.endsWith('.mp4') ? (
-               <video controls className="w-full rounded shadow-sm border border-gray-200" src={url} preload="metadata" />
-             ) : (
-               <div className="text-xs text-gray-500 p-3 bg-white border border-gray-200 rounded">
-                 Replay payload unavailable.
-               </div>
-             )}
+	             {replayData ? (
+	               <div className="space-y-2">
+	                 <div className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+	                   {tx('已生成对抗回放', 'Generated Adversarial Replay')}
+	                 </div>
+	                 <AdversarialReplayPlayer replay={replayData} />
+	               </div>
+	             ) : file.name.endsWith('.mp4') ? (
+	               <video controls className="w-full rounded shadow-sm border border-gray-200" src={url} preload="metadata" />
+	             ) : (
+	               <div className="text-xs text-gray-500 p-3 bg-white border border-gray-200 rounded">
+	                 {tx('回放数据不可用。', 'Replay payload unavailable.')}
+	               </div>
+	             )}
           </div>
       );
   }
 
   // Log filtering logic
-  const logHints = useMemo(() => deriveLogHints(logLines), [logLines]);
+  const logHints = useMemo(() => deriveLogHints(logLines, tx), [logLines, tx]);
   const videoGroups = useMemo(() => {
       const groups: Record<string, { label: string; files: ArtifactFile[] }> = {
-          train: { label: 'Training', files: [] },
-          eval: { label: 'Evaluation', files: [] },
-          matrix: { label: 'Matrix', files: [] },
-          other: { label: 'Other', files: [] },
+          train: { label: tx('训练', 'Training'), files: [] },
+          eval: { label: tx('评估', 'Evaluation'), files: [] },
+          matrix: { label: tx('矩阵', 'Matrix'), files: [] },
+          other: { label: tx('其他', 'Other'), files: [] },
       };
       videoFiles.forEach(file => {
           const ref = `${file.path || ''}/${file.name}`.toLowerCase();
@@ -605,9 +633,18 @@ export const RunDetail: React.FC = () => {
       });
       return Object.values(groups).filter(group => group.files.length > 0);
   }, [videoFiles]);
-  const filteredLogs = logLines
-    .filter(line => line.toLowerCase().includes(logSearch.toLowerCase()))
-    .join('\n');
+  const logQuery = logSearch.trim().toLowerCase();
+  const filteredLogLines = useMemo(
+    () => (logQuery ? logLines.filter(line => line.toLowerCase().includes(logQuery)) : logLines),
+    [logLines, logQuery],
+  );
+  const logViewportHeight = 540;
+  const logStartIdx = Math.max(0, Math.floor(logScrollTop / LOG_LINE_HEIGHT) - LOG_OVERSCAN);
+  const logVisibleCount = Math.ceil(logViewportHeight / LOG_LINE_HEIGHT) + LOG_OVERSCAN * 2;
+  const logEndIdx = Math.min(filteredLogLines.length, logStartIdx + logVisibleCount);
+  const logVisibleRows = filteredLogLines.slice(logStartIdx, logEndIdx);
+  const logTotalHeight = filteredLogLines.length * LOG_LINE_HEIGHT;
+  const logOffsetY = logStartIdx * LOG_LINE_HEIGHT;
 
   const buildTemplateConfigFromRun = (run: Run) => {
     const cfg = run.config || {};
@@ -635,10 +672,10 @@ export const RunDetail: React.FC = () => {
   };
   const matrixMetric = matrixResult?.meta?.metric || 'winRate';
   const matrixLabel = matrixMetric === 'returnMean'
-    ? 'Return Mean'
+    ? tx('平均回报', 'Return Mean')
     : matrixMetric === 'survivalTime'
-      ? 'Survival Time'
-      : 'Win Rate';
+      ? tx('生存时长', 'Survival Time')
+      : tx('胜率', 'Win Rate');
   const matrixFormatter = matrixMetric === 'winRate'
     ? (value: number) => `${(value * 100).toFixed(1)}%`
     : matrixMetric === 'survivalTime'
@@ -671,18 +708,22 @@ export const RunDetail: React.FC = () => {
                 <div className="flex items-center gap-3">
                     <h1 className="text-xl font-bold text-gray-900">{run.name}</h1>
                     <StatusBadge status={run.status} type={run.type} />
-                    <button onClick={handleCopyId} className="text-xs text-gray-400 font-mono hover:text-blue-600 hover:bg-blue-50 px-1 py-0.5 rounded transition-colors flex items-center gap-1" title="Copy ID">
+                    <button
+                      onClick={handleCopyId}
+                      className="text-xs text-gray-400 font-mono hover:text-blue-600 hover:bg-blue-50 px-1 py-0.5 rounded transition-colors flex items-center gap-1"
+                      title={tx('复制 ID', 'Copy ID')}
+                    >
                         <Copy className="w-3 h-3" /> {run.id}
                     </button>
                 </div>
                 <div className="mt-2 flex gap-4 text-sm text-gray-600">
-                    <div className="flex items-center"><span className="font-semibold mr-1">Algo:</span> {run.algo}</div>
-                    <div className="flex items-center"><span className="font-semibold mr-1">Env:</span> {run.env}</div>
-                    <div className="flex items-center"><span className="font-semibold mr-1">GPU:</span> {run.gpu}</div>
-                    <div className="flex items-center"><span className="font-semibold mr-1">Duration:</span> {run.duration}</div>
+                    <div className="flex items-center"><span className="font-semibold mr-1">{tx('算法：', 'Algo:')}</span> {run.algo}</div>
+                    <div className="flex items-center"><span className="font-semibold mr-1">{tx('环境：', 'Env:')}</span> {run.env}</div>
+                    <div className="flex items-center"><span className="font-semibold mr-1">{tx('GPU：', 'GPU:')}</span> {run.gpu}</div>
+                    <div className="flex items-center"><span className="font-semibold mr-1">{tx('时长：', 'Duration:')}</span> {run.duration}</div>
                     {isPaused && (
                       <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700 border border-yellow-200">
-                        Paused
+                        {tx('已暂停', 'Paused')}
                       </span>
                     )}
                 </div>
@@ -691,9 +732,9 @@ export const RunDetail: React.FC = () => {
                 <button 
                   onClick={handleFork}
                   className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center shadow-sm"
-                  title="Clone this experiment configuration"
+                  title={tx('克隆该实验配置', 'Clone this experiment configuration')}
                 >
-                    <GitFork className="w-4 h-4 mr-2" /> Fork / Clone
+                    <GitFork className="w-4 h-4 mr-2" /> {tx('分叉 / 克隆', 'Fork / Clone')}
                 </button>
                 <button 
                   onClick={openSaveTemplateModal}
@@ -703,15 +744,15 @@ export const RunDetail: React.FC = () => {
                       ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
                       : 'border-gray-200 text-gray-400 cursor-not-allowed'
                   }`}
-                  title={canSaveTemplate ? 'Save run configuration as a template' : 'Template saving unavailable for this run'}
+                  title={canSaveTemplate ? tx('将运行配置保存为模板', 'Save run configuration as a template') : tx('当前运行无法保存模板', 'Template saving unavailable for this run')}
                 >
-                    <FileText className="w-4 h-4 mr-2" /> Save as Template
+                    <FileText className="w-4 h-4 mr-2" /> {tx('保存为模板', 'Save as Template')}
                 </button>
                 <button 
                   onClick={() => setShowArtifacts(true)}
                   className="px-3 py-1.5 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center"
                 >
-                    <Folder className="w-4 h-4 mr-2" /> Artifacts
+                    <Folder className="w-4 h-4 mr-2" /> {tx('产物', 'Artifacts')}
                 </button>
                 {run.status === JobStatus.RUNNING && (
                   <>
@@ -720,21 +761,21 @@ export const RunDetail: React.FC = () => {
                         onClick={handleResume}
                         className="px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-md text-sm font-medium hover:bg-green-100"
                       >
-                        Resume
+                        {tx('恢复', 'Resume')}
                       </button>
                     ) : (
                       <button
                         onClick={handlePause}
                         className="px-3 py-1.5 bg-yellow-50 text-yellow-700 border border-yellow-200 rounded-md text-sm font-medium hover:bg-yellow-100"
                       >
-                        Pause
+                        {tx('暂停', 'Pause')}
                       </button>
                     )}
                     <button
                       onClick={handleCancel}
                       className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100"
                     >
-                      Stop Run
+                      {tx('停止运行', 'Stop Run')}
                     </button>
                   </>
                 )}
@@ -748,27 +789,27 @@ export const RunDetail: React.FC = () => {
               {/* Show different tabs based on Run Type */}
               {isMatrix ? (
                   <>
-                    <button onClick={() => setActiveTab('matrix')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'matrix' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Heatmap Analysis</button>
-                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Replay Gallery ({videoFiles.length})</button>}
-                    <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Configuration</button>
-                    <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Job Logs</button>
+                    <button onClick={() => setActiveTab('matrix')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'matrix' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('热力图分析', 'Heatmap Analysis')}</button>
+                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx(`回放画廊 (${videoFiles.length})`, `Replay Gallery (${videoFiles.length})`)}</button>}
+                    <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('配置', 'Configuration')}</button>
+                    <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('任务日志', 'Job Logs')}</button>
                   </>
               ) : isEval ? (
                    <>
-                    <button onClick={() => setActiveTab('metrics')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Evaluation Metrics</button>
-                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Replay Gallery ({videoFiles.length})</button>}
-                    <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>System Logs</button>
-                    <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Configuration</button>
+                    <button onClick={() => setActiveTab('metrics')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('评估指标', 'Evaluation Metrics')}</button>
+                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx(`回放画廊 (${videoFiles.length})`, `Replay Gallery (${videoFiles.length})`)}</button>}
+                    <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('系统日志', 'System Logs')}</button>
+                    <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('配置', 'Configuration')}</button>
                   </>
               ) : (
                   <>
-                    <button onClick={() => setActiveTab('metrics')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Training Metrics</button>
-                    <button onClick={() => setActiveTab('tensorboard')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'tensorboard' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>TensorBoard</button>
-                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Replay Gallery ({videoFiles.length})</button>}
-                    <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>System Logs</button>
-                    <button onClick={() => setActiveTab('checkpoints')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'checkpoints' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Checkpoints</button>
-                    <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Configuration</button>
-                    <button onClick={() => setActiveTab('source')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'source' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Source Code</button>
+                    <button onClick={() => setActiveTab('metrics')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('训练指标', 'Training Metrics')}</button>
+                    <button onClick={() => setActiveTab('tensorboard')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'tensorboard' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('TensorBoard', 'TensorBoard')}</button>
+                    {videoFiles.length > 0 && <button onClick={() => setActiveTab('video')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'video' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx(`回放画廊 (${videoFiles.length})`, `Replay Gallery (${videoFiles.length})`)}</button>}
+                    <button onClick={() => setActiveTab('logs')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('系统日志', 'System Logs')}</button>
+                    <button onClick={() => setActiveTab('checkpoints')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'checkpoints' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('检查点', 'Checkpoints')}</button>
+                    <button onClick={() => setActiveTab('config')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'config' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('配置', 'Configuration')}</button>
+                    <button onClick={() => setActiveTab('source')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'source' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tx('源码', 'Source Code')}</button>
                   </>
               )}
           </nav>
@@ -793,35 +834,35 @@ export const RunDetail: React.FC = () => {
                 <div className="space-y-6">
                      <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                         <h3 className="font-bold text-gray-900 mb-2 flex items-center">
-                            <Grid3X3 className="w-4 h-4 mr-2 text-gray-500"/> Matrix Summary
+                            <Grid3X3 className="w-4 h-4 mr-2 text-gray-500"/> {tx('矩阵摘要', 'Matrix Summary')}
                         </h3>
                         <div className="text-sm text-gray-600 space-y-2">
-                            <div className="flex justify-between"><span>Pool Size:</span> <span className="font-medium">{matrixLabels.length || '-'}</span></div>
-                            <div className="flex justify-between"><span>Total Matches:</span> <span className="font-medium">{matrixTotalMatches || '-'}</span></div>
-                            <div className="flex justify-between"><span>Metric:</span> <span className="font-medium">{matrixResult?.meta?.metric || 'winRate'}</span></div>
-                            <div className="flex justify-between"><span>Eval Protocol:</span> <span className="font-medium">{matrixProtocolName || matrixResult?.protocolId || '-'}</span></div>
+                            <div className="flex justify-between"><span>{tx('池规模：', 'Pool Size:')}</span> <span className="font-medium">{matrixLabels.length || '-'}</span></div>
+                            <div className="flex justify-between"><span>{tx('总对局：', 'Total Matches:')}</span> <span className="font-medium">{matrixTotalMatches || '-'}</span></div>
+                            <div className="flex justify-between"><span>{tx('指标：', 'Metric:')}</span> <span className="font-medium">{matrixResult?.meta?.metric || 'winRate'}</span></div>
+                            <div className="flex justify-between"><span>{tx('评估协议：', 'Eval Protocol:')}</span> <span className="font-medium">{matrixProtocolName || matrixResult?.protocolId || '-'}</span></div>
                         </div>
                         <div className="mt-4 pt-4 border-t border-gray-100">
-                             <h4 className="font-bold text-gray-900 text-sm mb-2">Top Ranked</h4>
+                             <h4 className="font-bold text-gray-900 text-sm mb-2">{tx('排名第一', 'Top Ranked')}</h4>
                              {topRank ? (
                                <>
                                  <div className="flex items-center gap-2">
                                      <span className="w-2 h-2 rounded-full bg-green-500"></span>
                                      <span className="text-sm font-medium">{topRank.id}</span>
                                  </div>
-                                 <div className="text-xs text-gray-500 mt-1">Score: {topRank.score.toFixed(2)}</div>
+                                 <div className="text-xs text-gray-500 mt-1">{tx('分数：', 'Score:')} {topRank.score.toFixed(2)}</div>
                                </>
                              ) : (
-                               <div className="text-xs text-gray-500">No ranking data yet.</div>
+                               <div className="text-xs text-gray-500">{tx('暂无排名数据。', 'No ranking data yet.')}</div>
                              )}
                         </div>
                      </div>
                      <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                         <h4 className="text-blue-800 font-bold text-sm mb-1">Interpretation</h4>
+                         <h4 className="text-blue-800 font-bold text-sm mb-1">{tx('解读', 'Interpretation')}</h4>
                          <p className="text-xs text-blue-700 leading-relaxed">
                              {matrixResult
-                               ? 'Matrix generated from evaluation protocol results. Use ranking and heatmap to compare relative strengths.'
-                               : 'Matrix result not available yet. Run a matrix job to populate this view.'}
+                               ? tx('该矩阵来自评估协议结果，可结合排名与热力图比较相对强弱。', 'Matrix generated from evaluation protocol results. Use ranking and heatmap to compare relative strengths.')
+                               : tx('当前暂无矩阵结果，请先运行矩阵任务。', 'Matrix result not available yet. Run a matrix job to populate this view.')}
                          </p>
                      </div>
                 </div>
@@ -841,7 +882,7 @@ export const RunDetail: React.FC = () => {
                   <iframe 
                     src={`http://${window.location.hostname}:6006/?darkMode=false#scalars&regexInput=${run.id}`} 
                     className="w-full h-full border-0"
-                    title="TensorBoard"
+                    title={tx('TensorBoard 面板', 'TensorBoard')}
                   />
               </div>
           )}
@@ -854,28 +895,28 @@ export const RunDetail: React.FC = () => {
                       <>
                         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                             <div className="text-xs text-gray-500 font-medium uppercase mb-1 flex items-center">
-                                <Calculator className="w-3 h-3 mr-1"/> Mean Win Rate
+                                <Calculator className="w-3 h-3 mr-1"/> {tx('平均胜率', 'Mean Win Rate')}
                             </div>
                             <div className="text-2xl font-bold text-gray-900">{evalSummary ? (evalSummary.mean * 100).toFixed(1) : '--'}%</div>
                             <div className="text-xs text-gray-400 mt-1">n = {evalSummary?.n ?? '--'}</div>
                         </div>
                         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">Std Dev</div>
+                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">{tx('标准差', 'Std Dev')}</div>
                             <div className="text-2xl font-bold text-gray-900">{evalSummary ? (evalSummary.std * 100).toFixed(1) : '--'}%</div>
                         </div>
                         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">Confidence Interval</div>
+                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">{tx('置信区间', 'Confidence Interval')}</div>
                             <div className="text-sm font-bold text-gray-900">
                               {evalCi ? `${(evalCi.low * 100).toFixed(1)}% - ${(evalCi.high * 100).toFixed(1)}%` : '--'}
                             </div>
-                            <div className="text-xs text-gray-400 mt-1">{evalCi ? `${Math.round(evalCi.level * 100)}% CI` : ''}</div>
+                            <div className="text-xs text-gray-400 mt-1">{evalCi ? tx(`${Math.round(evalCi.level * 100)}% 置信区间`, `${Math.round(evalCi.level * 100)}% CI`) : ''}</div>
                         </div>
                         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-center">
-                             <div className="text-xs text-gray-500 font-medium uppercase mb-1">Status</div>
+                             <div className="text-xs text-gray-500 font-medium uppercase mb-1">{tx('状态', 'Status')}</div>
                              {run.status === JobStatus.SUCCEEDED ? (
-                                 <div className="text-green-600 font-bold flex items-center"><ChevronRight className="w-4 h-4"/> Completed</div>
+                                 <div className="text-green-600 font-bold flex items-center"><ChevronRight className="w-4 h-4"/> {tx('已完成', 'Completed')}</div>
                              ) : (
-                                 <div className="text-gray-500 font-medium">In Progress / Failed</div>
+                                 <div className="text-gray-500 font-medium">{tx('进行中 / 失败', 'In Progress / Failed')}</div>
                              )}
                         </div>
                       </>
@@ -883,26 +924,26 @@ export const RunDetail: React.FC = () => {
                       <>
                         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                             <div className="text-xs text-gray-500 font-medium uppercase mb-1 flex items-center">
-                                <Calculator className="w-3 h-3 mr-1"/> Avg Return
+                                <Calculator className="w-3 h-3 mr-1"/> {tx('平均回报', 'Avg Return')}
                             </div>
                             <div className="text-2xl font-bold text-gray-900">{returnStats.mean.toFixed(2)}</div>
-                            <div className="text-xs text-gray-400 mt-1">± {returnStats.std.toFixed(2)} (std)</div>
+                            <div className="text-xs text-gray-400 mt-1">{tx('±', '±')} {returnStats.std.toFixed(2)} {tx('（标准差）', '(std)')}</div>
                         </div>
                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">Max Return</div>
+                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">{tx('最大回报', 'Max Return')}</div>
                             <div className="text-2xl font-bold text-gray-900">{returnStats.max.toFixed(2)}</div>
                         </div>
                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">Avg Win Rate</div>
+                            <div className="text-xs text-gray-500 font-medium uppercase mb-1">{tx('平均胜率', 'Avg Win Rate')}</div>
                             <div className="text-2xl font-bold text-gray-900">{(winRateStats.mean * 100).toFixed(1)}%</div>
-                             <div className="text-xs text-gray-400 mt-1">± {(winRateStats.std * 100).toFixed(1)}% (std)</div>
+                             <div className="text-xs text-gray-400 mt-1">{tx('±', '±')} {(winRateStats.std * 100).toFixed(1)}% {tx('（标准差）', '(std)')}</div>
                         </div>
                         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-center">
-                             <div className="text-xs text-gray-500 font-medium uppercase mb-1">Status</div>
+                             <div className="text-xs text-gray-500 font-medium uppercase mb-1">{tx('状态', 'Status')}</div>
                              {run.status === JobStatus.SUCCEEDED && winRateStats.mean > 0.5 ? (
-                                 <div className="text-green-600 font-bold flex items-center"><ChevronRight className="w-4 h-4"/> Solved</div>
+                                 <div className="text-green-600 font-bold flex items-center"><ChevronRight className="w-4 h-4"/> {tx('已解决', 'Solved')}</div>
                              ) : (
-                                 <div className="text-gray-500 font-medium">In Progress / Failed</div>
+                                 <div className="text-gray-500 font-medium">{tx('进行中 / 失败', 'In Progress / Failed')}</div>
                              )}
                         </div>
                       </>
@@ -911,7 +952,7 @@ export const RunDetail: React.FC = () => {
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                        <h3 className="text-sm font-semibold text-gray-900 mb-4">{isEval ? 'Success Rate / Win Rate' : 'Return Mean'}</h3>
+                        <h3 className="text-sm font-semibold text-gray-900 mb-4">{isEval ? tx('成功率 / 胜率', 'Success Rate / Win Rate') : tx('平均回报', 'Return Mean')}</h3>
                         <div className="h-[300px]">
                             <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={isEval ? metricSeries.winRate : metricSeries.returnMean}>
@@ -927,7 +968,7 @@ export const RunDetail: React.FC = () => {
 
                     {!isEval && (
                         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                            <h3 className="text-sm font-semibold text-gray-900 mb-4">Win Rate</h3>
+                            <h3 className="text-sm font-semibold text-gray-900 mb-4">{tx('胜率', 'Win Rate')}</h3>
                             <div className="h-[300px]">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <LineChart data={metricSeries.winRate}>
@@ -943,7 +984,7 @@ export const RunDetail: React.FC = () => {
                     )}
 
                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                        <h3 className="text-sm font-semibold text-gray-900 mb-4">{isEval ? 'Episodes Length' : 'Entropy'}</h3>
+                        <h3 className="text-sm font-semibold text-gray-900 mb-4">{isEval ? tx('回合长度', 'Episodes Length') : tx('熵', 'Entropy')}</h3>
                         <div className="h-[300px]">
                             <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={metricSeries.entropy}>
@@ -961,10 +1002,10 @@ export const RunDetail: React.FC = () => {
                 {/* System Metrics Section */}
                 {systemMetrics.length > 0 && (
                     <div className="pt-6 border-t border-gray-200">
-                        <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2"><HardDrive className="w-5 h-5 text-gray-500"/> System Resources</h3>
+                        <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2"><HardDrive className="w-5 h-5 text-gray-500"/> {tx('系统资源', 'System Resources')}</h3>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-4">CPU Usage (%)</h4>
+                                <h4 className="text-sm font-semibold text-gray-900 mb-4">{tx('CPU 使用率 (%)', 'CPU Usage (%)')}</h4>
                                 <div className="h-[200px]">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <LineChart data={systemMetrics}>
@@ -978,7 +1019,7 @@ export const RunDetail: React.FC = () => {
                                 </div>
                             </div>
                             <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-4">Memory Usage (%)</h4>
+                                <h4 className="text-sm font-semibold text-gray-900 mb-4">{tx('内存使用率 (%)', 'Memory Usage (%)')}</h4>
                                 <div className="h-[200px]">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <LineChart data={systemMetrics}>
@@ -996,7 +1037,7 @@ export const RunDetail: React.FC = () => {
                         {/* GPU Metrics (Dynamic) */}
                         {systemMetrics.length > 0 && (systemMetrics[0] as any).gpus && (systemMetrics[0] as any).gpus.length > 0 && (
                             <div className="mt-6">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-4">GPU Utilization (%)</h4>
+                                <h4 className="text-sm font-semibold text-gray-900 mb-4">{tx('GPU 利用率 (%)', 'GPU Utilization (%)')}</h4>
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                     {(systemMetrics[0] as any).gpus.map((gpu: any, idx: number) => (
                                         <div key={idx} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
@@ -1008,8 +1049,8 @@ export const RunDetail: React.FC = () => {
                                                         <XAxis dataKey="timestamp" hide />
                                                         <YAxis fontSize={12} domain={[0, 100]} />
                                                         <Tooltip contentStyle={{ borderRadius: '8px', border: 'none' }} labelFormatter={() => ''} />
-                                                        <Line type="monotone" dataKey={`gpus[${idx}].util_gpu`} stroke="#059669" strokeWidth={1} dot={false} name="Compute" />
-                                                        <Line type="monotone" dataKey={`gpus[${idx}].util_mem`} stroke="#d97706" strokeWidth={1} dot={false} name="Mem Controller" />
+                                                        <Line type="monotone" dataKey={`gpus[${idx}].util_gpu`} stroke="#059669" strokeWidth={1} dot={false} name={tx('计算', 'Compute')} />
+                                                        <Line type="monotone" dataKey={`gpus[${idx}].util_mem`} stroke="#d97706" strokeWidth={1} dot={false} name={tx('显存控制器', 'Mem Controller')} />
                                                     </LineChart>
                                                 </ResponsiveContainer>
                                             </div>
@@ -1029,7 +1070,7 @@ export const RunDetail: React.FC = () => {
                       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
                           <div className="flex items-center gap-2 text-amber-900 font-semibold mb-3">
                               <AlertTriangle className="w-4 h-4" />
-                              Detected issues in logs
+                              {tx('日志中检测到问题', 'Detected issues in logs')}
                           </div>
                           <div className="space-y-3">
                               {logHints.map(hint => (
@@ -1039,7 +1080,7 @@ export const RunDetail: React.FC = () => {
                                           <div className="font-medium">{hint.title}</div>
                                           <div className="text-amber-800">{hint.detail}</div>
                                           {hint.action && (
-                                              <div className="text-amber-700">Fix: {hint.action}</div>
+                                              <div className="text-amber-700">{tx('修复建议：', 'Fix:')} {hint.action}</div>
                                           )}
                                       </div>
                                   </div>
@@ -1053,14 +1094,17 @@ export const RunDetail: React.FC = () => {
                       <div className="bg-gray-800 p-2 flex items-center justify-between border-b border-gray-700">
                           <div className="flex items-center gap-2 text-gray-400 text-sm">
                               <Terminal className="w-4 h-4" />
-                              <span>stdout.log</span>
+                              <span>{tx('标准输出日志', 'stdout.log')}</span>
+                              <span className="text-[11px] text-gray-500">
+                                {tx(`${filteredLogLines.length.toLocaleString()} 行`, `${filteredLogLines.length.toLocaleString()} lines`)}
+                              </span>
                           </div>
                           <div className="flex items-center gap-3">
                               <div className="relative">
                                   <Search className="w-3 h-3 text-gray-500 absolute left-2 top-1.5" />
                                   <input 
                                     type="text" 
-                                    placeholder="Filter logs..."
+                                    placeholder={tx('筛选日志...', 'Filter logs...')}
                                     value={logSearch}
                                     onChange={(e) => setLogSearch(e.target.value)}
                                     className="bg-gray-900 text-gray-300 text-xs rounded-md pl-7 pr-3 py-1 border border-gray-700 focus:ring-1 focus:ring-blue-500 focus:outline-none w-48"
@@ -1069,27 +1113,57 @@ export const RunDetail: React.FC = () => {
                               <button 
                                 onClick={() => setAutoScroll(!autoScroll)}
                                 className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${autoScroll ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400'}`}
-                                title="Auto-scroll to bottom"
+                                title={tx('自动滚动到底部', 'Auto-scroll to bottom')}
                               >
-                                  <ArrowDownCircle className="w-3 h-3" /> Tail
+                                  <ArrowDownCircle className="w-3 h-3" /> {tx('追踪', 'Tail')}
                               </button>
                               <button
                                 onClick={() => loadLogs(logPage + 1, true)}
                                 disabled={!logHasMore || logLoading}
                                 className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-gray-700 text-gray-200 disabled:opacity-50"
-                                title="Load more logs"
+                                title={tx('加载更多日志', 'Load more logs')}
                               >
-                                  {logLoading ? 'Loading...' : 'Load More'}
+                                  {logLoading ? tx('加载中...', 'Loading...') : tx('加载更多', 'Load More')}
                               </button>
                           </div>
                       </div>
                       
                       {/* Log Content */}
-                      <div ref={logContainerRef} className="p-4 font-mono text-sm text-gray-300 overflow-auto flex-1 whitespace-pre-wrap">
-                          {filteredLogs || (
-                            <span className="text-gray-500 italic">
-                              {logLines.length === 0 ? 'No logs available yet.' : 'No logs match your filter.'}
-                            </span>
+                      <div
+                        ref={logContainerRef}
+                        className="font-mono text-xs text-gray-300 overflow-auto flex-1"
+                        onScroll={(e) => setLogScrollTop(e.currentTarget.scrollTop)}
+                      >
+                          {filteredLogLines.length === 0 ? (
+                            <div className="p-4 text-gray-500 italic">
+                              {logLines.length === 0 ? tx('暂无日志。', 'No logs available yet.') : tx('没有匹配筛选条件的日志。', 'No logs match your filter.')}
+                            </div>
+                          ) : (
+                            <div className="relative" style={{ height: `${logTotalHeight}px` }}>
+                              <div
+                                className="absolute left-0 right-0"
+                                style={{ transform: `translateY(${logOffsetY}px)` }}
+                              >
+                                {logVisibleRows.map((line, localIdx) => {
+                                  const lineIndex = logStartIdx + localIdx;
+                                  return (
+                                    <div
+                                      key={`log-${lineIndex}`}
+                                      className="flex min-h-[20px] items-center border-b border-gray-800/70 px-3 leading-5"
+                                      style={{ height: `${LOG_LINE_HEIGHT}px` }}
+                                      title={line}
+                                    >
+                                      <div className="w-16 shrink-0 pr-3 text-right text-[10px] text-gray-500">
+                                        {lineIndex + 1}
+                                      </div>
+                                      <pre className="m-0 min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                                        {line}
+                                      </pre>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
                           )}
                       </div>
                   </div>
@@ -1100,7 +1174,7 @@ export const RunDetail: React.FC = () => {
               <div className="bg-white rounded-xl border border-gray-200 p-6">
                   <div className="flex items-center gap-2 mb-4">
                       <FileText className="w-5 h-5 text-gray-500" />
-                      <h3 className="font-semibold text-gray-900">Resolved Configuration</h3>
+                      <h3 className="font-semibold text-gray-900">{tx('解析后配置', 'Resolved Configuration')}</h3>
                   </div>
                   <pre className="bg-gray-50 p-4 rounded-lg text-sm text-gray-700 font-mono overflow-auto border border-gray-100">
 {`# run_config.json
@@ -1112,7 +1186,7 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                         onClick={() => window.open(reproBundleUrl, '_blank', 'noreferrer')}
                         className="text-sm text-blue-600 hover:underline"
                       >
-                        Download Repro Bundle
+                        {tx('下载复现包', 'Download Repro Bundle')}
                       </button>
                     </div>
                   )}
@@ -1124,12 +1198,12 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                   <table className="w-full text-left text-sm">
                       <thead className="bg-gray-50 border-b border-gray-100">
                           <tr>
-                              <th className="px-6 py-3 font-semibold text-gray-500">Step</th>
-                              <th className="px-6 py-3 font-semibold text-gray-500">Win Rate</th>
-                              <th className="px-6 py-3 font-semibold text-gray-500">Return</th>
-                              <th className="px-6 py-3 font-semibold text-gray-500">Tags</th>
-                              <th className="px-6 py-3 font-semibold text-gray-500">Created</th>
-                              <th className="px-6 py-3 font-semibold text-gray-500">Actions</th>
+                              <th className="px-6 py-3 font-semibold text-gray-500">{tx('步数', 'Step')}</th>
+                              <th className="px-6 py-3 font-semibold text-gray-500">{tx('胜率', 'Win Rate')}</th>
+                              <th className="px-6 py-3 font-semibold text-gray-500">{tx('回报', 'Return')}</th>
+                              <th className="px-6 py-3 font-semibold text-gray-500">{tx('标签', 'Tags')}</th>
+                              <th className="px-6 py-3 font-semibold text-gray-500">{tx('创建时间', 'Created')}</th>
+                              <th className="px-6 py-3 font-semibold text-gray-500">{tx('操作', 'Actions')}</th>
                           </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -1147,34 +1221,36 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                                           ))}
                                       </div>
                                   </td>
-                                  <td className="px-6 py-4 text-gray-500">{new Date(ckpt.createdAt).toLocaleDateString()}</td>
+                                  <td className="px-6 py-4 text-gray-500">{new Date(ckpt.createdAt).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US')}</td>
                                   <td className="px-6 py-4">
                                       <div className="flex gap-2">
                                           <button
                                             onClick={() => handleCheckpointDownload(ckpt)}
                                             className="text-gray-500 hover:text-blue-600"
-                                            title="Download"
+                                            title={tx('下载', 'Download')}
                                           >
                                               <Download className="w-4 h-4" />
                                           </button>
                                           <button
                                             onClick={() => handleTagBest(ckpt)}
                                             className="text-gray-500 hover:text-yellow-600"
-                                            title="Tag as Best"
+                                            title={tx('标记为最佳', 'Tag as Best')}
                                           >
                                               <Tag className="w-4 h-4" />
                                           </button>
                                           <button
                                             onClick={() => openRegisterModelModal(ckpt)}
                                             className="text-gray-500 hover:text-purple-600"
-                                            title="Register to Model Registry"
+                                            title={tx('注册到模型仓库', 'Register to Model Registry')}
                                           >
                                               <Package className="w-4 h-4" />
                                           </button>
                                           <button 
                                             onClick={() => openEvalModal(ckpt)}
-                                            className="text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 px-2 py-1 rounded border border-blue-100" title="Launch Eval">
-                                              <PlayCircle className="w-3 h-3 mr-1" /> Eval
+                                            className="text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 px-2 py-1 rounded border border-blue-100"
+                                            title={tx('发起评估', 'Launch Eval')}
+                                          >
+                                              <PlayCircle className="w-3 h-3 mr-1" /> {tx('评估', 'Eval')}
                                           </button>
                                       </div>
                                   </td>
@@ -1189,14 +1265,14 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
                   <div className="flex items-center gap-2">
                       <FileText className="w-5 h-5 text-gray-500" />
-                      <h3 className="font-semibold text-gray-900">Repro Bundle</h3>
+                      <h3 className="font-semibold text-gray-900">{tx('复现包', 'Repro Bundle')}</h3>
                   </div>
                   {reproManifest ? (
                     <pre className="bg-gray-50 p-4 rounded-lg text-sm text-gray-700 font-mono overflow-auto border border-gray-100">
 {JSON.stringify(reproManifest, null, 2)}
                     </pre>
                   ) : (
-                    <div className="text-sm text-gray-500">No repro manifest available yet.</div>
+                    <div className="text-sm text-gray-500">{tx('暂无复现清单。', 'No repro manifest available yet.')}</div>
                   )}
                   {reproBundleUrl && (
                     <div>
@@ -1204,7 +1280,7 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                         onClick={() => window.open(reproBundleUrl, '_blank', 'noreferrer')}
                         className="text-sm text-blue-600 hover:underline"
                       >
-                        Download Repro Bundle
+                        {tx('下载复现包', 'Download Repro Bundle')}
                       </button>
                     </div>
                   )}
@@ -1217,41 +1293,41 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-lg animate-in fade-in zoom-in duration-200">
                 <div className="p-6 border-b border-gray-100">
-                    <h2 className="text-lg font-bold text-gray-900">Save as Template</h2>
-                    <p className="text-sm text-gray-500 mt-1">Create a reusable template from this run.</p>
+                    <h2 className="text-lg font-bold text-gray-900">{tx('保存为模板', 'Save as Template')}</h2>
+                    <p className="text-sm text-gray-500 mt-1">{tx('将该运行保存为可复用模板。', 'Create a reusable template from this run.')}</p>
                 </div>
                 <div className="p-6 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Template Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{tx('模板名称', 'Template Name')}</label>
                         <input
                           className="w-full p-2 border border-gray-300 rounded-lg"
                           value={saveTemplateName}
                           onChange={(e) => setSaveTemplateName(e.target.value)}
-                          placeholder="e.g. MAPPO baseline"
+                          placeholder={tx('例如：MAPPO baseline', 'e.g. MAPPO baseline')}
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{tx('描述', 'Description')}</label>
                         <input
                           className="w-full p-2 border border-gray-300 rounded-lg"
                           value={saveTemplateDescription}
                           onChange={(e) => setSaveTemplateDescription(e.target.value)}
-                          placeholder="Optional description"
+                          placeholder={tx('可选描述', 'Optional description')}
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{tx('类型', 'Type')}</label>
                         <select
                           className="w-full p-2 border border-gray-300 rounded-lg"
                           value={saveTemplateType}
                           onChange={(e) => setSaveTemplateType(e.target.value as 'Single-Agent' | 'Multi-Agent')}
                         >
-                          <option value="Single-Agent">Single-Agent</option>
-                          <option value="Multi-Agent">Multi-Agent</option>
+                          <option value="Single-Agent">{tx('单智能体', 'Single-Agent')}</option>
+                          <option value="Multi-Agent">{tx('多智能体', 'Multi-Agent')}</option>
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Default Config</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{tx('默认配置', 'Default Config')}</label>
                         <textarea
                           className="w-full h-40 p-3 border border-gray-300 rounded-lg font-mono text-xs"
                           value={saveTemplateConfig}
@@ -1259,13 +1335,13 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                         />
                     </div>
                     <div className="flex justify-end gap-3 pt-2">
-                        <button onClick={() => setShowSaveTemplateModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">Cancel</button>
+                        <button onClick={() => setShowSaveTemplateModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">{tx('取消', 'Cancel')}</button>
                         <button
                           onClick={handleSaveTemplate}
                           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                           disabled={saveTemplateSubmitting}
                         >
-                          {saveTemplateSubmitting ? 'Saving...' : 'Save Template'}
+                          {saveTemplateSubmitting ? tx('保存中...', 'Saving...') : tx('保存模板', 'Save Template')}
                         </button>
                     </div>
                 </div>
@@ -1278,34 +1354,34 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
               <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in duration-200">
                   <div className="p-6 border-b border-gray-100">
-                      <h2 className="text-lg font-bold text-gray-900">Register Model</h2>
-                      <p className="text-sm text-gray-500 mt-1">Promote checkpoint {selectedCkpt?.step} to a managed model version.</p>
+                      <h2 className="text-lg font-bold text-gray-900">{tx('注册模型', 'Register Model')}</h2>
+                      <p className="text-sm text-gray-500 mt-1">{tx(`将检查点 ${selectedCkpt?.step} 晋升为受管模型版本。`, `Promote checkpoint ${selectedCkpt?.step} to a managed model version.`)}</p>
                   </div>
                   <div className="p-6 space-y-4">
                       <div className="space-y-2">
-                          <label className="text-sm font-medium text-gray-700">Select Existing Family</label>
+                          <label className="text-sm font-medium text-gray-700">{tx('选择已有家族', 'Select Existing Family')}</label>
                           <select 
                               className="w-full p-2 border border-gray-300 rounded-lg"
                               value={registerModelId}
                               onChange={(e) => { setRegisterModelId(e.target.value); setRegisterNewModelName(''); }}
                               disabled={!!registerNewModelName}
                           >
-                              <option value="">-- Select Model Family --</option>
+                              <option value="">{tx('-- 选择模型家族 --', '-- Select Model Family --')}</option>
                               {models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                           </select>
                       </div>
                       
                       <div className="relative flex py-2 items-center">
                           <div className="flex-grow border-t border-gray-200"></div>
-                          <span className="flex-shrink-0 mx-4 text-gray-400 text-xs">OR CREATE NEW</span>
+                          <span className="flex-shrink-0 mx-4 text-gray-400 text-xs">{tx('或新建', 'OR CREATE NEW')}</span>
                           <div className="flex-grow border-t border-gray-200"></div>
                       </div>
 
                       <div className="space-y-2">
-                          <label className="text-sm font-medium text-gray-700">New Family Name</label>
+                          <label className="text-sm font-medium text-gray-700">{tx('新家族名称', 'New Family Name')}</label>
                           <input 
                               className="w-full p-2 border border-gray-300 rounded-lg"
-                              placeholder="e.g. Production-PPO"
+                              placeholder={tx('例如：Production-PPO', 'e.g. Production-PPO')}
                               value={registerNewModelName}
                               onChange={(e) => { setRegisterNewModelName(e.target.value); setRegisterModelId(''); }}
                           />
@@ -1314,7 +1390,7 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                           <div>
                               <input 
                                   className="w-full p-2 border border-gray-300 rounded-lg text-sm"
-                                  placeholder="Description (optional)"
+                                  placeholder={tx('描述（可选）', 'Description (optional)')}
                                   value={registerNewModelDesc}
                                   onChange={(e) => setRegisterNewModelDesc(e.target.value)}
                               />
@@ -1322,13 +1398,13 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                       )}
 
                       <div className="flex justify-end gap-3 pt-4">
-                          <button onClick={() => setShowRegisterModelModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">Cancel</button>
+                          <button onClick={() => setShowRegisterModelModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">{tx('取消', 'Cancel')}</button>
                           <button 
                               onClick={handleRegisterModel} 
                               disabled={isRegisteringModel || (!registerModelId && !registerNewModelName)}
                               className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
                           >
-                              {isRegisteringModel ? 'Registering...' : 'Register'}
+                              {isRegisteringModel ? tx('注册中...', 'Registering...') : tx('注册', 'Register')}
                           </button>
                       </div>
                   </div>
@@ -1341,12 +1417,12 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in duration-200">
                 <div className="p-6 border-b border-gray-100">
-                    <h2 className="text-lg font-bold text-gray-900">Launch Evaluation</h2>
-                    <p className="text-sm text-gray-500 mt-1">Evaluating checkpoint: {selectedCkpt?.step}</p>
+                    <h2 className="text-lg font-bold text-gray-900">{tx('启动评估', 'Launch Evaluation')}</h2>
+                    <p className="text-sm text-gray-500 mt-1">{tx(`评估检查点：${selectedCkpt?.step}`, `Evaluating checkpoint: ${selectedCkpt?.step}`)}</p>
                 </div>
                 <div className="p-6 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Eval Protocol</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{tx('评估协议', 'Eval Protocol')}</label>
                         <select 
                             className="w-full p-2 border border-gray-300 rounded-lg"
                             value={selectedProtocol}
@@ -1358,12 +1434,15 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                     <div className="bg-blue-50 p-3 rounded-lg flex gap-3">
                          <Calculator className="w-5 h-5 text-blue-600" />
                          <p className="text-xs text-blue-700">
-                             This will launch {selectedProtocolDetail?.episodes || '--'} episodes across {selectedProtocolDetail?.evalSeeds?.length || '--'} seeds.
+                             {tx(
+                               `将启动 ${selectedProtocolDetail?.episodes || '--'} 个回合，覆盖 ${selectedProtocolDetail?.evalSeeds?.length || '--'} 个随机种子。`,
+                               `This will launch ${selectedProtocolDetail?.episodes || '--'} episodes across ${selectedProtocolDetail?.evalSeeds?.length || '--'} seeds.`,
+                             )}
                          </p>
                     </div>
                     <div className="flex justify-end gap-3 pt-4">
-                        <button onClick={() => setShowEvalModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">Cancel</button>
-                        <button onClick={handleLaunchEval} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Launch Job</button>
+                        <button onClick={() => setShowEvalModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">{tx('取消', 'Cancel')}</button>
+                        <button onClick={handleLaunchEval} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">{tx('启动任务', 'Launch Job')}</button>
                     </div>
                 </div>
             </div>
@@ -1376,8 +1455,8 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
             <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[80vh]">
                  <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                     <div>
-                        <h2 className="text-lg font-bold text-gray-900">Artifact Browser</h2>
-                        <p className="text-sm text-gray-500 mt-1">Files generated by this run (stored in MinIO).</p>
+                        <h2 className="text-lg font-bold text-gray-900">{tx('产物浏览器', 'Artifact Browser')}</h2>
+                        <p className="text-sm text-gray-500 mt-1">{tx('本次运行生成的文件（存储于 MinIO）。', 'Files generated by this run (stored in MinIO).')}</p>
                     </div>
                     <button onClick={() => setShowArtifacts(false)} className="text-gray-400 hover:text-gray-600">
                         <X className="w-5 h-5" />
@@ -1387,10 +1466,10 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                     <table className="w-full text-left text-sm">
                         <thead className="bg-gray-50 text-gray-500">
                             <tr>
-                                <th className="px-4 py-2 font-medium">Name</th>
-                                <th className="px-4 py-2 font-medium">Type</th>
-                                <th className="px-4 py-2 font-medium">Size</th>
-                                <th className="px-4 py-2 font-medium">Last Modified</th>
+                                <th className="px-4 py-2 font-medium">{tx('名称', 'Name')}</th>
+                                <th className="px-4 py-2 font-medium">{tx('类型', 'Type')}</th>
+                                <th className="px-4 py-2 font-medium">{tx('大小', 'Size')}</th>
+                                <th className="px-4 py-2 font-medium">{tx('最后修改', 'Last Modified')}</th>
                                 <th className="px-4 py-2"></th>
                             </tr>
                         </thead>
@@ -1428,7 +1507,7 @@ ${JSON.stringify(run?.config || {}, null, 2)}`}
                       onClick={handleDownloadAllArtifacts}
                       className="text-sm text-blue-600 font-medium hover:underline"
                     >
-                      Download All (.zip)
+                      {tx('下载全部 (.zip)', 'Download All (.zip)')}
                     </button>
                 </div>
             </div>

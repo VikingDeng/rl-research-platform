@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+from pydantic import ConfigDict
+
 from app.schemas.base import APIModel
 
 
@@ -115,8 +117,7 @@ class TrainJobEnv(APIModel):
     map_set: str
     wrappers: Optional[List[str]] = None
 
-    class Config(APIModel.Config):
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class TrainJobAlgo(APIModel):
@@ -124,8 +125,7 @@ class TrainJobAlgo(APIModel):
     algo_version_id: str
     preset: Optional[str] = None
 
-    class Config(APIModel.Config):
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class TrainJobAgent(APIModel):
@@ -143,8 +143,7 @@ class TrainJobTrain(APIModel):
     gamma: Optional[float] = None
     gae_lambda: Optional[float] = None
 
-    class Config(APIModel.Config):
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ResourceSpec(APIModel):

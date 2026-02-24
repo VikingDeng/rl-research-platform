@@ -5,12 +5,14 @@ import { StatusBadge } from '../components/StatusBadge';
 import { ArrowLeft, BarChart2 } from 'lucide-react';
 import { RunGroupSummary } from '../types';
 import { useToast } from '../components/Toast';
+import { useI18n } from '../services/i18n';
 
 export const GroupSummary: React.FC = () => {
   const { groupId } = useParams<{ groupId: string }>();
   const [summary, setSummary] = useState<RunGroupSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const { showToast } = useToast();
+  const { tx, locale } = useI18n();
 
   useEffect(() => {
     if (!groupId) return;
@@ -27,13 +29,16 @@ export const GroupSummary: React.FC = () => {
 
   const exportBest = async (metric: string, runId?: string) => {
     if (!runId) return;
-    const name = window.prompt('Template name', `Best-${metric}-${summary?.groupId?.slice(0, 8)}`);
+    const name = window.prompt(tx('模板名称', 'Template name'), `Best-${metric}-${summary?.groupId?.slice(0, 8)}`);
     if (!name) return;
     try {
-      await api.exportRunTemplate(runId, { name, description: `Best ${metric} from group ${summary?.groupId}` });
-      showToast('Template exported from best run.', 'success');
+      await api.exportRunTemplate(runId, {
+        name,
+        description: tx(`分组 ${summary?.groupId} 的最佳 ${metric}`, `Best ${metric} from group ${summary?.groupId}`),
+      });
+      showToast(tx('已从最佳运行导出模板。', 'Template exported from best run.'), 'success');
     } catch (err) {
-      const detail = err instanceof Error ? err.message : 'Export failed';
+      const detail = err instanceof Error ? err.message : tx('导出失败', 'Export failed');
       showToast(detail, 'error');
     }
   };
@@ -43,29 +48,29 @@ export const GroupSummary: React.FC = () => {
     isRateMetric(metric) ? `${(value * 100).toFixed(1)}%` : value.toFixed(2);
 
   if (loading) {
-    return <div className="p-6 text-gray-500">Loading group summary...</div>;
+    return <div className="p-6 text-gray-500">{tx('正在加载分组摘要...', 'Loading group summary...')}</div>;
   }
 
   if (!summary) {
-    return <div className="p-6 text-gray-500">Group not found.</div>;
+    return <div className="p-6 text-gray-500">{tx('未找到分组。', 'Group not found.')}</div>;
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-gray-500">
         <Link to="/" className="hover:text-blue-600 flex items-center">
-          <ArrowLeft className="w-3 h-3 mr-1" /> Back to Dashboard
+          <ArrowLeft className="w-3 h-3 mr-1" /> {tx('返回看板', 'Back to Dashboard')}
         </Link>
       </div>
 
       <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Group Summary</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{tx('分组摘要', 'Group Summary')}</h1>
             <p className="text-xs text-gray-500 font-mono">{summary.groupId}</p>
           </div>
           <div className="flex items-center gap-2 text-xs text-gray-500">
-            <BarChart2 className="w-4 h-4" /> {summary.totalRuns} runs
+            <BarChart2 className="w-4 h-4" /> {tx(`${summary.totalRuns} 个运行`, `${summary.totalRuns} runs`)}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -79,19 +84,19 @@ export const GroupSummary: React.FC = () => {
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Aggregated Metrics</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{tx('聚合指标', 'Aggregated Metrics')}</h2>
         </div>
         <table className="w-full text-left">
           <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase">
             <tr>
-              <th className="px-6 py-3">Metric</th>
-              <th className="px-6 py-3">Mean ± Std</th>
+              <th className="px-6 py-3">{tx('指标', 'Metric')}</th>
+              <th className="px-6 py-3">{tx('均值 ± 标准差', 'Mean ± Std')}</th>
               <th className="px-6 py-3">95% CI</th>
-              <th className="px-6 py-3">Min</th>
-              <th className="px-6 py-3">Max</th>
+              <th className="px-6 py-3">{tx('最小值', 'Min')}</th>
+              <th className="px-6 py-3">{tx('最大值', 'Max')}</th>
               <th className="px-6 py-3">N</th>
-              <th className="px-6 py-3">Best Run</th>
-              <th className="px-6 py-3">Export Best</th>
+              <th className="px-6 py-3">{tx('最佳运行', 'Best Run')}</th>
+              <th className="px-6 py-3">{tx('导出最佳', 'Export Best')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -110,7 +115,7 @@ export const GroupSummary: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-gray-600">{formatMetric(metric, stat.max)}</td>
                 <td className="px-6 py-4 text-sm text-gray-600">{stat.n}</td>
                 <td className="px-6 py-4 text-sm text-blue-600">
-                  {stat.bestRunId ? <Link to={`/runs/${stat.bestRunId}`}>View</Link> : '-'}
+                  {stat.bestRunId ? <Link to={`/runs/${stat.bestRunId}`}>{tx('查看', 'View')}</Link> : '-'}
                 </td>
                 <td className="px-6 py-4 text-sm">
                   {stat.bestRunId ? (
@@ -118,7 +123,7 @@ export const GroupSummary: React.FC = () => {
                       onClick={() => exportBest(metric, stat.bestRunId)}
                       className="text-blue-600 hover:text-blue-800"
                     >
-                      Export
+                      {tx('导出', 'Export')}
                     </button>
                   ) : (
                     <span className="text-gray-400">-</span>
@@ -129,7 +134,7 @@ export const GroupSummary: React.FC = () => {
             {sortedMetrics.length === 0 && (
               <tr>
                 <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
-                  No metrics captured yet.
+                  {tx('尚无指标数据。', 'No metrics captured yet.')}
                 </td>
               </tr>
             )}
@@ -139,16 +144,16 @@ export const GroupSummary: React.FC = () => {
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Runs in Group</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{tx('分组内运行', 'Runs in Group')}</h2>
         </div>
         <table className="w-full text-left">
           <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase">
             <tr>
-              <th className="px-6 py-3">Run</th>
-              <th className="px-6 py-3">Status</th>
-              <th className="px-6 py-3">Seed</th>
-              <th className="px-6 py-3">Metrics</th>
-              <th className="px-6 py-3">Created</th>
+              <th className="px-6 py-3">{tx('运行', 'Run')}</th>
+              <th className="px-6 py-3">{tx('状态', 'Status')}</th>
+              <th className="px-6 py-3">{tx('种子', 'Seed')}</th>
+              <th className="px-6 py-3">{tx('指标', 'Metrics')}</th>
+              <th className="px-6 py-3">{tx('创建时间', 'Created')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -170,13 +175,13 @@ export const GroupSummary: React.FC = () => {
                   ))}
                   {Object.keys(run.metrics).length === 0 && <span className="text-gray-400">-</span>}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-500">{new Date(run.created).toLocaleString()}</td>
+                <td className="px-6 py-4 text-sm text-gray-500">{new Date(run.created).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}</td>
               </tr>
             ))}
             {summary.runs.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                  No runs found in this group.
+                  {tx('该分组下没有运行记录。', 'No runs found in this group.')}
                 </td>
               </tr>
             )}

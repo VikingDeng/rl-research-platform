@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,13 @@ from testcontainers.minio import MinioContainer
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(BACKEND_ROOT))
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"datetime\.datetime\.utcnow\(\) is deprecated.*",
+    category=DeprecationWarning,
+    module=r"botocore\.auth",
+)
 
 
 def _docker_available() -> bool:

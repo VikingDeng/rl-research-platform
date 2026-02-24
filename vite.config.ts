@@ -17,6 +17,26 @@ export default defineConfig(({ mode }) => {
         },
       },
       plugins: [react()],
+      build: {
+        chunkSizeWarningLimit: 700,
+        rollupOptions: {
+          output: {
+            manualChunks: (id) => {
+              if (!id.includes('node_modules')) return;
+              if (id.includes('/recharts/') || id.includes('/d3-')) {
+                return 'vendor-viz';
+              }
+              if (id.includes('/lucide-react/')) {
+                return 'vendor-ui';
+              }
+              if (id.includes('/@openai/')) {
+                return 'vendor-ai';
+              }
+              return;
+            },
+          },
+        },
+      },
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)

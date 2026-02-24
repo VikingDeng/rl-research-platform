@@ -8,6 +8,147 @@
 @source "./components/**/*.{js,ts,jsx,tsx}";
 @source "./services/**/*.{js,ts,jsx,tsx}";
 
+:root {
+    --surface-base: #f4f8fc;
+    --surface-layer: #eef4fb;
+    --surface-panel: #ffffff;
+    --surface-panel-soft: rgba(255, 255, 255, 0.82);
+    --text-primary: #0b1220;
+    --text-secondary: #334155;
+    --text-muted: #64748b;
+    --accent-primary: #1d4ed8;
+    --accent-cyan: #0891b2;
+    --border-soft: rgba(148, 163, 184, 0.28);
+    --shadow-soft: 0 14px 36px rgba(15, 23, 42, 0.08);
+    --shadow-strong: 0 22px 52px rgba(15, 23, 42, 0.14);
+    --ring-primary: rgba(29, 78, 216, 0.32);
+    --radius-panel: 18px;
+    --font-sans:
+        "Avenir Next",
+        "PingFang SC",
+        "Hiragino Sans GB",
+        "Noto Sans CJK SC",
+        "Noto Sans SC",
+        "Microsoft YaHei",
+        "Segoe UI Variable",
+        "SF Pro Text",
+        "IBM Plex Sans",
+        "Helvetica Neue",
+        sans-serif;
+    --font-display:
+        "Canela",
+        "Source Han Serif SC",
+        "Songti SC",
+        "Iowan Old Style",
+        "Palatino Linotype",
+        "Times New Roman",
+        serif;
+    --font-mono:
+        "JetBrains Mono",
+        "SFMono-Regular",
+        "Menlo",
+        "Consolas",
+        monospace;
+    --ease-standard: cubic-bezier(0.2, 0.72, 0.12, 1);
+    color-scheme: light;
+}
+
+html[lang^="zh"] {
+    --font-display:
+        "PingFang SC",
+        "Hiragino Sans GB",
+        "Noto Sans CJK SC",
+        "Microsoft YaHei",
+        sans-serif;
+    --font-mono:
+        "JetBrains Mono",
+        "SFMono-Regular",
+        "Menlo",
+        "Consolas",
+        "Noto Sans Mono CJK SC",
+        monospace;
+}
+
+html,
+body,
+#root {
+    min-height: 100%;
+}
+
+body {
+    margin: 0;
+    font-family: var(--font-sans);
+    line-height: 1.45;
+    letter-spacing: 0.002em;
+    color: var(--text-primary);
+    background:
+        radial-gradient(110% 64% at 14% 0%, #d9ebff 0%, rgba(217, 235, 255, 0) 58%),
+        radial-gradient(90% 58% at 100% 0%, #d6f2f3 0%, rgba(214, 242, 243, 0) 52%),
+        linear-gradient(180deg, #f8fbff 0%, var(--surface-base) 100%);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+}
+
+code,
+pre,
+.font-mono {
+    font-family: var(--font-mono);
+}
+
+.display-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--ring-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* Unified scrollbar style */
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    background: rgba(148, 163, 184, 0.55);
+}
+
+*::-webkit-scrollbar-track {
+    background: rgba(241, 245, 249, 0.9);
+}
+
 /* Custom scrollbar for logs */
 .scrollbar-hide::-webkit-scrollbar {
     display: none;
@@ -15,4 +156,322 @@
 .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+}
+
+.platform-shell {
+    background:
+        radial-gradient(68rem 38rem at -8% -12%, rgba(125, 211, 252, 0.34), rgba(125, 211, 252, 0)),
+        radial-gradient(48rem 30rem at 100% -16%, rgba(153, 246, 228, 0.28), rgba(153, 246, 228, 0)),
+        linear-gradient(180deg, #f9fbff 0%, #f2f7fc 56%, #eff5fb 100%);
+}
+
+.platform-shell::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    opacity: 0.22;
+    background-image:
+        linear-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.14) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 76%);
+}
+
+.platform-main {
+    position: relative;
+}
+
+.platform-content {
+    width: min(1520px, 100%);
+}
+
+.platform-content h2,
+.platform-content h3 {
+    letter-spacing: 0.004em;
+}
+
+.platform-content .text-xs.font-semibold.uppercase,
+.platform-content .text-\[10px\].uppercase {
+    letter-spacing: 0.08em;
+}
+
+.platform-content > div {
+    animation: page-fade-up 320ms var(--ease-standard) both;
+}
+
+.platform-content h1.text-2xl.font-bold.text-gray-900 {
+    font-family: var(--font-display);
+    font-size: clamp(1.65rem, 2.3vw, 2.25rem);
+    line-height: 1.1;
+    letter-spacing: 0.006em;
+    color: #0f172a;
+}
+
+.platform-content :is(.bg-white.rounded-xl, .bg-white.rounded-2xl, .bg-white.rounded-lg) {
+    border-color: var(--border-soft) !important;
+    background:
+        radial-gradient(125% 105% at 0% 0%, rgba(219, 234, 254, 0.18), rgba(219, 234, 254, 0)),
+        linear-gradient(170deg, rgba(255, 255, 255, 0.96), rgba(250, 253, 255, 0.92) 78%, rgba(255, 255, 255, 0.9));
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(8px);
+}
+
+.platform-content :is(.bg-white.rounded-xl, .bg-white.rounded-2xl, .bg-white.rounded-lg):hover {
+    box-shadow: var(--shadow-strong);
+}
+
+.platform-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.platform-content select,
+.platform-content textarea {
+    border-color: rgba(148, 163, 184, 0.44) !important;
+    background-color: rgba(255, 255, 255, 0.88);
+    color: #0f172a;
+}
+
+.platform-content input::placeholder,
+.platform-content textarea::placeholder {
+    color: #94a3b8;
+}
+
+.platform-content button {
+    border-radius: 0.7rem;
+}
+
+.platform-content button[class*="bg-blue-600"] {
+    background: linear-gradient(145deg, #2563eb, #1d4ed8);
+    border-color: rgba(37, 99, 235, 0.8);
+    box-shadow: 0 12px 24px rgba(29, 78, 216, 0.2);
+}
+
+.platform-content button[class*="bg-blue-600"]:hover {
+    background: linear-gradient(145deg, #1d4ed8, #1e40af);
+}
+
+.platform-content button[class*="border-gray-300"] {
+    border-color: rgba(148, 163, 184, 0.46) !important;
+    background-color: rgba(255, 255, 255, 0.9);
+}
+
+.platform-content table {
+    border-color: var(--border-soft);
+}
+
+.platform-content table thead {
+    background: linear-gradient(180deg, rgba(241, 245, 249, 0.9), rgba(248, 250, 252, 0.75));
+}
+
+.platform-content table tbody tr:hover {
+    background: rgba(59, 130, 246, 0.06);
+}
+
+.platform-shell aside {
+    background:
+        radial-gradient(90% 90% at 0% 0%, rgba(219, 234, 254, 0.2), rgba(219, 234, 254, 0)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 251, 255, 0.94));
+    border-right-color: var(--border-soft);
+    backdrop-filter: blur(10px);
+}
+
+.platform-shell aside a.bg-blue-50.text-blue-700 {
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    background: linear-gradient(180deg, rgba(239, 246, 255, 0.96), rgba(232, 245, 255, 0.9));
+    box-shadow: 0 8px 18px rgba(37, 99, 235, 0.11);
+}
+
+.agentic-lab {
+    position: relative;
+}
+
+.agentic-lab::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: -18px -8px auto -8px;
+    height: 220px;
+    border-radius: 28px;
+    background: linear-gradient(125deg, rgba(186, 230, 253, 0.22), rgba(224, 242, 254, 0.08) 40%, rgba(255, 255, 255, 0));
+    filter: blur(2px);
+}
+
+.agentic-hero,
+.agentic-ribbon,
+.agentic-pane {
+    border-color: var(--border-soft) !important;
+    border-radius: var(--radius-panel);
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.94) 0%, var(--surface-panel-soft) 72%, rgba(255, 255, 255, 0.88) 100%);
+    box-shadow: var(--shadow-soft);
+}
+
+.agentic-hero {
+    background:
+        radial-gradient(82% 110% at 0% 0%, rgba(191, 219, 254, 0.42), rgba(191, 219, 254, 0)),
+        radial-gradient(72% 90% at 100% 0%, rgba(167, 243, 208, 0.24), rgba(167, 243, 208, 0)),
+        linear-gradient(164deg, rgba(255, 255, 255, 0.96), rgba(248, 252, 255, 0.9));
+}
+
+.agentic-toolbar {
+    align-items: center;
+}
+
+.agentic-pill {
+    letter-spacing: 0.13em;
+    color: var(--text-muted);
+}
+
+.agentic-ribbon {
+    backdrop-filter: blur(10px);
+}
+
+.agentic-step-card {
+    transition: transform 180ms var(--ease-standard), box-shadow 220ms var(--ease-standard), border-color 220ms var(--ease-standard);
+}
+
+.agentic-step-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 26px rgba(15, 23, 42, 0.08);
+}
+
+.agentic-step-card.is-done {
+    box-shadow: 0 14px 26px rgba(16, 185, 129, 0.12);
+}
+
+.agentic-pane {
+    transition: transform 180ms var(--ease-standard), box-shadow 220ms var(--ease-standard), border-color 220ms var(--ease-standard);
+    animation: agentic-fade-up 460ms var(--ease-standard) both;
+    overflow: hidden;
+}
+
+.agentic-pane:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-strong);
+}
+
+.agentic-pane-tree {
+    animation-delay: 40ms;
+}
+
+.agentic-pane-evidence {
+    animation-delay: 90ms;
+}
+
+.agentic-pane-agent {
+    animation-delay: 130ms;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.agentic-tree-canvas {
+    background:
+        radial-gradient(circle at 0% 0%, rgba(219, 234, 254, 0.34), transparent 44%),
+        linear-gradient(180deg, rgba(248, 250, 252, 0.75), rgba(255, 255, 255, 0.92));
+    scroll-behavior: smooth;
+}
+
+.agentic-tree-canvas svg {
+    text-rendering: geometricPrecision;
+    font-kerning: normal;
+}
+
+.agentic-tree-canvas svg text {
+    paint-order: stroke;
+    stroke: rgba(255, 255, 255, 0.2);
+    stroke-width: 0.4;
+}
+
+.agentic-lab-focused .agentic-ribbon {
+    padding-top: 0.62rem;
+    padding-bottom: 0.62rem;
+}
+
+.agentic-lab-focused .agentic-pane {
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.1);
+}
+
+.agentic-lab-focused .agentic-pane:hover {
+    box-shadow: 0 16px 34px rgba(15, 23, 42, 0.14);
+}
+
+.agentic-tab-strip {
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.94), rgba(241, 245, 249, 0.8));
+}
+
+.agentic-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 0.35rem;
+}
+
+.agentic-kpi-card {
+    border: 1px solid rgba(203, 213, 225, 0.9);
+    border-radius: 0.66rem;
+    padding: 0.46rem 0.5rem;
+    min-height: 3rem;
+}
+
+.agentic-kpi-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.84;
+}
+
+.agentic-kpi-value {
+    margin-top: 0.18rem;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.18;
+}
+
+.agentic-pane-agent .agentic-tab-strip {
+    position: sticky;
+    top: 0.18rem;
+    z-index: 3;
+    backdrop-filter: blur(8px);
+}
+
+.agentic-pane-agent .agentic-tab-strip button {
+    min-height: 1.85rem;
+}
+
+.agentic-lab button {
+    transition: color 160ms var(--ease-standard), background-color 160ms var(--ease-standard), border-color 180ms var(--ease-standard), box-shadow 180ms var(--ease-standard);
+}
+
+.agentic-lab :is(.agentic-hero, .agentic-ribbon, .agentic-pane) {
+    word-break: break-word;
+}
+
+.agentic-lab :is(.agentic-hero, .agentic-ribbon, .agentic-pane) .truncate {
+    max-width: 100%;
+}
+
+.agentic-lab .display-title {
+    font-size: clamp(1.55rem, 2.6vw, 2.15rem);
+    line-height: 1.12;
+    color: #0f172a;
+}
+
+@keyframes agentic-fade-up {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes page-fade-up {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }

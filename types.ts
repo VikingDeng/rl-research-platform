@@ -93,3 +93,293 @@ export type BootstrapResponse = {
     templateVersionId: string;
   };
 };
+
+export type AgenticIdeaInput = {
+  title: string;
+  taskGoal: string;
+  environment: string;
+  dataSources: string[];
+  successMetrics: Record<string, unknown>;
+  budget: {
+    gpuHours: number;
+    wallclockMinutes: number;
+  };
+  constraints: {
+    compliance: string[];
+    forbiddenActions: string[];
+    allowNetwork: boolean;
+    allowDependencyInstall: boolean;
+  };
+  executionMode?: 'offline_stub' | 'local_shell' | 'mle_runner';
+  localCommand?: string | null;
+  git?: {
+    repo?: string;
+    branch?: string;
+    commit?: string;
+  };
+  requestedActions?: string[];
+  subAgentPolicy?: {
+    enabled: boolean;
+    maxDepth: number;
+    maxPerNode: number;
+    maxTotal: number;
+    timeoutMs: number;
+  };
+  approvalPolicy?: {
+    mode: 'strict' | 'balanced' | 'permissive';
+    highRiskActions: string[];
+    blockedActionRoles: Array<'admin' | 'ops' | 'security'>;
+    highRiskActionRoles: Array<'admin' | 'ops' | 'security'>;
+    requireApprovalForUnknownActions?: boolean;
+    minApprovals?: number;
+    requireDistinctRoles?: boolean;
+    approvalTtlMinutes?: number;
+  };
+};
+
+export type AgenticNode = {
+  nodeId: string;
+  parentId?: string | null;
+  agent: string;
+  title: string;
+  hypothesis: string;
+  executionPlan: string;
+  expectedMetrics: Record<string, unknown>;
+  budget: Record<string, unknown>;
+  risk: string;
+  status: string;
+  rationale?: string | null;
+  evidence: Record<string, unknown>;
+  subAgents?: Array<Record<string, unknown>>;
+  nextSuggestions: string[];
+  children: string[];
+};
+
+export type AgenticContractReport = {
+  totalRequired: number;
+  present: number;
+  passRate: number;
+  missing: string[];
+};
+
+export type AgenticMatrixCell = {
+  row: string;
+  col: string;
+  value: number;
+  winRate: number;
+  confidence: number;
+  verdict: string;
+  logUri: string;
+  replayUri: string;
+};
+
+export type AgenticMatrix = {
+  labels: string[];
+  matrix: number[][];
+  cells: AgenticMatrixCell[];
+  ranking: Array<{ id: string; score: number }>;
+  meta: {
+    metric: string;
+    gamesPerPair: number;
+    generatedAt: string;
+    downsampled?: boolean;
+    originalCount?: number;
+  };
+};
+
+export type AgenticRunSummary = {
+  runId: string;
+  title: string;
+  objective: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  contractPassRate: number;
+  failureReason?: string | null;
+};
+
+export type AgenticRunDetail = {
+  runId: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  idea: Record<string, unknown>;
+  researchSpec: Record<string, unknown>;
+  rootConfigDraft: Record<string, unknown>;
+  evalProtocolDraft: Record<string, unknown>;
+  riskStatement: string;
+  totTree: AgenticNode[];
+  timeline: Array<Record<string, unknown>>;
+  events: Array<Record<string, unknown>>;
+  pendingApprovals: Array<Record<string, unknown>>;
+  contract: AgenticContractReport;
+  matrix?: AgenticMatrix | null;
+  registryRecord: Record<string, unknown>;
+  reproBundle?: Record<string, unknown> | null;
+};
+
+export type AgenticRunCreateResponse = {
+  runId: string;
+  status: string;
+  detail: AgenticRunDetail;
+};
+
+export type AgenticSubAgentRecord = {
+  subAgentId: string;
+  parentNodeId: string;
+  parentSubAgentId?: string | null;
+  ownerAgent: string;
+  role: string;
+  objective: string;
+  depth: number;
+  status: string;
+  startedAt: string;
+  finishedAt?: string | null;
+  evidence: Record<string, unknown>;
+  children: string[];
+};
+
+export type AgenticSubAgentListResponse = {
+  runId: string;
+  page: number;
+  pageSize: number;
+  total: number;
+  items: AgenticSubAgentRecord[];
+};
+
+export type AgenticListResponse = {
+  page: number;
+  pageSize: number;
+  total: number;
+  items: AgenticRunSummary[];
+};
+
+export type AgenticSpecValidationResponse = {
+  valid: boolean;
+  normalizedSpec: Record<string, unknown>;
+  rootConfigDraft: Record<string, unknown>;
+  evalProtocolDraft: Record<string, unknown>;
+  riskStatement: string;
+  retrievalContext: Array<Record<string, unknown>>;
+};
+
+export type AgenticActionResponse = {
+  ok: boolean;
+  message: string;
+  detail: AgenticRunDetail;
+};
+
+export type AgenticMatrixResponse = {
+  runId: string;
+  matrix: AgenticMatrix;
+};
+
+export type AgenticReproResponse = {
+  runId: string;
+  bundlePath: string;
+  manifest: Record<string, unknown>;
+};
+
+export type AgenticAuditReplayResponse = {
+  runId: string;
+  verified: boolean;
+  checkedEvents: number;
+  chainHead?: string | null;
+  failureReason?: string | null;
+  replay: {
+    uptoEventSeq?: number | null;
+    replayedEvents?: number;
+    replayStatus?: string;
+    matchesCurrentState?: boolean | null;
+    nodeStates?: Record<string, string>;
+    subAgentStates?: Record<string, string>;
+    subAgentsStarted?: number;
+    subAgentsSucceeded?: number;
+    subAgentsFailed?: number;
+    branchOps?: Record<string, number>;
+    approvalsUpdated?: number;
+    matrixGenerated?: boolean;
+    reproExported?: boolean;
+    semanticValid?: boolean;
+    semanticIssues?: string[];
+  };
+};
+
+export type AgenticRunReportModel = {
+  runId: string;
+  title: string;
+  status: string;
+  generatedAt: string;
+  objective: string;
+  contractPassRate: number;
+  contractMissing: string[];
+  totNodes: number;
+  timelineEvents: number;
+  failureEvents: number;
+  recoveryEvents: number;
+  safetyEvents: number;
+  leagueEvents: number;
+  approvals: {
+    pending: number;
+    approved: number;
+    rejected: number;
+    expired: number;
+    reopened: number;
+  };
+  subAgents: {
+    total: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    topRoles: Array<{ role: string; count: number }>;
+  };
+  matrix: {
+    labels: number;
+    topRanking: Array<{ rank: number; id: string; score: number }>;
+  };
+  reproScript: string;
+  replayCommand: string;
+  nodeStatus?: Record<string, number>;
+  registryRecord?: Record<string, unknown>;
+  approvalPolicyMeta?: Record<string, unknown>;
+};
+
+export type AgenticRunReportResponse = {
+  runId: string;
+  generatedAt: string;
+  report: AgenticRunReportModel;
+  markdown: string;
+  artifactJsonPath: string;
+  artifactMarkdownPath: string;
+};
+
+export type AgenticApprovalPolicyTemplate = {
+  templateId: string;
+  label: string;
+  description: string;
+  rationale: string;
+  recommended: boolean;
+  policy: NonNullable<AgenticIdeaInput['approvalPolicy']>;
+};
+
+export type AgenticApprovalPolicyTemplateListResponse = {
+  recommendedTemplateId?: string | null;
+  contextSummary: Record<string, unknown>;
+  items: AgenticApprovalPolicyTemplate[];
+};
+
+export type AgenticApproverRecord = {
+  actorId: string;
+  roles: Array<'admin' | 'ops' | 'security' | string>;
+  scopes: string[];
+  actionAllowlist: string[];
+  actionDenylist: string[];
+  active: boolean;
+  note?: string | null;
+};
+
+export type AgenticApproverListResponse = {
+  strictMode: boolean;
+  total: number;
+  items: AgenticApproverRecord[];
+};

@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Command, LayoutDashboard, PlusCircle, Box, Activity, Grid3X3, FileStack, Settings, Hash, User, ArrowRight } from 'lucide-react';
+import { Search, LayoutDashboard, PlusCircle, Box, Activity, Grid3X3, Settings } from 'lucide-react';
 import { api } from '../services/api';
-import { Project, Run } from '../types';
+import { useI18n } from '../services/i18n';
 
 interface CommandItem {
     id: string;
@@ -13,6 +13,7 @@ interface CommandItem {
 }
 
 export const CommandPalette: React.FC = () => {
+  const { tx } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -27,16 +28,16 @@ export const CommandPalette: React.FC = () => {
     
     Promise.all([api.getProjects(), api.getRuns()]).then(([projects, runs]) => {
         const navItems: CommandItem[] = [
-            { id: 'nav-home', title: 'Go to Dashboard', category: 'Navigation', icon: LayoutDashboard, action: () => navigate('/') },
-            { id: 'nav-create', title: 'Create New Job', category: 'Navigation', icon: PlusCircle, action: () => navigate('/create-job') },
-            { id: 'nav-matrix', title: 'Matrix Analysis', category: 'Navigation', icon: Grid3X3, action: () => navigate('/matrix') },
-            { id: 'nav-settings', title: 'Settings', category: 'Navigation', icon: Settings, action: () => navigate('/settings') },
+            { id: 'nav-home', title: tx('前往仪表盘', 'Go to Dashboard'), category: tx('导航', 'Navigation'), icon: LayoutDashboard, action: () => navigate('/') },
+            { id: 'nav-create', title: tx('创建新任务', 'Create New Job'), category: tx('导航', 'Navigation'), icon: PlusCircle, action: () => navigate('/create-job') },
+            { id: 'nav-matrix', title: tx('矩阵分析', 'Matrix Analysis'), category: tx('导航', 'Navigation'), icon: Grid3X3, action: () => navigate('/matrix') },
+            { id: 'nav-settings', title: tx('系统设置', 'Settings'), category: tx('导航', 'Navigation'), icon: Settings, action: () => navigate('/settings') },
         ];
 
         const projectItems: CommandItem[] = projects.map(p => ({
             id: `proj-${p.id}`,
             title: p.name,
-            category: 'Projects',
+            category: tx('项目', 'Projects'),
             icon: Box,
             action: () => navigate(`/projects/${p.id}`)
         }));
@@ -44,14 +45,14 @@ export const CommandPalette: React.FC = () => {
         const runItems: CommandItem[] = runs.slice(0, 10).map(r => ({
             id: `run-${r.id}`,
             title: r.name,
-            category: 'Recent Runs',
+            category: tx('最近运行', 'Recent Runs'),
             icon: Activity,
             action: () => navigate(`/runs/${r.id}`)
         }));
 
         setItems([...navItems, ...projectItems, ...runItems]);
     });
-  }, [isOpen, navigate]);
+  }, [isOpen, navigate, tx]);
 
   // Keyboard Event Listeners
   useEffect(() => {
@@ -106,25 +107,25 @@ export const CommandPalette: React.FC = () => {
     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] px-4">
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setIsOpen(false)}></div>
       
-      <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 border border-gray-200 ring-1 ring-black/5">
-        <div className="flex items-center px-4 border-b border-gray-100">
+      <div className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200/80 bg-white/94 shadow-[0_24px_50px_rgba(15,23,42,0.22)] ring-1 ring-slate-200/70 backdrop-blur-md animate-in fade-in zoom-in duration-200">
+        <div className="flex items-center border-b border-slate-200 px-4">
             <Search className="w-5 h-5 text-gray-400 mr-3" />
             <input 
                 ref={inputRef}
-                className="w-full py-4 bg-transparent border-none text-gray-900 placeholder-gray-400 focus:outline-none text-base"
-                placeholder="Type a command or search..."
+                className="w-full border-none bg-transparent py-4 text-base text-slate-900 placeholder-slate-400 focus:outline-none"
+                placeholder={tx('输入命令或搜索...', 'Type a command or search...')}
                 value={query}
                 onChange={e => { setQuery(e.target.value); setSelectedIndex(0); }}
                 onKeyDown={handleKeyDown}
             />
             <div className="hidden sm:flex items-center gap-1">
-                <kbd className="px-2 py-0.5 bg-gray-100 border border-gray-200 rounded text-xs text-gray-500 font-sans">Esc</kbd>
+                <kbd className="rounded border border-slate-200 bg-slate-100/90 px-2 py-0.5 text-xs font-sans text-slate-500">Esc</kbd>
             </div>
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto py-2" ref={listRef}>
             {filteredItems.length === 0 ? (
-                <div className="px-4 py-8 text-center text-gray-500 text-sm">No results found.</div>
+                <div className="px-4 py-8 text-center text-sm text-slate-500">{tx('无匹配结果。', 'No results found.')}</div>
             ) : (
                 <>
                    {/* Group by category if needed, simplified here */}
@@ -133,15 +134,15 @@ export const CommandPalette: React.FC = () => {
                            key={item.id}
                            onClick={() => { item.action(); setIsOpen(false); }}
                            onMouseEnter={() => setSelectedIndex(index)}
-                           className={`px-4 py-3 mx-2 rounded-lg cursor-pointer flex items-center justify-between text-sm transition-colors ${
-                               index === selectedIndex ? 'bg-blue-600 text-white' : 'text-gray-700 hover:bg-gray-50'
+                           className={`mx-2 flex cursor-pointer items-center justify-between rounded-lg px-4 py-3 text-sm transition-colors ${
+                               index === selectedIndex ? 'bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-[0_12px_22px_rgba(37,99,235,0.3)]' : 'text-slate-700 hover:bg-slate-100/80'
                            }`}
                        >
                            <div className="flex items-center gap-3">
-                               <item.icon className={`w-4 h-4 ${index === selectedIndex ? 'text-blue-200' : 'text-gray-400'}`} />
+                               <item.icon className={`h-4 w-4 ${index === selectedIndex ? 'text-blue-200' : 'text-slate-400'}`} />
                                <span className="font-medium">{item.title}</span>
                            </div>
-                           <div className={`text-xs ${index === selectedIndex ? 'text-blue-200' : 'text-gray-400'}`}>
+                           <div className={`text-xs ${index === selectedIndex ? 'text-blue-200' : 'text-slate-400'}`}>
                                {item.category}
                            </div>
                        </div>
@@ -150,13 +151,13 @@ export const CommandPalette: React.FC = () => {
             )}
         </div>
         
-        <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex justify-between items-center text-xs text-gray-500">
+        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/85 px-4 py-2 text-xs text-slate-500">
             <div className="flex gap-4">
-                <span><strong className="font-medium text-gray-700">↑↓</strong> to navigate</span>
-                <span><strong className="font-medium text-gray-700">↵</strong> to select</span>
+                <span><strong className="font-medium text-slate-700">↑↓</strong> {tx('切换', 'to navigate')}</span>
+                <span><strong className="font-medium text-slate-700">↵</strong> {tx('确认', 'to select')}</span>
             </div>
             <div>
-                RL Platform v1.0
+                {tx('RL 平台 v1.0', 'RL Platform v1.0')}
             </div>
         </div>
       </div>

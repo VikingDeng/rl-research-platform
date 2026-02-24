@@ -1,12 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { Run } from '../types';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ScatterChart, Scatter, ZAxis } from 'recharts';
-import { X, BarChart2, GitBranch, Zap, FileText } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ScatterChart, Scatter } from 'recharts';
+import { X, BarChart2, Zap, FileText } from 'lucide-react';
+import { useI18n } from '../services/i18n';
 
 type MetricKey = 'returnMean' | 'winRate' | 'entropy';
 type ViewMode = 'timeseries' | 'correlation' | 'config';
+const RUN_SELECTOR_ROW_HEIGHT = 68;
+const RUN_SELECTOR_OVERSCAN = 8;
+const RUN_SELECTOR_VIEWPORT_HEIGHT = 560;
+const CONFIG_DIFF_ROW_HEIGHT = 38;
+const CONFIG_DIFF_OVERSCAN = 12;
+const CONFIG_DIFF_VIEWPORT_HEIGHT = 520;
 
 // Helper to flatten object
 const flattenObject = (obj: any, prefix = ''): Record<string, any> => {
@@ -22,12 +29,16 @@ const flattenObject = (obj: any, prefix = ''): Record<string, any> => {
 }
 
 export const CompareRuns: React.FC = () => {
+  const { tx } = useI18n();
   const [searchParams] = useSearchParams();
   const [allRuns, setAllRuns] = useState<Run[]>([]);
   const [runDetails, setRunDetails] = useState<Record<string, Run>>({});
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [selectedMetric, setSelectedMetric] = useState<MetricKey>('returnMean');
   const [viewMode, setViewMode] = useState<ViewMode>('timeseries');
+  const [runSearch, setRunSearch] = useState('');
+  const [runSelectorScrollTop, setRunSelectorScrollTop] = useState(0);
+  const [configDiffScrollTop, setConfigDiffScrollTop] = useState(0);
   
   // Scatter Plot State
   const [xAxisParam, setXAxisParam] = useState('lr');
@@ -66,18 +77,17 @@ export const CompareRuns: React.FC = () => {
           setRunDetails(prev => {
               const next = { ...prev };
               fetchedRuns.forEach(r => next[r.id] = r);
-              
-              // Update param keys based on new configs
-              const keys = new Set<string>(paramKeys);
-              fetchedRuns.forEach(r => {
-                  if (r.config) Object.keys(r.config).forEach(k => keys.add(k));
-              });
-              setParamKeys(Array.from(keys));
-              
               return next;
           });
+          setParamKeys(prev => {
+            const keys = new Set<string>(prev);
+            fetchedRuns.forEach(run => {
+              if (run.config) Object.keys(run.config).forEach(key => keys.add(key));
+            });
+            return Array.from(keys);
+          });
       });
-  }, [selectedRunIds]);
+  }, [selectedRunIds, runDetails]);
 
   const toggleRun = (id: string) => {
     if (selectedRunIds.includes(id)) {
@@ -86,9 +96,45 @@ export const CompareRuns: React.FC = () => {
       if (selectedRunIds.length < 10) setSelectedRunIds([...selectedRunIds, id]);
     }
   };
+  const clearSelectedRuns = () => setSelectedRunIds([]);
+  const selectTopVisibleRuns = () => {
+    const picks = filteredTrainRuns.slice(0, 5).map(run => run.id);
+    if (picks.length === 0) return;
+    const merged = [...selectedRunIds];
+    picks.forEach(id => {
+      if (!merged.includes(id) && merged.length < 10) {
+        merged.push(id);
+      }
+    });
+    setSelectedRunIds(merged);
+  };
 
   // Use full details if available, else summary (which might lack metrics)
   const selectedRuns = selectedRunIds.map(id => runDetails[id] || allRuns.find(r => r.id === id)).filter(Boolean) as Run[];
+  const trainRuns = useMemo(
+    () => allRuns.filter(r => r.type === 'TRAIN').sort((a, b) => Date.parse(b.created || '') - Date.parse(a.created || '')),
+    [allRuns],
+  );
+  const runQuery = runSearch.trim().toLowerCase();
+  const filteredTrainRuns = useMemo(() => {
+    if (!runQuery) return trainRuns;
+    return trainRuns.filter(run =>
+      `${run.id} ${run.name} ${run.algo} ${run.env}`.toLowerCase().includes(runQuery),
+    );
+  }, [trainRuns, runQuery]);
+  const selectorStart = Math.max(0, Math.floor(runSelectorScrollTop / RUN_SELECTOR_ROW_HEIGHT) - RUN_SELECTOR_OVERSCAN);
+  const selectorVisibleCount = Math.ceil(RUN_SELECTOR_VIEWPORT_HEIGHT / RUN_SELECTOR_ROW_HEIGHT) + RUN_SELECTOR_OVERSCAN * 2;
+  const selectorEnd = Math.min(filteredTrainRuns.length, selectorStart + selectorVisibleCount);
+  const visibleSelectorRuns = filteredTrainRuns.slice(selectorStart, selectorEnd);
+  const selectorOffsetY = selectorStart * RUN_SELECTOR_ROW_HEIGHT;
+  const selectorTotalHeight = filteredTrainRuns.length * RUN_SELECTOR_ROW_HEIGHT;
+
+  useEffect(() => {
+    setRunSelectorScrollTop(0);
+  }, [runSearch]);
+  useEffect(() => {
+    setConfigDiffScrollTop(0);
+  }, [selectedRunIds, viewMode]);
   
   // --- Time Series Data Prep ---
   const timeSeriesData: any[] = [];
@@ -147,13 +193,20 @@ export const CompareRuns: React.FC = () => {
           }
       });
   }
+  const changedConfigCount = configDiffData.filter(row => row.diff).length;
+  const configStart = Math.max(0, Math.floor(configDiffScrollTop / CONFIG_DIFF_ROW_HEIGHT) - CONFIG_DIFF_OVERSCAN);
+  const configVisibleCount = Math.ceil(CONFIG_DIFF_VIEWPORT_HEIGHT / CONFIG_DIFF_ROW_HEIGHT) + CONFIG_DIFF_OVERSCAN * 2;
+  const configEnd = Math.min(configDiffData.length, configStart + configVisibleCount);
+  const visibleConfigRows = configDiffData.slice(configStart, configEnd);
+  const configTopPad = configStart * CONFIG_DIFF_ROW_HEIGHT;
+  const configBottomPad = Math.max(0, (configDiffData.length - configEnd) * CONFIG_DIFF_ROW_HEIGHT);
 
   const colors = ["#2563eb", "#16a34a", "#db2777", "#ea580c", "#7c3aed", "#0891b2", "#be185d"];
 
   const metricOptions: { key: MetricKey; label: string }[] = [
-      { key: 'returnMean', label: 'Return Mean (Final)' },
-      { key: 'winRate', label: 'Win Rate (Final)' },
-      { key: 'entropy', label: 'Entropy' },
+      { key: 'returnMean', label: tx('回报均值（最终）', 'Return Mean (Final)') },
+      { key: 'winRate', label: tx('胜率（最终）', 'Win Rate (Final)') },
+      { key: 'entropy', label: tx('熵', 'Entropy') },
   ];
 
   const formatMetricValue = (metric: MetricKey, value: number) =>
@@ -163,27 +216,27 @@ export const CompareRuns: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-           <h1 className="text-2xl font-bold text-gray-900">Compare Runs</h1>
-           <p className="text-gray-500 mt-1">Visualize performance differences across algorithms and hyperparameters.</p>
+           <h1 className="text-2xl font-bold text-gray-900">{tx('运行对比', 'Compare Runs')}</h1>
+           <p className="text-gray-500 mt-1">{tx('可视化不同算法与超参数下的性能差异。', 'Visualize performance differences across algorithms and hyperparameters.')}</p>
         </div>
         <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
             <button 
                 onClick={() => setViewMode('timeseries')}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'timeseries' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
             >
-                Learning Curves
+                {tx('学习曲线', 'Learning Curves')}
             </button>
             <button 
                 onClick={() => setViewMode('correlation')}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center gap-1 transition-colors ${viewMode === 'correlation' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
             >
-                <Zap className="w-3 h-3" /> Hyperparams
+                <Zap className="w-3 h-3" /> {tx('超参数关系', 'Hyperparams')}
             </button>
             <button 
                 onClick={() => setViewMode('config')}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center gap-1 transition-colors ${viewMode === 'config' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
             >
-                <FileText className="w-3 h-3" /> Config Diff
+                <FileText className="w-3 h-3" /> {tx('配置差异', 'Config Diff')}
             </button>
         </div>
       </div>
@@ -191,25 +244,65 @@ export const CompareRuns: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Selector Panel */}
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm h-fit">
-            <h3 className="font-semibold text-gray-900 mb-3">Select Runs</h3>
-            <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                {allRuns.filter(r => r.type === 'TRAIN').map(run => (
-                    <div 
-                        key={run.id} 
-                        onClick={() => toggleRun(run.id)}
-                        className={`p-3 rounded-lg border text-sm cursor-pointer transition-all ${
-                            selectedRunIds.includes(run.id) 
-                            ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' 
-                            : 'border-gray-200 hover:bg-gray-50'
-                        }`}
-                    >
-                        <div className="font-medium text-gray-900 truncate">{run.name}</div>
-                        <div className="text-xs text-gray-500 mt-1 flex justify-between">
-                            <span>{run.algo}</span>
-                            <span>{run.env}</span>
-                        </div>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold text-gray-900">{tx('选择运行', 'Select Runs')}</h3>
+              <span className="text-[11px] font-medium text-gray-500">{selectedRunIds.length}/10 {tx('已选', 'selected')}</span>
+            </div>
+            <div className="mb-2">
+              <input
+                value={runSearch}
+                onChange={e => setRunSearch(e.target.value)}
+                placeholder={tx('按名称/算法/环境/ID 搜索', 'Search by name/algo/env/id')}
+                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
+            <div className="mb-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={selectTopVisibleRuns}
+                className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                {tx('选择前 5', 'Select Top 5')}
+              </button>
+              <button
+                type="button"
+                onClick={clearSelectedRuns}
+                className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                {tx('清空', 'Clear')}
+              </button>
+              <span className="text-[11px] text-gray-500">{filteredTrainRuns.length} {tx('个运行', 'runs')}</span>
+            </div>
+            <div
+              className="max-h-[560px] overflow-y-auto rounded-lg border border-gray-200"
+              onScroll={(e) => setRunSelectorScrollTop(e.currentTarget.scrollTop)}
+            >
+                {filteredTrainRuns.length === 0 ? (
+                  <div className="p-3 text-xs text-gray-500">{tx('未找到运行。', 'No runs found.')}</div>
+                ) : (
+                  <div className="relative" style={{ height: `${selectorTotalHeight}px` }}>
+                    <div className="absolute left-0 right-0" style={{ transform: `translateY(${selectorOffsetY}px)` }}>
+                      {visibleSelectorRuns.map(run => (
+                          <button
+                              key={run.id}
+                              type="button"
+                              onClick={() => toggleRun(run.id)}
+                              className={`block h-[68px] w-full border-b border-gray-100 px-3 py-2 text-left text-sm transition-all ${
+                                  selectedRunIds.includes(run.id)
+                                  ? 'bg-blue-50 ring-1 ring-inset ring-blue-400'
+                                  : 'hover:bg-gray-50'
+                              }`}
+                          >
+                              <div className="font-medium text-gray-900 truncate">{run.name}</div>
+                              <div className="text-xs text-gray-500 mt-1 flex justify-between">
+                                  <span className="truncate pr-2">{run.algo}</span>
+                                  <span className="truncate">{run.env}</span>
+                              </div>
+                          </button>
+                      ))}
                     </div>
-                ))}
+                  </div>
+                )}
             </div>
         </div>
 
@@ -218,7 +311,7 @@ export const CompareRuns: React.FC = () => {
             {selectedRuns.length === 0 ? (
                 <div className="bg-gray-50 rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-500 flex flex-col items-center">
                     <BarChart2 className="w-12 h-12 mb-4 opacity-20" />
-                    <p>Select runs from the left panel to compare.</p>
+                    <p>{tx('从左侧选择运行开始对比。', 'Select runs from the left panel to compare.')}</p>
                 </div>
             ) : (
                 <>
@@ -236,11 +329,22 @@ export const CompareRuns: React.FC = () => {
                     {/* View Content */}
                     {viewMode === 'config' ? (
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                            <div className="overflow-x-auto">
+                            <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-600">
+                                <div>
+                                  {tx('参数总数', 'Parameters')}: <span className="font-semibold text-gray-800">{configDiffData.length}</span>
+                                </div>
+                                <div>
+                                  {tx('差异参数', 'Changed')}: <span className="font-semibold text-amber-700">{changedConfigCount}</span>
+                                </div>
+                            </div>
+                            <div
+                              className="max-h-[520px] overflow-auto"
+                              onScroll={(e) => setConfigDiffScrollTop(e.currentTarget.scrollTop)}
+                            >
                                 <table className="w-full text-sm text-left">
-                                    <thead className="bg-gray-50 border-b border-gray-200">
+                                    <thead className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
                                         <tr>
-                                            <th className="px-4 py-3 font-semibold text-gray-500 w-48">Parameter</th>
+                                            <th className="px-4 py-3 font-semibold text-gray-500 w-48">{tx('参数', 'Parameter')}</th>
                                             {selectedRuns.map((r, idx) => (
                                                 <th key={r.id} className="px-4 py-3 font-semibold" style={{color: colors[idx % colors.length]}}>
                                                     {r.name}
@@ -249,8 +353,17 @@ export const CompareRuns: React.FC = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {configDiffData.map((row) => (
-                                            <tr key={row.key} className={`hover:bg-gray-50 ${row.diff ? 'bg-yellow-50/50' : ''}`}>
+                                        {configTopPad > 0 && (
+                                          <tr aria-hidden>
+                                            <td colSpan={selectedRuns.length + 1} style={{ height: `${configTopPad}px` }} />
+                                          </tr>
+                                        )}
+                                        {visibleConfigRows.map((row) => (
+                                            <tr
+                                              key={row.key}
+                                              className={`hover:bg-gray-50 ${row.diff ? 'bg-yellow-50/50' : ''}`}
+                                              style={{ height: `${CONFIG_DIFF_ROW_HEIGHT}px` }}
+                                            >
                                                 <td className="px-4 py-2 font-mono text-gray-600 truncate" title={row.key}>{row.key}</td>
                                                 {selectedRuns.map((r) => (
                                                     <td key={r.id} className={`px-4 py-2 font-mono ${row.diff ? 'font-bold text-gray-900' : 'text-gray-500'}`}>
@@ -259,6 +372,11 @@ export const CompareRuns: React.FC = () => {
                                                 ))}
                                             </tr>
                                         ))}
+                                        {configBottomPad > 0 && (
+                                          <tr aria-hidden>
+                                            <td colSpan={selectedRuns.length + 1} style={{ height: `${configBottomPad}px` }} />
+                                          </tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
@@ -268,7 +386,7 @@ export const CompareRuns: React.FC = () => {
                             {/* Chart Controls */}
                             <div className="bg-white p-4 rounded-t-xl border border-gray-200 border-b-0 flex gap-6 items-center">
                                 <div>
-                                    <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">Y-Axis Metric</span>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">{tx('Y 轴指标', 'Y-Axis Metric')}</span>
                                     <select 
                                         value={selectedMetric}
                                         onChange={(e) => setSelectedMetric(e.target.value as MetricKey)}
@@ -282,7 +400,7 @@ export const CompareRuns: React.FC = () => {
                                 
                                 {viewMode === 'correlation' && (
                                     <div>
-                                        <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">X-Axis Parameter</span>
+                                        <span className="text-xs font-semibold text-gray-500 uppercase block mb-1">{tx('X 轴参数', 'X-Axis Parameter')}</span>
                                         <select 
                                             value={xAxisParam}
                                             onChange={(e) => setXAxisParam(e.target.value)}
@@ -335,7 +453,7 @@ export const CompareRuns: React.FC = () => {
                                                 <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
                                                     if (active && payload && payload.length) {
                                                         const data = payload[0].payload;
-                                                        return (
+                                                    return (
                                                             <div className="bg-white p-2 border border-gray-200 shadow-lg rounded text-sm">
                                                                 <p className="font-bold mb-1">{data.name}</p>
                                                                 <p>{xAxisParam}: {data.x}</p>
@@ -345,7 +463,7 @@ export const CompareRuns: React.FC = () => {
                                                     }
                                                     return null;
                                                 }} />
-                                                <Scatter name="Runs" data={scatterData} fill="#2563eb" />
+                                                <Scatter name={tx('运行', 'Runs')} data={scatterData} fill="#2563eb" />
                                             </ScatterChart>
                                         </ResponsiveContainer>
                                     )}

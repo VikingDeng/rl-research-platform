@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { SystemResources } from '../types';
-import { Cpu, HardDrive, Zap, Activity, Fan, Wind, Layers } from 'lucide-react';
+import { Cpu, HardDrive, Zap, Activity, Wind, Layers } from 'lucide-react';
+import { useI18n } from '../services/i18n';
 
 export const ClusterMonitor: React.FC = () => {
+  const { tx } = useI18n();
   const [resources, setResources] = useState<SystemResources | null>(null);
   const [expandedGpu, setExpandedGpu] = useState<number | null>(null);
   const extra = resources as any;
@@ -27,7 +29,7 @@ export const ClusterMonitor: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  if (!resources) return <div className="text-xs text-gray-400">Loading metrics...</div>;
+  if (!resources) return <div className="text-xs text-gray-400">{tx('正在加载监控指标...', 'Loading metrics...')}</div>;
 
   return (
     <div className="space-y-4 mb-6">
@@ -37,9 +39,12 @@ export const ClusterMonitor: React.FC = () => {
                     <Cpu className="w-6 h-6" />
                 </div>
                 <div>
-                    <div className="text-xs text-gray-500 uppercase font-semibold">CPU Usage</div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">{tx('CPU 使用率', 'CPU Usage')}</div>
                     <div className="text-xl font-bold text-gray-900">{resources.cpuPercent.toFixed(0)}%</div>
-                    <div className="text-xs text-gray-400">{extra?.cpu_count || 0} cores {extra?.load_avg ? `• load ${extra.load_avg.map((v: number) => v.toFixed(1)).join(', ')}` : ''}</div>
+                    <div className="text-xs text-gray-400">
+                      {extra?.cpu_count || 0} {tx('核', 'cores')}{' '}
+                      {extra?.load_avg ? `• ${tx('负载', 'load')} ${extra.load_avg.map((v: number) => v.toFixed(1)).join(', ')}` : ''}
+                    </div>
                 </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
@@ -47,7 +52,7 @@ export const ClusterMonitor: React.FC = () => {
                     <HardDrive className="w-6 h-6" />
                 </div>
                 <div>
-                    <div className="text-xs text-gray-500 uppercase font-semibold">RAM Usage</div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">{tx('内存使用率', 'RAM Usage')}</div>
                     <div className="text-xl font-bold text-gray-900">{resources.memoryPercent.toFixed(0)}%</div>
                     <div className="text-xs text-gray-400">{(resources.memoryUsed / 1024 / 1024 / 1024).toFixed(1)} / {(resources.memoryTotal / 1024 / 1024 / 1024).toFixed(1)} GB</div>
                 </div>
@@ -57,7 +62,7 @@ export const ClusterMonitor: React.FC = () => {
                     <HardDrive className="w-6 h-6" />
                 </div>
                 <div>
-                    <div className="text-xs text-gray-500 uppercase font-semibold">Disk Usage</div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">{tx('磁盘使用率', 'Disk Usage')}</div>
                     <div className="text-xl font-bold text-gray-900">{(extra?.disk_percent ?? 0).toFixed(0)}%</div>
                     <div className="text-xs text-gray-400">{formatBytes(extra?.disk_used || 0)} / {formatBytes(extra?.disk_total || 0)}</div>
                 </div>
@@ -67,9 +72,9 @@ export const ClusterMonitor: React.FC = () => {
                     <Activity className="w-6 h-6" />
                 </div>
                 <div>
-                    <div className="text-xs text-gray-500 uppercase font-semibold">Network IO</div>
-                    <div className="text-xs text-gray-400">Sent {formatBytes(extra?.net_bytes_sent || 0)}</div>
-                    <div className="text-xs text-gray-400">Recv {formatBytes(extra?.net_bytes_recv || 0)}</div>
+                    <div className="text-xs text-gray-500 uppercase font-semibold">{tx('网络 IO', 'Network IO')}</div>
+                    <div className="text-xs text-gray-400">{tx('发送', 'Sent')} {formatBytes(extra?.net_bytes_sent || 0)}</div>
+                    <div className="text-xs text-gray-400">{tx('接收', 'Recv')} {formatBytes(extra?.net_bytes_recv || 0)}</div>
                 </div>
             </div>
             
@@ -92,8 +97,8 @@ export const ClusterMonitor: React.FC = () => {
                                 <div className="flex justify-between items-end">
                                     <div className="text-xl font-bold text-gray-900">{Math.round(gpu.utilizationGpu)}%</div>
                                     <div className="text-xs text-gray-500 mb-1 flex gap-2">
-                                        {gpu.power_draw && <span className="flex items-center" title="Power Draw"><Zap className="w-3 h-3 mr-0.5"/> {(gpu.power_draw / 1000).toFixed(0)}W</span>}
-                                        {gpu.fan_speed && <span className="flex items-center" title="Fan Speed"><Wind className="w-3 h-3 mr-0.5"/> {Math.round(gpu.fan_speed)}%</span>}
+                                        {gpu.power_draw && <span className="flex items-center" title={tx('功耗', 'Power Draw')}><Zap className="w-3 h-3 mr-0.5"/> {(gpu.power_draw / 1000).toFixed(0)}W</span>}
+                                        {gpu.fan_speed && <span className="flex items-center" title={tx('风扇转速', 'Fan Speed')}><Wind className="w-3 h-3 mr-0.5"/> {Math.round(gpu.fan_speed)}%</span>}
                                     </div>
                                 </div>
                                 <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2 overflow-hidden">
@@ -109,7 +114,7 @@ export const ClusterMonitor: React.FC = () => {
                         {expandedGpu === gpu.index && gpu.processes && gpu.processes.length > 0 && (
                             <div className="mt-4 pt-4 border-t border-gray-100 animate-in slide-in-from-top-2 fade-in">
                                 <div className="text-xs font-semibold text-gray-500 mb-2 flex items-center">
-                                    <Layers className="w-3 h-3 mr-1"/> Active Processes
+                                    <Layers className="w-3 h-3 mr-1"/> {tx('活跃进程', 'Active Processes')}
                                 </div>
                                 <div className="space-y-1">
                                     {gpu.processes.map(p => (
@@ -132,8 +137,8 @@ export const ClusterMonitor: React.FC = () => {
                         <Activity className="w-6 h-6" />
                     </div>
                     <div>
-                        <div className="text-xs text-gray-500 uppercase font-semibold">GPU Status</div>
-                        <div className="text-sm font-bold text-gray-900">No GPU Detected</div>
+                        <div className="text-xs text-gray-500 uppercase font-semibold">{tx('GPU 状态', 'GPU Status')}</div>
+                        <div className="text-sm font-bold text-gray-900">{tx('未检测到 GPU', 'No GPU Detected')}</div>
                     </div>
                 </div>
             )}

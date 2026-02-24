@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ class RunnerBundleService:
             "type": run.type,
             "status": run.status,
             "executor": executor,
-            "created_at": run.created.isoformat() if hasattr(run, "created") else datetime.utcnow().isoformat(),
+            "created_at": run.created.isoformat() if hasattr(run, "created") else datetime.now(timezone.utc).isoformat(),
             "config": run.config,
         }
 

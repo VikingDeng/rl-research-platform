@@ -5,7 +5,7 @@ import {
   ScatterChart, Scatter, ZAxis, BarChart, Bar
 } from 'recharts';
 import { RefreshCw, Search, Sliders, Trophy, ArrowUpRight } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useI18n } from '../services/i18n';
 
 interface StudyData {
     study_name: string;
@@ -21,7 +21,7 @@ interface StudyData {
 }
 
 export const TuningDashboard: React.FC = () => {
-    const navigate = useNavigate();
+    const { tx } = useI18n();
     const [studyName, setStudyName] = useState('');
     const [data, setData] = useState<StudyData | null>(null);
     const [loading, setLoading] = useState(false);
@@ -34,13 +34,13 @@ export const TuningDashboard: React.FC = () => {
         try {
             const res = await api.getTuningStudy(studyName);
             if (res.error) {
-                setError(res.details || 'Study not found');
+                setError(res.details || tx('未找到 Study', 'Study not found'));
                 setData(null);
             } else {
                 setData(res);
             }
         } catch (e) {
-            setError('Failed to fetch study data');
+            setError(tx('获取 Study 数据失败', 'Failed to fetch study data'));
         } finally {
             setLoading(false);
         }
@@ -84,21 +84,21 @@ export const TuningDashboard: React.FC = () => {
         <div className="space-y-6">
             <div className="flex justify-between items-center">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Hyperparameter Tuning</h1>
-                    <p className="text-gray-500 mt-1">Analyze Optuna studies and visualize parameter relationships.</p>
+                    <h1 className="text-2xl font-bold text-gray-900">{tx('超参数调优', 'Hyperparameter Tuning')}</h1>
+                    <p className="text-gray-500 mt-1">{tx('分析 Optuna study 并可视化参数关系。', 'Analyze Optuna studies and visualize parameter relationships.')}</p>
                 </div>
             </div>
 
             {/* Search Bar */}
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex gap-4 items-end">
                 <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Study Name</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('Study 名称', 'Study Name')}</label>
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4"/>
                         <input 
                             type="text" 
                             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="e.g. ppo-cartpole-study-01"
+                            placeholder={tx('例如：ppo-cartpole-study-01', 'e.g. ppo-cartpole-study-01')}
                             value={studyName}
                             onChange={e => setStudyName(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && loadStudy()}
@@ -110,7 +110,7 @@ export const TuningDashboard: React.FC = () => {
                     disabled={loading || !studyName}
                     className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium flex items-center gap-2"
                 >
-                    {loading ? <RefreshCw className="w-4 h-4 animate-spin"/> : 'Analyze'}
+                    {loading ? <RefreshCw className="w-4 h-4 animate-spin"/> : tx('分析', 'Analyze')}
                 </button>
             </div>
 
@@ -127,7 +127,7 @@ export const TuningDashboard: React.FC = () => {
                         <div className="flex items-start justify-between">
                             <div>
                                 <h3 className="text-blue-100 font-medium mb-1 flex items-center gap-2">
-                                    <Trophy className="w-4 h-4" /> Best Result Found
+                                    <Trophy className="w-4 h-4" /> {tx('最佳结果', 'Best Result Found')}
                                 </h3>
                                 <div className="text-4xl font-bold mb-4">{data.best_value?.toFixed(4)}</div>
                                 <div className="flex flex-wrap gap-3">
@@ -139,7 +139,7 @@ export const TuningDashboard: React.FC = () => {
                                 </div>
                             </div>
                             <div className="text-right">
-                                <div className="text-sm text-blue-200">Total Trials</div>
+                                <div className="text-sm text-blue-200">{tx('总 Trial 数', 'Total Trials')}</div>
                                 <div className="text-2xl font-bold">{data.trials.length}</div>
                             </div>
                         </div>
@@ -148,7 +148,7 @@ export const TuningDashboard: React.FC = () => {
                     {/* Parameter Importance */}
                     <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                         <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                            <Sliders className="w-5 h-5 text-gray-500"/> Parameter Importance
+                            <Sliders className="w-5 h-5 text-gray-500"/> {tx('参数重要性', 'Parameter Importance')}
                         </h3>
                         <div className="h-64">
                             <ResponsiveContainer width="100%" height="100%">
@@ -166,16 +166,16 @@ export const TuningDashboard: React.FC = () => {
                     {/* Optimization History */}
                     <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                         <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                            <ArrowUpRight className="w-5 h-5 text-gray-500"/> Optimization History
+                            <ArrowUpRight className="w-5 h-5 text-gray-500"/> {tx('优化历史', 'Optimization History')}
                         </h3>
                         <div className="h-64">
                             <ResponsiveContainer width="100%" height="100%">
                                 <ScatterChart>
                                     <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis type="number" dataKey="number" name="Trial" />
-                                    <YAxis type="number" dataKey="value" name="Metric" />
+                                    <XAxis type="number" dataKey="number" name={tx('Trial', 'Trial')} />
+                                    <YAxis type="number" dataKey="value" name={tx('指标', 'Metric')} />
                                     <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                                    <Scatter name="Trials" data={data.trials} fill="#0ea5e9" />
+                                    <Scatter name={tx('Trials', 'Trials')} data={data.trials} fill="#0ea5e9" />
                                 </ScatterChart>
                             </ResponsiveContainer>
                         </div>
@@ -184,15 +184,15 @@ export const TuningDashboard: React.FC = () => {
                     {/* Trials Table */}
                     <div className="col-span-1 lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="px-6 py-4 border-b border-gray-100 font-bold text-gray-900">
-                            All Trials
+                            {tx('全部 Trials', 'All Trials')}
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-left text-sm">
                                 <thead className="bg-gray-50 text-xs uppercase text-gray-500 font-semibold">
                                     <tr>
-                                        <th className="px-6 py-3">Trial #</th>
-                                        <th className="px-6 py-3">Value</th>
-                                        <th className="px-6 py-3">State</th>
+                                        <th className="px-6 py-3">{tx('Trial #', 'Trial #')}</th>
+                                        <th className="px-6 py-3">{tx('值', 'Value')}</th>
+                                        <th className="px-6 py-3">{tx('状态', 'State')}</th>
                                         {Object.keys(data.trials[0]?.params || {}).map(k => (
                                             <th key={k} className="px-6 py-3">{k}</th>
                                         ))}

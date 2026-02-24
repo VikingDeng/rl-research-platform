@@ -1,7 +1,7 @@
 import json
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 try:
@@ -39,7 +39,7 @@ class TuningService:
         
         # Create a parent "Group" run to hold these? 
         # Or just use a common group_id.
-        group_id = f"tune-{datetime.utcnow().strftime('%H%M%S')}"
+        group_id = f"tune-{datetime.now(timezone.utc).strftime('%H%M%S')}"
         
         thread = threading.Thread(
             target=self._tuning_loop,

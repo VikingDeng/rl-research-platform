@@ -6,11 +6,13 @@ import { ClusterMonitor } from '../components/ClusterMonitor';
 import { Play, Cpu, Activity, Clock, ArrowRight, Plus, FolderOpen, Trash2, Calendar, X, GitFork } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
+import { useI18n } from '../services/i18n';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast } = useToast();
+  const { t } = useI18n();
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -49,11 +51,16 @@ export const Dashboard: React.FC = () => {
     try {
       const res = await api.bootstrapDefaults();
       setBootstrapDefaults(res.defaults);
-      showToast(isDemoMode ? 'Demo workspace reset and seeded.' : 'Default envs/algos/templates initialized.', 'success');
+      showToast(
+        isDemoMode
+          ? t('dashboard.toast.demoReset', 'Demo workspace reset and seeded.')
+          : t('dashboard.toast.defaultsReady', 'Default envs/algos/templates initialized.'),
+        'success',
+      );
       loadData();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      showToast(`Bootstrap failed: ${detail}`, 'error');
+      showToast(`${t('dashboard.toast.bootstrapFailed', 'Bootstrap failed')}: ${detail}`, 'error');
     } finally {
       setBootstrapping(false);
     }
@@ -73,7 +80,7 @@ export const Dashboard: React.FC = () => {
       });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      showToast(`Quickstart failed: ${detail}`, 'error');
+      showToast(`${t('dashboard.toast.quickstartFailed', 'Quickstart failed')}: ${detail}`, 'error');
     }
   };
 
@@ -97,12 +104,12 @@ export const Dashboard: React.FC = () => {
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to create project: ${detail}`, 'error');
+        showToast(`${t('dashboard.toast.createProjectFailed', 'Failed to create project')}: ${detail}`, 'error');
       });
   };
 
   const handleDeleteProject = (project: Project) => {
-    if (!window.confirm(`Delete project "${project.name}" and all related runs/jobs?`)) {
+    if (!window.confirm(t('dashboard.confirm.deleteProject', `Delete project "${project.name}" and all related runs/jobs?`).replace('{name}', project.name))) {
       return;
     }
     api
@@ -110,11 +117,11 @@ export const Dashboard: React.FC = () => {
       .then(() => {
         setProjects(prev => prev.filter(p => p.id !== project.id));
         setRuns(prev => prev.filter(r => r.projectId !== project.id));
-        showToast(`Deleted project "${project.name}".`, 'success');
+        showToast(t('dashboard.toast.projectDeleted', `Deleted project "${project.name}".`).replace('{name}', project.name), 'success');
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Failed to delete project: ${detail}`, 'error');
+        showToast(`${t('dashboard.toast.deleteProjectFailed', 'Failed to delete project')}: ${detail}`, 'error');
       });
   };
 
@@ -122,10 +129,10 @@ export const Dashboard: React.FC = () => {
   const totalGpus = runs.reduce((acc, r) => r.status === JobStatus.RUNNING ? acc + r.gpu : acc, 0);
   const showQuickstart = projects.length === 0;
   const setupChecklist = [
-    { id: 'project', label: 'Project', ready: projects.length > 0, action: () => setIsModalOpen(true) },
-    { id: 'env', label: 'Environment', ready: envCount > 0, action: () => navigate('/registries/environments', { state: { openCreate: true } }) },
-    { id: 'algo', label: 'Algorithm', ready: algoCount > 0, action: () => navigate('/registries/algorithms') },
-    { id: 'template', label: 'Template', ready: templateCount > 0, action: () => navigate('/registries/templates', { state: { projectId: projects[0]?.id, openCreate: true } }) },
+    { id: 'project', label: t('dashboard.check.project', 'Project'), ready: projects.length > 0, action: () => setIsModalOpen(true) },
+    { id: 'env', label: t('dashboard.check.environment', 'Environment'), ready: envCount > 0, action: () => navigate('/registries/environments', { state: { openCreate: true } }) },
+    { id: 'algo', label: t('dashboard.check.algorithm', 'Algorithm'), ready: algoCount > 0, action: () => navigate('/registries/algorithms') },
+    { id: 'template', label: t('dashboard.check.template', 'Template'), ready: templateCount > 0, action: () => navigate('/registries/templates', { state: { projectId: projects[0]?.id, openCreate: true } }) },
   ];
   const missingSetup = setupChecklist.filter(item => !item.ready);
 
@@ -137,24 +144,24 @@ export const Dashboard: React.FC = () => {
       <div className="flex justify-between items-center">
         <div>
            <div className="flex items-center gap-3">
-             <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+             <h1 className="text-2xl font-bold text-gray-900">{t('dashboard.title', 'Dashboard')}</h1>
              {isDemoMode && (
                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                 Demo Mode
+                 {t('dashboard.demoMode', 'Demo Mode')}
                </span>
              )}
            </div>
-           <p className="text-gray-500 mt-1">Overview of your research projects and compute resources.</p>
+           <p className="text-gray-500 mt-1">{t('dashboard.subtitle', 'Overview of your research projects and compute resources.')}</p>
         </div>
         <div className="flex gap-3">
              <button 
                 onClick={() => setIsModalOpen(true)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center hover:bg-blue-700 font-medium shadow-sm transition-colors"
             >
-                <Plus className="w-4 h-4 mr-2" /> New Project
+                <Plus className="w-4 h-4 mr-2" /> {t('dashboard.newProject', 'New Project')}
             </button>
             <span className="px-3 py-1 bg-white border border-gray-200 rounded-md text-xs font-medium text-gray-500 shadow-sm flex items-center">
-                Cluster: <span className="text-green-500 ml-1">● Online</span>
+                {t('dashboard.cluster', 'Cluster')}: <span className="text-green-500 ml-1">● {t('dashboard.online', 'Online')}</span>
             </span>
         </div>
       </div>
@@ -164,9 +171,9 @@ export const Dashboard: React.FC = () => {
       {showQuickstart && (
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Quickstart in 2 minutes</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{t('dashboard.quickstart.title', 'Quickstart in 2 minutes')}</h2>
             <p className="text-sm text-gray-600 mt-1">
-              Initialize default envs/algos/templates, then launch a demo training job.
+              {t('dashboard.quickstart.desc', 'Initialize default envs/algos/templates, then launch a demo training job.')}
             </p>
           </div>
           <div className="flex gap-3">
@@ -175,14 +182,18 @@ export const Dashboard: React.FC = () => {
               disabled={bootstrapping}
               className="px-4 py-2 rounded-lg bg-white border border-blue-200 text-blue-700 font-medium hover:bg-blue-50 disabled:opacity-60"
             >
-              {bootstrapping ? 'Initializing...' : isDemoMode ? 'Reset Demo Data' : 'Initialize Defaults'}
+              {bootstrapping
+                ? t('dashboard.quickstart.initializing', 'Initializing...')
+                : isDemoMode
+                  ? t('dashboard.quickstart.resetDemoData', 'Reset Demo Data')
+                  : t('dashboard.quickstart.initDefaults', 'Initialize Defaults')}
             </button>
             <button
               onClick={handleQuickstart}
               disabled={bootstrapping}
               className="px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-60"
             >
-              Start Demo Run
+              {t('dashboard.quickstart.startDemoRun', 'Start Demo Run')}
             </button>
           </div>
         </div>
@@ -192,9 +203,9 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white border border-emerald-100 rounded-xl p-5 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Demo Highlights</h2>
+              <h2 className="text-lg font-semibold text-gray-900">{t('dashboard.demoHighlights.title', 'Demo Highlights')}</h2>
               <p className="text-sm text-gray-600 mt-1">
-                Preloaded chain includes run curves, matrix ranking, opponent pools, and replay videos.
+                {t('dashboard.demoHighlights.desc', 'Preloaded chain includes run curves, matrix ranking, opponent pools, and replay videos.')}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -202,29 +213,29 @@ export const Dashboard: React.FC = () => {
                 onClick={() => navigate('/runs/run_train_alpha')}
                 className="px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50"
               >
-                Open Run Detail
+                {t('dashboard.demoHighlights.openRunDetail', 'Open Run Detail')}
               </button>
               <button
                 onClick={() => navigate('/matrix')}
                 className="px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50"
               >
-                Open Matrix
+                {t('dashboard.demoHighlights.openMatrix', 'Open Matrix')}
               </button>
               <button
                 onClick={() => navigate('/registries/pools')}
                 className="px-3 py-2 rounded-lg border border-purple-200 text-purple-700 text-sm font-medium hover:bg-purple-50"
               >
-                Open Opponent Pools
+                {t('dashboard.demoHighlights.openPools', 'Open Opponent Pools')}
               </button>
               <button
                 onClick={() => {
-                  if (!window.confirm('Reset demo workspace and reseed all registries/runs?')) return;
+                  if (!window.confirm(t('dashboard.confirm.resetDemoWorkspace', 'Reset demo workspace and reseed all registries/runs?'))) return;
                   handleBootstrap();
                 }}
                 disabled={bootstrapping}
                 className="px-3 py-2 rounded-lg border border-amber-200 text-amber-700 text-sm font-medium hover:bg-amber-50 disabled:opacity-60"
               >
-                Reset Demo Workspace
+                {t('dashboard.demoHighlights.resetWorkspace', 'Reset Demo Workspace')}
               </button>
             </div>
           </div>
@@ -235,16 +246,16 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white border border-blue-100 rounded-xl p-5 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Need full demo chain?</h2>
+              <h2 className="text-lg font-semibold text-gray-900">{t('dashboard.liveHint.title', 'Need full demo chain?')}</h2>
               <p className="text-sm text-gray-600 mt-1">
-                Switch to preloaded demo data with run curves, matrix, opponent pools, and generated replay videos.
+                {t('dashboard.liveHint.desc', 'Switch to preloaded demo data with run curves, matrix, opponent pools, and generated replay videos.')}
               </p>
             </div>
             <button
               onClick={() => setDemoMode(true)}
               className="px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50"
             >
-              Switch to Demo Data
+              {t('dashboard.liveHint.switchDemo', 'Switch to Demo Data')}
             </button>
           </div>
         </div>
@@ -254,7 +265,7 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
             <Activity className="w-4 h-4 text-blue-500" />
-            Setup checklist
+            {t('dashboard.setupChecklist', 'Setup checklist')}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {setupChecklist.map(item => (
@@ -274,14 +285,14 @@ export const Dashboard: React.FC = () => {
                     onClick={item.action}
                     className="text-xs font-semibold text-blue-600 hover:text-blue-700"
                   >
-                    Add
+                    {t('dashboard.add', 'Add')}
                   </button>
                 )}
               </div>
             ))}
           </div>
           <div className="mt-3 text-xs text-gray-500">
-            Datasets: <span className="font-mono text-gray-800">{datasetCount}</span> registered.
+            {t('dashboard.datasets', 'Datasets')}: <span className="font-mono text-gray-800">{datasetCount}</span> {t('dashboard.registered', 'registered')}.
           </div>
         </div>
       )}
@@ -291,7 +302,7 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase">Active Jobs</p>
+              <p className="text-xs font-medium text-gray-500 uppercase">{t('dashboard.stats.activeJobs', 'Active Jobs')}</p>
               <h3 className="text-2xl font-bold text-gray-900 mt-1">{activeJobs}</h3>
             </div>
             <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
@@ -303,7 +314,7 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase">GPU Utilization</p>
+              <p className="text-xs font-medium text-gray-500 uppercase">{t('dashboard.stats.gpuUtil', 'GPU Utilization')}</p>
               <h3 className="text-2xl font-bold text-gray-900 mt-1">{totalGpus} / 4</h3>
             </div>
             <div className="p-2 bg-purple-50 rounded-lg text-purple-600">
@@ -318,7 +329,7 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase">Projects</p>
+              <p className="text-xs font-medium text-gray-500 uppercase">{t('dashboard.stats.projects', 'Projects')}</p>
               <h3 className="text-2xl font-bold text-gray-900 mt-1">{projects.length}</h3>
             </div>
             <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
@@ -330,7 +341,7 @@ export const Dashboard: React.FC = () => {
          <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase">Avg Wait Time</p>
+              <p className="text-xs font-medium text-gray-500 uppercase">{t('dashboard.stats.avgWait', 'Avg Wait Time')}</p>
               <h3 className="text-2xl font-bold text-gray-900 mt-1">2m 14s</h3>
             </div>
             <div className="p-2 bg-orange-50 rounded-lg text-orange-600">
@@ -344,7 +355,7 @@ export const Dashboard: React.FC = () => {
       <div>
         <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-800 flex items-center">
-                <FolderOpen className="w-5 h-5 mr-2 text-gray-500" /> Your Projects
+                <FolderOpen className="w-5 h-5 mr-2 text-gray-500" /> {t('dashboard.yourProjects', 'Your Projects')}
             </h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -362,8 +373,8 @@ export const Dashboard: React.FC = () => {
                                   event.stopPropagation();
                                   handleDeleteProject(p);
                                 }}
-                                aria-label="Delete project"
-                                title="Delete project"
+                                aria-label={t('dashboard.deleteProject', 'Delete project')}
+                                title={t('dashboard.deleteProject', 'Delete project')}
                             >
                                 <Trash2 className="w-5 h-5" />
                             </button>
@@ -381,7 +392,7 @@ export const Dashboard: React.FC = () => {
                         
                         <div className="pt-4 border-t border-gray-50 flex items-center justify-between text-xs text-gray-500">
                             <div className="flex items-center">
-                                <Activity className="w-3 h-3 mr-1" /> {p.activeRuns} Active
+                                <Activity className="w-3 h-3 mr-1" /> {p.activeRuns} {t('dashboard.active', 'Active')}
                             </div>
                             <div className="flex items-center">
                                 <Calendar className="w-3 h-3 mr-1" /> {new Date(p.updatedAt).toLocaleDateString()}
@@ -392,7 +403,7 @@ export const Dashboard: React.FC = () => {
             ))}
              <button onClick={() => setIsModalOpen(true)} className="border-2 border-dashed border-gray-200 rounded-xl p-6 flex flex-col items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 hover:bg-blue-50/50 transition-all min-h-[200px]">
                 <Plus className="w-8 h-8 mb-2" />
-                <span className="font-medium">Create New Project</span>
+                <span className="font-medium">{t('dashboard.createNewProject', 'Create New Project')}</span>
             </button>
         </div>
       </div>
@@ -401,22 +412,22 @@ export const Dashboard: React.FC = () => {
       <div>
         <div className="flex items-center justify-between mb-4">
              <h2 className="text-lg font-semibold text-gray-800 flex items-center">
-                <Activity className="w-5 h-5 mr-2 text-gray-500" /> Recent Runs
+                <Activity className="w-5 h-5 mr-2 text-gray-500" /> {t('dashboard.recentRuns', 'Recent Runs')}
             </h2>
             <Link to="/compare" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center">
-                View All Runs <ArrowRight className="w-4 h-4 ml-1" />
+                {t('dashboard.viewAllRuns', 'View All Runs')} <ArrowRight className="w-4 h-4 ml-1" />
             </Link>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <table className="w-full text-left">
                 <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase">
                     <tr>
-                        <th className="px-6 py-3">Run Name</th>
-                        <th className="px-6 py-3">Project</th>
-                        <th className="px-6 py-3">Status</th>
-                        <th className="px-6 py-3">Algorithm</th>
-                        <th className="px-6 py-3">Duration</th>
-                        <th className="px-6 py-3">Created</th>
+                        <th className="px-6 py-3">{t('dashboard.table.runName', 'Run Name')}</th>
+                        <th className="px-6 py-3">{t('dashboard.table.project', 'Project')}</th>
+                        <th className="px-6 py-3">{t('dashboard.table.status', 'Status')}</th>
+                        <th className="px-6 py-3">{t('dashboard.table.algorithm', 'Algorithm')}</th>
+                        <th className="px-6 py-3">{t('dashboard.table.duration', 'Duration')}</th>
+                        <th className="px-6 py-3">{t('dashboard.table.created', 'Created')}</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -449,28 +460,28 @@ export const Dashboard: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in duration-200">
                 <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                    <h2 className="text-lg font-bold text-gray-900">Create New Project</h2>
+                    <h2 className="text-lg font-bold text-gray-900">{t('dashboard.modal.createTitle', 'Create New Project')}</h2>
                     <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
                 <form onSubmit={handleCreateProject} className="p-6 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Project Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{t('dashboard.modal.projectName', 'Project Name')}</label>
                         <input 
                             type="text" 
                             required
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            placeholder="e.g., My New Experiment"
+                            placeholder={t('dashboard.modal.projectNamePlaceholder', 'e.g., My New Experiment')}
                             value={newProjectName}
                             onChange={e => setNewProjectName(e.target.value)}
                         />
                     </div>
                     <div>
-                         <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                         <label className="block text-sm font-medium text-gray-700 mb-1">{t('dashboard.modal.description', 'Description')}</label>
                          <textarea 
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 resize-none"
-                            placeholder="Brief description of the research goal..."
+                            placeholder={t('dashboard.modal.descriptionPlaceholder', 'Brief description of the research goal...')}
                             value={newProjectDescription}
                             onChange={e => setNewProjectDescription(e.target.value)}
                         />
@@ -478,11 +489,11 @@ export const Dashboard: React.FC = () => {
                     
                     <div className="pt-2 border-t border-gray-100">
                         <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                            <GitFork className="w-4 h-4"/> Git Integration (Optional)
+                            <GitFork className="w-4 h-4"/> {t('dashboard.modal.gitIntegration', 'Git Integration (Optional)')}
                         </h3>
                         <div className="grid grid-cols-3 gap-3">
                             <div className="col-span-2">
-                                <label className="block text-xs font-medium text-gray-500 mb-1">Repository URL</label>
+                                <label className="block text-xs font-medium text-gray-500 mb-1">{t('dashboard.modal.repoUrl', 'Repository URL')}</label>
                                 <input 
                                     type="text" 
                                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
@@ -492,7 +503,7 @@ export const Dashboard: React.FC = () => {
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-gray-500 mb-1">Default Branch</label>
+                                <label className="block text-xs font-medium text-gray-500 mb-1">{t('dashboard.modal.defaultBranch', 'Default Branch')}</label>
                                 <input 
                                     type="text" 
                                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
@@ -503,13 +514,13 @@ export const Dashboard: React.FC = () => {
                             </div>
                         </div>
                         <p className="text-xs text-gray-400 mt-2">
-                            Linking a repo allows you to run code directly from Git branches/commits without rebuilding Docker images.
+                            {t('dashboard.modal.gitTip', 'Linking a repo allows you to run code directly from Git branches/commits without rebuilding Docker images.')}
                         </p>
                     </div>
 
                     <div className="pt-4 flex justify-end gap-3">
-                        <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Create Project</button>
+                        <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{t('common.cancel', 'Cancel')}</button>
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{t('dashboard.modal.createProject', 'Create Project')}</button>
                     </div>
                 </form>
             </div>

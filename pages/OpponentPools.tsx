@@ -3,8 +3,10 @@ import { api } from '../services/api';
 import { OpponentPool, EnvSpec, Run, Checkpoint } from '../types';
 import { Database, Plus, Users, Calendar, X, Trash2, Bot, Lock, CheckSquare, Square } from 'lucide-react';
 import { useToast } from '../components/Toast';
+import { useI18n } from '../services/i18n';
 
 export const OpponentPools: React.FC = () => {
+  const { tx, locale } = useI18n();
   const { showToast } = useToast();
   const [pools, setPools] = useState<OpponentPool[]>([]);
   const [envs, setEnvs] = useState<EnvSpec[]>([]);
@@ -106,7 +108,7 @@ export const OpponentPools: React.FC = () => {
   }
 
   const handleDeletePool = (pool: OpponentPool) => {
-      if (!window.confirm(`Delete pool "${pool.name}" and all its versions/results?`)) {
+      if (!window.confirm(tx(`删除池 "${pool.name}" 及其所有版本与结果？`, `Delete pool "${pool.name}" and all its versions/results?`))) {
         return;
       }
       api
@@ -117,11 +119,11 @@ export const OpponentPools: React.FC = () => {
             setSelectedPool(null);
             setMembers([]);
           }
-          showToast(`Deleted pool "${pool.name}".`, 'success');
+          showToast(tx(`已删除池 "${pool.name}"。`, `Deleted pool "${pool.name}".`), 'success');
         })
         .catch((err) => {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to delete pool: ${detail}`, 'error');
+          showToast(tx(`删除池失败：${detail}`, `Failed to delete pool: ${detail}`), 'error');
         });
   }
 
@@ -135,7 +137,7 @@ export const OpponentPools: React.FC = () => {
   const handleBulkDelete = () => {
     const ids = Array.from(selectedPoolIds);
     if (ids.length === 0) return;
-    if (!window.confirm(`Delete ${ids.length} selected pools?`)) return;
+    if (!window.confirm(tx(`删除已选中的 ${ids.length} 个池？`, `Delete ${ids.length} selected pools?`))) return;
 
     Promise.all(ids.map(id => api.deletePool(id)))
       .then(() => {
@@ -144,11 +146,11 @@ export const OpponentPools: React.FC = () => {
         if (selectedPool && selectedPoolIds.has(selectedPool.id)) {
             setSelectedPool(null);
         }
-        showToast(`Deleted ${ids.length} pools.`, 'success');
+        showToast(tx(`已删除 ${ids.length} 个池。`, `Deleted ${ids.length} pools.`), 'success');
       })
       .catch(err => {
         const detail = err instanceof Error ? err.message : String(err);
-        showToast(`Bulk delete failed: ${detail}`, 'error');
+        showToast(tx(`批量删除失败：${detail}`, `Bulk delete failed: ${detail}`), 'error');
       });
   };
 
@@ -160,14 +162,16 @@ export const OpponentPools: React.FC = () => {
     <div className="space-y-6 relative h-[calc(100vh-4rem)] flex flex-col pb-20">
        <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Opponent Pools</h1>
-          <p className="text-gray-500 mt-1">Manage fixed sets of agents for evaluation and matrix analysis.</p>
+          <h1 className="text-2xl font-bold text-gray-900">{tx('对手池', 'Opponent Pools')}</h1>
+          <p className="text-gray-500 mt-1">
+            {tx('管理用于评估与矩阵分析的固定 Agent 集合。', 'Manage fixed sets of agents for evaluation and matrix analysis.')}
+          </p>
         </div>
         <button 
           onClick={() => setIsCreateOpen(true)}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center hover:bg-blue-700"
         >
-          <Plus className="w-4 h-4 mr-2" /> New Pool
+          <Plus className="w-4 h-4 mr-2" /> {tx('新建池', 'New Pool')}
         </button>
       </div>
 
@@ -178,12 +182,12 @@ export const OpponentPools: React.FC = () => {
             <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase">
                 <tr>
                 <th className="px-6 py-3 w-10"></th>
-                <th className="px-6 py-3">Pool Name</th>
-                <th className="px-6 py-3">Env</th>
-                <th className="px-6 py-3">Version</th>
-                <th className="px-6 py-3">Size</th>
-                <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3">Created</th>
+                <th className="px-6 py-3">{tx('池名称', 'Pool Name')}</th>
+                <th className="px-6 py-3">{tx('环境', 'Env')}</th>
+                <th className="px-6 py-3">{tx('版本', 'Version')}</th>
+                <th className="px-6 py-3">{tx('规模', 'Size')}</th>
+                <th className="px-6 py-3">{tx('状态', 'Status')}</th>
+                <th className="px-6 py-3">{tx('创建时间', 'Created')}</th>
                 <th className="px-6 py-3"></th>
                 </tr>
             </thead>
@@ -211,25 +215,25 @@ export const OpponentPools: React.FC = () => {
                     <td className="px-6 py-4 text-sm font-mono text-gray-600">v{pool.version}</td>
                     <td className="px-6 py-4">
                     <div className="flex items-center text-sm text-gray-700">
-                        <Users className="w-4 h-4 mr-1 text-gray-400" /> {pool.size} Agents
+                        <Users className="w-4 h-4 mr-1 text-gray-400" /> {tx(`${pool.size} 个 Agent`, `${pool.size} Agents`)}
                     </div>
                     </td>
                     <td className="px-6 py-4">
                     {pool.frozen ? (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                        Frozen
+                        {tx('冻结', 'Frozen')}
                         </span>
                     ) : (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        Active
+                        {tx('激活', 'Active')}
                         </span>
                     )}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500 flex items-center">
-                    <Calendar className="w-4 h-4 mr-1 text-gray-400" /> {pool.created || '-'}
+                    <Calendar className="w-4 h-4 mr-1 text-gray-400" /> {pool.created ? new Date(pool.created).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') : '-'}
                     </td>
                     <td className="px-6 py-4 text-right space-x-3">
-                    <button className="text-blue-600 hover:text-blue-800 text-sm font-medium">Manage</button>
+                    <button className="text-blue-600 hover:text-blue-800 text-sm font-medium">{tx('管理', 'Manage')}</button>
                     <button
                       className="text-red-500 hover:text-red-700"
                       onClick={(event) => {
@@ -237,8 +241,8 @@ export const OpponentPools: React.FC = () => {
                         event.stopPropagation();
                         handleDeletePool(pool);
                       }}
-                      aria-label="Delete pool"
-                      title="Delete pool"
+                      aria-label={tx('删除池', 'Delete pool')}
+                      title={tx('删除池', 'Delete pool')}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -255,7 +259,7 @@ export const OpponentPools: React.FC = () => {
                 <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                     <div>
                         <div className="flex items-center gap-2">
-                             <h3 className="font-bold text-gray-900">Pool Members</h3>
+                             <h3 className="font-bold text-gray-900">{tx('池成员', 'Pool Members')}</h3>
                              {selectedPool.frozen && <Lock className="w-4 h-4 text-gray-400" />}
                         </div>
                         <p className="text-xs text-gray-500">{selectedPool.name}</p>
@@ -270,7 +274,7 @@ export const OpponentPools: React.FC = () => {
                         <div key={member} className="p-3 border border-gray-200 rounded-lg flex justify-between items-center group hover:border-blue-300 transition-all">
                             <div>
                                 <div className="text-sm font-bold text-gray-900 flex items-center">
-                                    <Bot className="w-3 h-3 mr-1 text-gray-400"/> Policy Snapshot
+                                    <Bot className="w-3 h-3 mr-1 text-gray-400"/> {tx('策略快照', 'Policy Snapshot')}
                                 </div>
                                 <div className="text-xs text-gray-400 font-mono">{member}</div>
                             </div>
@@ -285,7 +289,7 @@ export const OpponentPools: React.FC = () => {
                         </div>
                     ))}
                     {members.length === 0 && (
-                        <div className="text-center text-gray-400 py-8 text-sm">No agents in this pool.</div>
+                        <div className="text-center text-gray-400 py-8 text-sm">{tx('该池暂无 Agent。', 'No agents in this pool.')}</div>
                     )}
                 </div>
 
@@ -293,13 +297,13 @@ export const OpponentPools: React.FC = () => {
                     <div className="p-4 border-t border-gray-100 bg-gray-50 space-y-3">
                         <form onSubmit={handleAddMember} className="space-y-3">
                             <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Pick from Run</label>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{tx('从运行中选择', 'Pick from Run')}</label>
                               <select
                                 className="w-full p-2 border border-gray-300 rounded-md text-sm"
                                 value={selectedRunId}
                                 onChange={e => setSelectedRunId(e.target.value)}
                               >
-                                <option value="">Select Run</option>
+                                <option value="">{tx('选择运行', 'Select Run')}</option>
                                 {filteredRuns.map(run => (
                                   <option key={run.id} value={run.id}>
                                     {run.name} ({run.id.slice(0, 6)}) · {run.status}
@@ -308,27 +312,27 @@ export const OpponentPools: React.FC = () => {
                               </select>
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Checkpoint</label>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{tx('检查点', 'Checkpoint')}</label>
                               <select
                                 className="w-full p-2 border border-gray-300 rounded-md text-sm"
                                 value={selectedCheckpointId}
                                 onChange={e => setSelectedCheckpointId(e.target.value)}
                                 disabled={!selectedRunId}
                               >
-                                <option value="">Select Checkpoint</option>
+                                <option value="">{tx('选择检查点', 'Select Checkpoint')}</option>
                                 {runCheckpoints.map(ckpt => (
                                   <option key={ckpt.id} value={ckpt.id}>
-                                    step {ckpt.step} · {ckpt.tags.join(', ') || 'no tags'}
+                                    {tx(`步数 ${ckpt.step}`, `step ${ckpt.step}`)} · {ckpt.tags.join(', ') || tx('无标签', 'no tags')}
                                   </option>
                                 ))}
                               </select>
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Or paste Snapshot ID</label>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{tx('或粘贴快照 ID', 'Or paste Snapshot ID')}</label>
                               <div className="flex gap-2">
                                   <input 
                                       type="text" 
-                                      placeholder="ckpt_..." 
+                                      placeholder={tx('ckpt_...（检查点 ID）', 'ckpt_...')}
                                       className="flex-1 p-2 border border-gray-300 rounded-md text-sm"
                                       value={newMemberId}
                                       onChange={e => setNewMemberId(e.target.value)}
@@ -343,14 +347,14 @@ export const OpponentPools: React.FC = () => {
                             onClick={handleFreezePool}
                             className="w-full py-2 bg-gray-200 text-gray-700 font-medium rounded-md hover:bg-gray-300 flex items-center justify-center text-sm"
                         >
-                            <Lock className="w-3 h-3 mr-2" /> Freeze Pool (Finalize)
+                            <Lock className="w-3 h-3 mr-2" /> {tx('冻结池（定版）', 'Freeze Pool (Finalize)')}
                         </button>
                         <div className="pt-2 border-t border-gray-200">
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Create New Version</label>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{tx('创建新版本', 'Create New Version')}</label>
                           <div className="flex gap-2">
                             <input
                               type="text"
-                              placeholder="e.g., 2.0.0"
+                              placeholder={tx('例如：2.0.0', 'e.g., 2.0.0')}
                               className="flex-1 p-2 border border-gray-300 rounded-md text-sm"
                               value={versionName}
                               onChange={e => setVersionName(e.target.value)}
@@ -363,7 +367,7 @@ export const OpponentPools: React.FC = () => {
                     </div>
                 ) : (
                     <div className="p-4 border-t border-gray-100 bg-gray-50 text-center text-xs text-gray-500">
-                        This pool is frozen. Members cannot be added or removed.
+                        {tx('该池已冻结，无法新增或移除成员。', 'This pool is frozen. Members cannot be added or removed.')}
                     </div>
                 )}
             </div>
@@ -372,19 +376,19 @@ export const OpponentPools: React.FC = () => {
 
       {selectedPoolIds.size > 0 && (
           <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-6 animate-in slide-in-from-bottom duration-200 z-50">
-              <span className="font-medium text-sm">{selectedPoolIds.size} selected</span>
+              <span className="font-medium text-sm">{tx(`已选 ${selectedPoolIds.size} 个`, `${selectedPoolIds.size} selected`)}</span>
               <div className="h-4 w-px bg-gray-700"></div>
               <button 
                 onClick={handleBulkDelete}
                 className="flex items-center text-sm font-bold text-red-400 hover:text-red-300"
               >
-                  <Trash2 className="w-4 h-4 mr-2" /> Delete
+                  <Trash2 className="w-4 h-4 mr-2" /> {tx('删除', 'Delete')}
               </button>
               <button 
                 onClick={() => setSelectedPoolIds(new Set())}
                 className="text-gray-400 hover:text-gray-200 text-sm"
               >
-                  Clear
+                  {tx('清空', 'Clear')}
               </button>
           </div>
       )}
@@ -394,44 +398,44 @@ export const OpponentPools: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-md animate-in fade-in zoom-in duration-200">
                 <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                    <h2 className="text-lg font-bold text-gray-900">Create Opponent Pool</h2>
+                    <h2 className="text-lg font-bold text-gray-900">{tx('创建对手池', 'Create Opponent Pool')}</h2>
                     <button onClick={() => setIsCreateOpen(false)} className="text-gray-400 hover:text-gray-600">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
                 <form onSubmit={handleCreate} className="p-6 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Pool Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{tx('池名称', 'Pool Name')}</label>
                         <input 
                             type="text" 
                             required
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            placeholder="e.g., Hard Bots v1"
+                            placeholder={tx('例如：Hard Bots v1', 'e.g., Hard Bots v1')}
                             value={newName}
                             onChange={e => setNewName(e.target.value)}
                         />
                     </div>
                     
                     <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Environment</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">{tx('环境', 'Environment')}</label>
                           <select 
                               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                               value={selectedEnv}
                               onChange={e => setSelectedEnv(e.target.value)}
                           >
-                            <option value="">Select Env</option>
+                            <option value="">{tx('选择环境', 'Select Env')}</option>
                             {envs.map(e => <option key={e.id} value={e.id}>{e.id}</option>)}
                           </select>
                     </div>
                     
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Initial Version</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{tx('初始版本', 'Initial Version')}</label>
                         <input type="text" disabled value="v1.0.0" className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500"/>
                     </div>
 
                     <div className="pt-4 flex justify-end gap-3">
-                        <button type="button" onClick={() => setIsCreateOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Create Pool</button>
+                        <button type="button" onClick={() => setIsCreateOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('创建池', 'Create Pool')}</button>
                     </div>
                 </form>
             </div>

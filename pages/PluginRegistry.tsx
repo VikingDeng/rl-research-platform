@@ -3,9 +3,11 @@ import { api } from '../services/api';
 import { Plugin, PluginVersion } from '../types';
 import { Archive, Package, Download, Search, CheckCircle, ExternalLink, Sliders, Box, Plus, X } from 'lucide-react';
 import { useToast } from '../components/Toast';
+import { useI18n } from '../services/i18n';
 
 export const PluginRegistry: React.FC = () => {
   const { showToast } = useToast();
+  const { tx } = useI18n();
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [pluginVersions, setPluginVersions] = useState<Record<string, PluginVersion[]>>({});
   const [activeTab, setActiveTab] = useState<'installed' | 'marketplace'>('installed');
@@ -95,14 +97,14 @@ export const PluginRegistry: React.FC = () => {
   const handleCreateVersion = (e: React.FormEvent) => {
     e.preventDefault();
     if (!versionPluginId.trim() || !versionValue.trim() || !versionWheelUri.trim() || !versionSha256.trim()) {
-      showToast('Plugin ID, version, wheel URI, and sha256 are required.', 'error');
+      showToast(tx('Plugin ID、版本、wheel URI 与 sha256 为必填项。', 'Plugin ID, version, wheel URI, and sha256 are required.'), 'error');
       return;
     }
     let manifest: Record<string, unknown> | undefined;
     try {
       manifest = versionManifest.trim() ? JSON.parse(versionManifest) : undefined;
     } catch (err) {
-      showToast('Manifest JSON is invalid.', 'error');
+      showToast(tx('Manifest JSON 无效。', 'Manifest JSON is invalid.'), 'error');
       return;
     }
     api
@@ -157,8 +159,8 @@ export const PluginRegistry: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-           <h1 className="text-2xl font-bold text-gray-900">Plugin Registry</h1>
-           <p className="text-gray-500 mt-1">Extend the platform with custom algorithms, models, and wrappers.</p>
+           <h1 className="text-2xl font-bold text-gray-900">{tx('插件仓库', 'Plugin Registry')}</h1>
+           <p className="text-gray-500 mt-1">{tx('通过自定义算法、模型和封装扩展平台能力。', 'Extend the platform with custom algorithms, models, and wrappers.')}</p>
         </div>
         <div className="flex items-center gap-3">
             <label className="text-xs text-gray-500 flex items-center gap-2">
@@ -168,27 +170,27 @@ export const PluginRegistry: React.FC = () => {
                   onChange={e => setIncludeArchived(e.target.checked)}
                   className="rounded border-gray-300"
                 />
-                Show archived
+                {tx('显示归档', 'Show archived')}
             </label>
             <div className="flex bg-gray-100 p-1 rounded-lg">
             <button 
                 onClick={() => setActiveTab('installed')}
                 className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'installed' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-                Installed
+                {tx('已安装', 'Installed')}
             </button>
             <button 
                 onClick={() => setActiveTab('marketplace')}
                 className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'marketplace' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-                Marketplace
+                {tx('市场', 'Marketplace')}
             </button>
           </div>
           <button
             onClick={() => openVersionModal()}
             className="flex items-center bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium"
           >
-            <Plus className="w-4 h-4 mr-2" /> Register Plugin
+            <Plus className="w-4 h-4 mr-2" /> {tx('注册插件', 'Register Plugin')}
           </button>
         </div>
       </div>
@@ -197,7 +199,7 @@ export const PluginRegistry: React.FC = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
           <input 
             type="text" 
-            placeholder="Search plugins..." 
+            placeholder={tx('搜索插件...', 'Search plugins...')} 
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -217,17 +219,17 @@ export const PluginRegistry: React.FC = () => {
                             <h3 className="text-lg font-bold text-gray-900">{plugin.name}</h3>
                             <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full border border-gray-200">{plugin.type}</span>
                             {plugin.archived && (
-                              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full border border-gray-200">Archived</span>
+                              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full border border-gray-200">{tx('已归档', 'Archived')}</span>
                             )}
                         </div>
                         <p className="text-gray-600 text-sm mb-2 max-w-2xl">{plugin.description}</p>
                         <div className="flex items-center gap-4 text-xs text-gray-400">
                             <span>v{plugin.version}</span>
                             <span>•</span>
-                            <span>By {plugin.author}</span>
+                            <span>{tx('作者', 'By')} {plugin.author}</span>
                             <span>•</span>
                             <a href="#" className="flex items-center hover:text-blue-600 transition-colors">
-                                View Documentation <ExternalLink className="w-3 h-3 ml-1" />
+                                {tx('查看文档', 'View Documentation')} <ExternalLink className="w-3 h-3 ml-1" />
                             </a>
                         </div>
                     </div>
@@ -235,28 +237,28 @@ export const PluginRegistry: React.FC = () => {
                 <div className="flex flex-col items-end gap-3">
                     {plugin.installed ? (
                          <button className="px-4 py-2 bg-gray-50 text-gray-500 border border-gray-200 rounded-lg text-sm font-medium flex items-center cursor-default">
-                             <CheckCircle className="w-4 h-4 mr-2" /> Installed
+                             <CheckCircle className="w-4 h-4 mr-2" /> {tx('已安装', 'Installed')}
                          </button>
                     ) : (
                          <button
                            onClick={() => openVersionModal(plugin)}
                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center shadow-sm"
                          >
-                             <Download className="w-4 h-4 mr-2" /> Install
+                             <Download className="w-4 h-4 mr-2" /> {tx('安装', 'Install')}
                          </button>
                     )}
                     <button
                       onClick={() => openManage(plugin)}
                       className="px-3 py-1.5 border border-gray-300 rounded-md text-xs hover:bg-gray-50"
                     >
-                      Manage
+                      {tx('管理', 'Manage')}
                     </button>
                     <button
                       onClick={() => handleArchivePlugin(plugin, !!plugin.archived)}
                       className="px-3 py-1.5 border border-gray-300 rounded-md text-xs hover:bg-gray-50 flex items-center"
                     >
                       <Archive className="w-4 h-4 mr-1" />
-                      {plugin.archived ? 'Restore' : 'Archive'}
+                      {plugin.archived ? tx('恢复', 'Restore') : tx('归档', 'Archive')}
                     </button>
                 </div>
             </div>
@@ -265,7 +267,7 @@ export const PluginRegistry: React.FC = () => {
         {filteredPlugins.length === 0 && (
             <div className="text-center py-12 text-gray-400">
                 <Package className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                <p>No plugins found matching your criteria.</p>
+                <p>{tx('没有符合当前条件的插件。', 'No plugins found matching your criteria.')}</p>
             </div>
         )}
       </div>
@@ -275,7 +277,7 @@ export const PluginRegistry: React.FC = () => {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">Manage Plugin</h2>
+                <h2 className="text-lg font-bold text-gray-900">{tx('管理插件', 'Manage Plugin')}</h2>
                 <p className="text-xs text-gray-500">{managePlugin.id}</p>
               </div>
               <button onClick={() => { setIsManageOpen(false); setManagePlugin(null); }} className="text-gray-400 hover:text-gray-600">
@@ -285,7 +287,7 @@ export const PluginRegistry: React.FC = () => {
             <div className="p-6 space-y-6">
               <form onSubmit={handleSavePlugin} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('名称', 'Name')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -294,19 +296,19 @@ export const PluginRegistry: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('类型', 'Type')}</label>
                   <select
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={editType}
                     onChange={e => setEditType(e.target.value as 'Algorithm' | 'Model' | 'Wrapper')}
                   >
-                    <option value="Algorithm">Algorithm</option>
-                    <option value="Model">Model</option>
-                    <option value="Wrapper">Wrapper</option>
+                    <option value="Algorithm">{tx('算法', 'Algorithm')}</option>
+                    <option value="Model">{tx('模型', 'Model')}</option>
+                    <option value="Wrapper">{tx('封装器', 'Wrapper')}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('作者', 'Author')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -315,18 +317,18 @@ export const PluginRegistry: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Installed</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('安装状态', 'Installed')}</label>
                   <select
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={editInstalled ? 'true' : 'false'}
                     onChange={e => setEditInstalled(e.target.value === 'true')}
                   >
-                    <option value="true">Installed</option>
-                    <option value="false">Not installed</option>
+                    <option value="true">{tx('已安装', 'Installed')}</option>
+                    <option value="false">{tx('未安装', 'Not installed')}</option>
                   </select>
                 </div>
                 <div className="lg:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('描述', 'Description')}</label>
                   <textarea
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-20 resize-none"
                     value={editDescription}
@@ -334,28 +336,28 @@ export const PluginRegistry: React.FC = () => {
                   />
                 </div>
                 <div className="lg:col-span-2 flex justify-end gap-3">
-                  <button type="button" onClick={() => { setIsManageOpen(false); setManagePlugin(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                  <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Save</button>
+                  <button type="button" onClick={() => { setIsManageOpen(false); setManagePlugin(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                  <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('保存', 'Save')}</button>
                 </div>
               </form>
 
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
-                  <h3 className="text-sm font-semibold text-gray-700">Versions</h3>
+                  <h3 className="text-sm font-semibold text-gray-700">{tx('版本', 'Versions')}</h3>
                   <button
                     onClick={() => openVersionModal(managePlugin)}
                     className="px-3 py-1.5 bg-blue-600 text-white rounded-md text-xs hover:bg-blue-700"
                   >
-                    Add Version
+                    {tx('新增版本', 'Add Version')}
                   </button>
                 </div>
                 <table className="w-full text-left text-sm">
                   <thead className="bg-gray-50 text-xs text-gray-500 uppercase font-semibold">
                     <tr>
-                      <th className="px-4 py-2">Version</th>
-                      <th className="px-4 py-2">Wheel URI</th>
-                      <th className="px-4 py-2">Frozen</th>
-                      <th className="px-4 py-2 text-right">Actions</th>
+                      <th className="px-4 py-2">{tx('版本', 'Version')}</th>
+                      <th className="px-4 py-2">{tx('Wheel URI', 'Wheel URI')}</th>
+                      <th className="px-4 py-2">{tx('冻结', 'Frozen')}</th>
+                      <th className="px-4 py-2 text-right">{tx('操作', 'Actions')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -367,7 +369,7 @@ export const PluginRegistry: React.FC = () => {
                           <span className={`text-xs px-2 py-0.5 rounded-full border ${
                             version.frozen ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-100 text-gray-600 border-gray-200'
                           }`}>
-                            {version.frozen ? 'Frozen' : 'Mutable'}
+                            {version.frozen ? tx('已冻结', 'Frozen') : tx('可变更', 'Mutable')}
                           </span>
                         </td>
                         <td className="px-4 py-2 text-right">
@@ -376,14 +378,14 @@ export const PluginRegistry: React.FC = () => {
                             disabled={version.frozen}
                             className="text-xs text-blue-600 hover:text-blue-800 disabled:text-gray-400"
                           >
-                            Freeze
+                            {tx('冻结', 'Freeze')}
                           </button>
                         </td>
                       </tr>
                     ))}
                     {(pluginVersions[managePlugin.id] || []).length === 0 && (
                       <tr>
-                        <td colSpan={4} className="px-4 py-4 text-sm text-gray-400">No versions registered.</td>
+                        <td colSpan={4} className="px-4 py-4 text-sm text-gray-400">{tx('暂无已注册版本。', 'No versions registered.')}</td>
                       </tr>
                     )}
                   </tbody>
@@ -398,14 +400,14 @@ export const PluginRegistry: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900">Register Plugin Version</h2>
+              <h2 className="text-lg font-bold text-gray-900">{tx('注册插件版本', 'Register Plugin Version')}</h2>
               <button onClick={() => { setIsVersionOpen(false); setVersionTarget(null); }} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCreateVersion} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Plugin ID</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('Plugin ID', 'Plugin ID')}</label>
                 <input
                   type="text"
                   required
@@ -413,58 +415,58 @@ export const PluginRegistry: React.FC = () => {
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:bg-gray-50"
                   value={versionPluginId}
                   onChange={e => setVersionPluginId(e.target.value)}
-                  placeholder="e.g., policy-eval"
+                  placeholder={tx('例如：policy-eval', 'e.g., policy-eval')}
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Version</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('版本', 'Version')}</label>
                   <input
                     type="text"
                     required
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={versionValue}
                     onChange={e => setVersionValue(e.target.value)}
-                    placeholder="e.g., 1.0.0"
+                    placeholder={tx('例如：1.0.0', 'e.g., 1.0.0')}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('类型', 'Type')}</label>
                   <select
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     value={versionType}
                     onChange={e => setVersionType(e.target.value as 'Algorithm' | 'Model' | 'Wrapper')}
                   >
-                    <option value="Algorithm">Algorithm</option>
-                    <option value="Model">Model</option>
-                    <option value="Wrapper">Wrapper</option>
+                    <option value="Algorithm">{tx('算法', 'Algorithm')}</option>
+                    <option value="Model">{tx('模型', 'Model')}</option>
+                    <option value="Wrapper">{tx('封装器', 'Wrapper')}</option>
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Wheel URI</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('Wheel URI', 'Wheel URI')}</label>
                 <input
                   type="text"
                   required
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={versionWheelUri}
                   onChange={e => setVersionWheelUri(e.target.value)}
-                  placeholder="s3://.../plugin.whl"
+                  placeholder={tx('s3://.../plugin.whl', 's3://.../plugin.whl')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">SHA256</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('SHA256', 'SHA256')}</label>
                 <input
                   type="text"
                   required
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   value={versionSha256}
                   onChange={e => setVersionSha256(e.target.value)}
-                  placeholder="hex digest"
+                  placeholder={tx('十六进制摘要', 'hex digest')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Manifest (JSON, optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('Manifest (JSON，可选)', 'Manifest (JSON, optional)')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-24 font-mono text-xs"
                   value={versionManifest}
@@ -473,7 +475,7 @@ export const PluginRegistry: React.FC = () => {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('名称', 'Name')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -482,7 +484,7 @@ export const PluginRegistry: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Author</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{tx('作者', 'Author')}</label>
                   <input
                     type="text"
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -492,7 +494,7 @@ export const PluginRegistry: React.FC = () => {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{tx('描述', 'Description')}</label>
                 <textarea
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none h-20 resize-none"
                   value={versionDescription}
@@ -507,12 +509,12 @@ export const PluginRegistry: React.FC = () => {
                     onChange={e => setVersionInstalled(e.target.checked)}
                     className="rounded border-gray-300"
                   />
-                  Mark as installed
+                  {tx('标记为已安装', 'Mark as installed')}
                 </label>
               </div>
               <div className="pt-4 flex justify-end gap-3">
-                <button type="button" onClick={() => { setIsVersionOpen(false); setVersionTarget(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Save</button>
+                <button type="button" onClick={() => { setIsVersionOpen(false); setVersionTarget(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg font-medium">{tx('取消', 'Cancel')}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">{tx('保存', 'Save')}</button>
               </div>
             </form>
           </div>

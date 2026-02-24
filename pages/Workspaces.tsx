@@ -1,19 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { api, apiBaseUrl } from '../services/api';
-import { Project, Run, JobStatus } from '../types';
-import { Terminal, Plus, Trash2, ExternalLink, RefreshCw, StopCircle } from 'lucide-react';
+import { api } from '../services/api';
+import { Project, Run } from '../types';
+import { Terminal, Plus, Trash2, ExternalLink, RefreshCw } from 'lucide-react';
 import { useToast } from '../components/Toast';
-import { useNavigate } from 'react-router-dom';
+import { useI18n } from '../services/i18n';
 
 export const Workspaces: React.FC = () => {
   const { showToast } = useToast();
-  const navigate = useNavigate();
+  const { tx } = useI18n();
   const [projects, setProjects] = useState<Project[]>([]);
   const [notebooks, setNotebooks] = useState<Run[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedProject, setSelectedProject] = useState('');
   const [notebookName, setNotebookName] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
 
   const fetchNotebooks = () => {
       api.getRuns({ type: 'NOTEBOOK' }).then(setNotebooks);
@@ -35,26 +34,26 @@ export const Workspaces: React.FC = () => {
       setIsCreating(true);
       try {
           await api.createNotebook(selectedProject, notebookName || undefined);
-          showToast('Notebook workspace created.', 'success');
+          showToast(tx('Notebook 工作空间已创建。', 'Notebook workspace created.'), 'success');
           setNotebookName('');
           fetchNotebooks();
       } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to create notebook: ${detail}`, 'error');
+          showToast(`${tx('创建 Notebook 失败', 'Failed to create notebook')}: ${detail}`, 'error');
       } finally {
           setIsCreating(false);
       }
   };
 
   const handleStop = async (runId: string) => {
-      if (!window.confirm('Stop this notebook workspace? Unsaved changes in memory will be lost.')) return;
+      if (!window.confirm(tx('确认停止此 Notebook 工作空间？内存中未保存更改会丢失。', 'Stop this notebook workspace? Unsaved changes in memory will be lost.'))) return;
       try {
           await api.deleteNotebook(runId);
-          showToast('Notebook stopped.', 'success');
+          showToast(tx('Notebook 已停止。', 'Notebook stopped.'), 'success');
           fetchNotebooks();
       } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          showToast(`Failed to stop notebook: ${detail}`, 'error');
+          showToast(`${tx('停止 Notebook 失败', 'Failed to stop notebook')}: ${detail}`, 'error');
       }
   };
 
@@ -75,10 +74,10 @@ export const Workspaces: React.FC = () => {
               const fullUrl = `${config.url}?token=${config.token}`;
               window.open(fullUrl, '_blank');
           } else {
-             showToast("Connection info not found in run config. Please try again or check logs.", "warning");
+             showToast(tx('未在 run 配置中找到连接信息，请重试或检查日志。', 'Connection info not found in run config. Please try again or check logs.'), "warning");
           }
-      }).catch(e => {
-          showToast("Failed to fetch connection info.", "error");
+      }).catch(() => {
+          showToast(tx('获取连接信息失败。', 'Failed to fetch connection info.'), "error");
       });
   };
 
@@ -86,8 +85,8 @@ export const Workspaces: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Workspaces</h1>
-          <p className="text-gray-500 mt-1">Interactive Jupyter environments for exploration and debugging.</p>
+          <h1 className="text-2xl font-bold text-gray-900">{tx('工作空间', 'Workspaces')}</h1>
+          <p className="text-gray-500 mt-1">{tx('用于探索与调试的交互式 Jupyter 环境。', 'Interactive Jupyter environments for exploration and debugging.')}</p>
         </div>
       </div>
 
@@ -95,11 +94,11 @@ export const Workspaces: React.FC = () => {
         {/* Create Card */}
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm h-fit">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center">
-                <Plus className="w-5 h-5 mr-2 text-blue-600"/> New Workspace
+                <Plus className="w-5 h-5 mr-2 text-blue-600"/> {tx('新建工作空间', 'New Workspace')}
             </h3>
             <form onSubmit={handleCreate} className="space-y-4">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('项目', 'Project')}</label>
                     <select 
                         className="w-full p-2 border border-gray-300 rounded-lg"
                         value={selectedProject}
@@ -109,11 +108,11 @@ export const Workspaces: React.FC = () => {
                     </select>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Name (Optional)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{tx('名称（可选）', 'Name (Optional)')}</label>
                     <input 
                         type="text" 
                         className="w-full p-2 border border-gray-300 rounded-lg"
-                        placeholder="e.g. EDA-01"
+                        placeholder={tx('例如：EDA-01', 'e.g. EDA-01')}
                         value={notebookName}
                         onChange={e => setNotebookName(e.target.value)}
                     />
@@ -123,7 +122,7 @@ export const Workspaces: React.FC = () => {
                     disabled={isCreating || !selectedProject}
                     className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium flex justify-center items-center"
                 >
-                    {isCreating ? <RefreshCw className="w-4 h-4 animate-spin"/> : 'Launch JupyterLab'}
+                    {isCreating ? <RefreshCw className="w-4 h-4 animate-spin"/> : tx('启动 JupyterLab', 'Launch JupyterLab')}
                 </button>
             </form>
         </div>
@@ -132,7 +131,7 @@ export const Workspaces: React.FC = () => {
         <div className="lg:col-span-2 space-y-4">
             {notebooks.length === 0 && (
                 <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500">
-                    No active workspaces. Launch one to get started.
+                    {tx('当前没有活跃工作空间，先启动一个。', 'No active workspaces. Launch one to get started.')}
                 </div>
             )}
             {notebooks.map(nb => (
@@ -158,13 +157,13 @@ export const Workspaces: React.FC = () => {
                                 onClick={() => openNotebook(nb.id)}
                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center"
                             >
-                                <ExternalLink className="w-4 h-4 mr-2" /> Open
+                                <ExternalLink className="w-4 h-4 mr-2" /> {tx('打开', 'Open')}
                             </button>
                         )}
                         <button 
                             onClick={() => handleStop(nb.id)}
                             className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"
-                            title="Stop & Delete"
+                            title={tx('停止并删除', 'Stop & Delete')}
                         >
                             <Trash2 className="w-5 h-5" />
                         </button>

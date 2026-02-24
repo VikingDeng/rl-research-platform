@@ -4,6 +4,7 @@ import { Project, EnvSpec, Algo, AlgoVersion, Template, TemplateVersion, EnvVers
 import { Play, Settings, Cpu, ChevronRight, GitFork, Info, Layers, Code, Box, Check, GitBranch, Zap, PlayCircle, Copy, Plus, Database } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '../components/Toast';
+import { useI18n } from '../services/i18n';
 
 const BASE_STEPS = [
   { id: 'project', title: 'Project', icon: Layers },
@@ -172,6 +173,7 @@ export const CreateJob: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast } = useToast();
+  const { t, tx } = useI18n();
   const [currentStep, setCurrentStep] = useState(0);
   const [projects, setProjects] = useState<Project[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -230,12 +232,12 @@ export const CreateJob: React.FC = () => {
   const visibleTemplates = templates.filter(t => !isSystemTemplate(t));
 
   const steps = useMemo(() => {
-    const next = [...BASE_STEPS];
+    const next = BASE_STEPS.map(step => ({ ...step, title: t(`createJob.step.${step.id}`, step.title) }));
     if (launchMode === 'quick') {
-      next[1] = { ...next[1], title: 'Algorithm', icon: Play };
+      next[1] = { ...next[1], title: t('createJob.step.algorithm', 'Algorithm'), icon: Play };
     }
     return next;
-  }, [launchMode]);
+  }, [launchMode, t]);
 
   const resolveMapOptions = (version?: EnvVersion, env?: EnvSpec) => {
     if (version?.mapSets && version.mapSets.length > 0) {
@@ -940,30 +942,30 @@ export const CreateJob: React.FC = () => {
     const base = [
       {
         id: 'project',
-        label: 'Project',
+        label: t('createJob.check.project', 'Project'),
         ready: projects.length > 0,
-        actionLabel: 'Create project',
+        actionLabel: t('createJob.check.createProject', 'Create project'),
         onAction: () => navigate('/', { state: { openCreateProject: true } }),
       },
       {
         id: 'template',
-        label: 'Template',
+        label: t('createJob.check.template', 'Template'),
         ready: visibleTemplateCount > 0,
-        actionLabel: 'Open templates',
+        actionLabel: t('createJob.check.openTemplates', 'Open templates'),
         onAction: () => navigate('/registries/templates', { state: { projectId: selectedProject, openCreate: true } }),
       },
       {
         id: 'environment',
-        label: 'Environment',
+        label: t('createJob.check.environment', 'Environment'),
         ready: envs.length > 0,
-        actionLabel: 'Open environments',
+        actionLabel: t('createJob.check.openEnvs', 'Open environments'),
         onAction: () => navigate('/registries/environments', { state: { openCreate: true } }),
       },
       {
         id: 'algorithm',
-        label: 'Algorithm',
+        label: t('createJob.check.algorithm', 'Algorithm'),
         ready: algos.length > 0,
-        actionLabel: 'Open algorithms',
+        actionLabel: t('createJob.check.openAlgos', 'Open algorithms'),
         onAction: () => navigate('/registries/algorithms'),
       },
     ];
@@ -971,7 +973,7 @@ export const CreateJob: React.FC = () => {
       return base.filter(item => item.id !== 'template');
     }
     return base.filter(item => item.id !== 'algorithm');
-  }, [projects.length, templates, envs.length, algos.length, launchMode, navigate, selectedProject]);
+  }, [projects.length, templates, envs.length, algos.length, launchMode, navigate, selectedProject, t]);
 
   const missingSetup = setupChecklist.filter(item => !item.ready);
   const hasConfigError = Boolean(configParseError) || configSchemaErrors.length > 0;
@@ -1001,13 +1003,13 @@ export const CreateJob: React.FC = () => {
     <div className="max-w-4xl mx-auto">
       <div className="mb-8 flex justify-between items-end">
         <div>
-            <h1 className="text-2xl font-bold text-gray-900">Create New Job</h1>
-            <p className="text-gray-500 mt-1">Configure and launch a new training or evaluation run.</p>
+            <h1 className="text-2xl font-bold text-gray-900">{t('createJob.title', 'Create New Job')}</h1>
+            <p className="text-gray-500 mt-1">{t('createJob.subtitle', 'Configure and launch a new training or evaluation run.')}</p>
         </div>
         {forkSource && (
             <div className="px-3 py-1 bg-blue-50 text-blue-700 rounded-md text-sm font-medium border border-blue-200 flex items-center animate-in fade-in">
                 <Copy className="w-3 h-3 mr-2" />
-                Cloning from {forkSource}
+                {t('createJob.cloningFrom', 'Cloning from')} {forkSource}
             </div>
         )}
       </div>
@@ -1016,7 +1018,7 @@ export const CreateJob: React.FC = () => {
       <div className="mb-6 bg-white border border-gray-200 rounded-xl p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
           <Info className="w-4 h-4 text-blue-500" />
-          Setup checklist
+          {t('createJob.setupChecklist', 'Setup checklist')}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {setupChecklist.map(item => (
@@ -1043,7 +1045,7 @@ export const CreateJob: React.FC = () => {
           ))}
         </div>
         {missingSetup.length === 0 && (
-          <div className="mt-3 text-xs text-green-700">All prerequisites are ready. Continue the wizard below.</div>
+          <div className="mt-3 text-xs text-green-700">{t('createJob.setupReady', 'All prerequisites are ready. Continue the wizard below.')}</div>
         )}
       </div>
 
@@ -1075,16 +1077,16 @@ export const CreateJob: React.FC = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 min-h-[400px]">
         {currentStep === 0 && (
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold">Select Project</h2>
+            <h2 className="text-lg font-semibold">{t('createJob.selectProject', 'Select Project')}</h2>
             {projects.length === 0 && (
               <div className="p-4 rounded-lg border border-dashed border-blue-200 bg-blue-50 text-sm text-blue-700 flex items-center justify-between">
-                <div>No projects yet. Create one to organize runs and templates.</div>
+                <div>{t('createJob.noProjects', 'No projects yet. Create one to organize runs and templates.')}</div>
                 <button
                   type="button"
                   onClick={() => navigate('/', { state: { openCreateProject: true } })}
                   className="text-xs font-semibold text-blue-700 hover:underline"
                 >
-                  Create project
+                  {t('createJob.check.createProject', 'Create project')}
                 </button>
               </div>
             )}
@@ -1099,7 +1101,7 @@ export const CreateJob: React.FC = () => {
                 >
                   <div className="flex justify-between">
                     <h3 className="font-medium text-gray-900">{p.name}</h3>
-                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{p.activeRuns} active runs</span>
+                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{p.activeRuns} {tx('个运行中任务', 'active runs')}</span>
                   </div>
                   <div className="flex gap-2 mt-3">
                     {p.tags.map(t => <span key={t} className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded border border-gray-200">#{t}</span>)}
@@ -1113,7 +1115,7 @@ export const CreateJob: React.FC = () => {
               >
                 <div className="text-center">
                     <Plus className="w-6 h-6 mx-auto mb-1"/>
-                    <span className="text-sm font-medium">Create New Project</span>
+                    <span className="text-sm font-medium">{t('dashboard.createNewProject', 'Create New Project')}</span>
                 </div>
               </div>
             </div>
@@ -1123,21 +1125,21 @@ export const CreateJob: React.FC = () => {
         {currentStep === 1 && (
             <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold">{launchMode === 'quick' ? 'Select Algorithm' : 'Select Template'}</h2>
+                    <h2 className="text-lg font-semibold">{launchMode === 'quick' ? t('createJob.selectAlgorithm', 'Select Algorithm') : t('createJob.selectTemplate', 'Select Template')}</h2>
                     <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg p-1">
                         <button
                           type="button"
                           onClick={() => setLaunchMode('template')}
                           className={`px-3 py-1 text-xs font-semibold rounded ${launchMode === 'template' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
                         >
-                          Template
+                          {t('createJob.mode.template', 'Template')}
                         </button>
                         <button
                           type="button"
                           onClick={() => setLaunchMode('quick')}
                           className={`px-3 py-1 text-xs font-semibold rounded ${launchMode === 'quick' ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
                         >
-                          Quick Run
+                          {t('createJob.mode.quick', 'Quick Run')}
                         </button>
                     </div>
                 </div>
@@ -1163,13 +1165,13 @@ export const CreateJob: React.FC = () => {
                         ))}
                         {visibleTemplates.length === 0 && (
                           <div className="p-4 rounded-lg border border-dashed border-gray-200 text-sm text-gray-500 flex items-center justify-between">
-                            <span>No templates found for this project.</span>
+                            <span>{tx('该项目暂无模板。', 'No templates found for this project.')}</span>
                             <button
                               type="button"
                               onClick={() => navigate('/registries/templates', { state: { projectId: selectedProject, openCreate: true } })}
                               className="text-xs font-semibold text-blue-600 hover:underline"
                             >
-                              Create template
+                              {tx('创建模板', 'Create template')}
                             </button>
                           </div>
                         )}
@@ -1177,13 +1179,13 @@ export const CreateJob: React.FC = () => {
                     {selectedTemplate && (
                       <div className="space-y-3 pt-4 border-t border-gray-100">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Template Version</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">{tx('模板版本', 'Template Version')}</label>
                           <select
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                             value={selectedTemplateVersionId}
                             onChange={(e) => setSelectedTemplateVersionId(e.target.value)}
                           >
-                            <option value="">-- Select Version --</option>
+                            <option value="">{tx('-- 选择版本 --', '-- Select Version --')}</option>
                             {templateVersions.map(v => (
                               <option key={v.id} value={v.id}>
                                 v{v.version} ({v.id.slice(0, 8)})
@@ -1195,13 +1197,19 @@ export const CreateJob: React.FC = () => {
                           {(() => {
                             const version = templateVersions.find(v => v.id === selectedTemplateVersionId);
                             if (!version?.algoVersionId) {
-                              return 'No algorithm linked to this template version.';
+                              return tx('该模板版本未绑定算法。', 'No algorithm linked to this template version.');
                             }
                             const algoInfo = algoVersionIndex[version.algoVersionId];
                             if (!algoInfo) {
-                              return `Algo version ${version.algoVersionId.slice(0, 8)} not found in registry.`;
+                              return tx(
+                                `注册表中未找到算法版本 ${version.algoVersionId.slice(0, 8)}。`,
+                                `Algo version ${version.algoVersionId.slice(0, 8)} not found in registry.`,
+                              );
                             }
-                            return `Linked algorithm: ${algoInfo.algoName} (v${algoInfo.version})`;
+                            return tx(
+                              `关联算法：${algoInfo.algoName} (v${algoInfo.version})`,
+                              `Linked algorithm: ${algoInfo.algoName} (v${algoInfo.version})`,
+                            );
                           })()}
                         </div>
                       </div>
@@ -1226,13 +1234,13 @@ export const CreateJob: React.FC = () => {
                       ))}
                       {algos.length === 0 && (
                         <div className="p-4 rounded-lg border border-dashed border-gray-200 text-sm text-gray-500 flex items-center justify-between">
-                          <span>No algorithms registered yet.</span>
+                          <span>{tx('尚未注册算法。', 'No algorithms registered yet.')}</span>
                           <button
                             type="button"
                             onClick={() => navigate('/registries/algorithms')}
                             className="text-xs font-semibold text-blue-600 hover:underline"
                           >
-                            Open registry
+                            {tx('打开注册中心', 'Open registry')}
                           </button>
                         </div>
                       )}
@@ -1240,13 +1248,13 @@ export const CreateJob: React.FC = () => {
                     {selectedAlgoId && (
                       <div className="space-y-3 pt-4 border-t border-gray-100">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Algorithm Version</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">{tx('算法版本', 'Algorithm Version')}</label>
                           <select
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                             value={selectedAlgoVersionId}
                             onChange={(e) => setSelectedAlgoVersionId(e.target.value)}
                           >
-                            <option value="">-- Select Version --</option>
+                            <option value="">{tx('-- 选择版本 --', '-- Select Version --')}</option>
                             {([...((algoVersions[selectedAlgoId] || []))].sort((a, b) => {
                               const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
                               const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
@@ -1260,7 +1268,10 @@ export const CreateJob: React.FC = () => {
                           </select>
                         </div>
                         <div className="text-xs text-gray-500">
-                          Quick Run will auto-create a template version for this algorithm so you can reproduce the run later.
+                          {tx(
+                            '快速运行会自动为该算法创建模板版本，便于后续复现实验。',
+                            'Quick Run will auto-create a template version for this algorithm so you can reproduce the run later.',
+                          )}
                         </div>
                       </div>
                     )}
@@ -1272,16 +1283,16 @@ export const CreateJob: React.FC = () => {
         {currentStep === 2 && (
           <div className="space-y-6">
             <div className="space-y-2">
-                <h2 className="text-lg font-semibold">Select Environment</h2>
+                <h2 className="text-lg font-semibold">{tx('选择环境', 'Select Environment')}</h2>
                 {envs.length === 0 && (
                   <div className="p-4 rounded-lg border border-dashed border-gray-200 text-sm text-gray-500 flex items-center justify-between">
-                    <span>No environments registered yet.</span>
+                    <span>{tx('尚未注册环境。', 'No environments registered yet.')}</span>
                     <button
                       type="button"
                       onClick={() => navigate('/registries/environments', { state: { openCreate: true } })}
                       className="text-xs font-semibold text-blue-600 hover:underline"
                     >
-                      Register environment
+                      {tx('注册环境', 'Register environment')}
                     </button>
                   </div>
                 )}
@@ -1290,20 +1301,20 @@ export const CreateJob: React.FC = () => {
                     value={selectedEnv}
                     onChange={(e) => setSelectedEnv(e.target.value)}
                 >
-                    <option value="">-- Select Env --</option>
+                    <option value="">{tx('-- 选择环境 --', '-- Select Env --')}</option>
                     {envs.map(e => <option key={e.id} value={e.id}>{e.id} ({e.versions[0]})</option>)}
                 </select>
             </div>
             
             {selectedEnv && (
                 <div className="space-y-2">
-                    <h2 className="text-lg font-semibold">Select Version</h2>
+                    <h2 className="text-lg font-semibold">{tx('选择版本', 'Select Version')}</h2>
                     <select
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         value={selectedEnvVersion}
                         onChange={(e) => setSelectedEnvVersion(e.target.value)}
                     >
-                        <option value="">-- Select Version --</option>
+                        <option value="">{tx('-- 选择版本 --', '-- Select Version --')}</option>
                         {envVersionsEnvId === selectedEnv && envVersions.map(v => (
                             <option key={v.version} value={v.version}>{v.version} ({v.apiMode})</option>
                         ))}
@@ -1313,7 +1324,7 @@ export const CreateJob: React.FC = () => {
 
             {selectedEnv && selectedEnvVersion && (
                 <div className="space-y-2">
-                    <h2 className="text-lg font-semibold">Select Map / Scenario</h2>
+                    <h2 className="text-lg font-semibold">{tx('选择地图 / 场景', 'Select Map / Scenario')}</h2>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                         {resolveMapOptions(
                           envVersions.find(v => v.version === selectedEnvVersion),
@@ -1340,7 +1351,7 @@ export const CreateJob: React.FC = () => {
                               selectedMap === 'default' ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
                             }`}
                           >
-                            default
+                            {tx('默认', 'default')}
                           </div>
                         )}
                     </div>
@@ -1349,8 +1360,8 @@ export const CreateJob: React.FC = () => {
                         envVersions.find(v => v.version === selectedEnvVersion),
                         envs.find(e => e.id === selectedEnv),
                       ).length > 0
-                        ? 'Select a predefined map set.'
-                        : 'No map sets registered; using default.'}
+                        ? tx('请选择预定义地图集。', 'Select a predefined map set.')
+                        : tx('未注册地图集，使用默认值。', 'No map sets registered; using default.')}
                     </p>
                 </div>
             )}
@@ -1361,25 +1372,25 @@ export const CreateJob: React.FC = () => {
             <div className="space-y-6 h-full flex flex-col">
                 {/* Sweep Mode Toggle */}
                 <div className="flex items-center gap-4 bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <span className="text-sm font-medium text-gray-700">Job Mode:</span>
+                    <span className="text-sm font-medium text-gray-700">{tx('任务模式：', 'Job Mode:')}</span>
                     <div className="flex bg-white rounded-md border border-gray-300 p-1">
                         <button 
                             onClick={() => { setIsSweepMode(false); setConfigOverride(configOverride.replace(/\[|\]/g, '')); setConfigTouched(true); }} // quick dirty reset
                             className={`px-3 py-1 text-xs font-medium rounded ${!isSweepMode ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
                         >
-                            Single Run
+                            {tx('单次运行', 'Single Run')}
                         </button>
                         <button 
                             onClick={() => setIsSweepMode(true)}
                             className={`px-3 py-1 text-xs font-medium rounded flex items-center ${isSweepMode ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-50'}`}
                         >
                             <GitBranch className="w-3 h-3 mr-1" />
-                            Hyperparameter Sweep
+                            {tx('超参数搜索', 'Hyperparameter Sweep')}
                         </button>
                     </div>
                     {isSweepMode && (
                         <span className="text-xs text-purple-600 flex items-center">
-                            <Zap className="w-3 h-3 mr-1" /> Detected: <strong>{sweepCombinations}</strong> combinations
+                            <Zap className="w-3 h-3 mr-1" /> {tx('检测到：', 'Detected:')} <strong>{sweepCombinations}</strong> {tx('种组合', 'combinations')}
                         </span>
                     )}
                 </div>
@@ -1387,7 +1398,7 @@ export const CreateJob: React.FC = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1">
                     {/* Params Editor */}
                     <div className="flex flex-col h-full">
-                        <h3 className="text-sm font-bold text-gray-700 mb-2">Hyperparameter Overrides</h3>
+                        <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('超参数覆盖', 'Hyperparameter Overrides')}</h3>
                         <div className="relative flex-1">
                             <textarea 
                                 value={configOverride}
@@ -1400,24 +1411,27 @@ export const CreateJob: React.FC = () => {
                             <span className="absolute top-2 right-2 text-xs text-gray-400 bg-white px-2 py-1 rounded border border-gray-200">JSON</span>
                         </div>
                         {configParseError && (
-                          <div className="mt-2 text-xs text-red-600">JSON error: {configParseError}</div>
+                          <div className="mt-2 text-xs text-red-600">{tx('JSON 错误', 'JSON error')}: {configParseError}</div>
                         )}
                         {!configParseError && configSchemaErrors.length > 0 && (
                           <div className="mt-2 text-xs text-amber-600">
-                            Schema check: {configSchemaErrors.slice(0, 3).join(' • ')}
+                            {tx('Schema 校验', 'Schema check')}: {configSchemaErrors.slice(0, 3).join(' • ')}
                           </div>
                         )}
                          <p className="text-xs text-gray-500 mt-2">
                              {isSweepMode 
-                                ? "Sweep Mode: Use arrays for parameters you want to sweep. E.g., \"lr\": [0.001, 0.0005]" 
-                                : "Modify the default parameters for this specific run."}
+                                ? tx(
+                                    '搜索模式：对需要搜索的参数使用数组，例如 "lr": [0.001, 0.0005]。',
+                                    'Sweep Mode: Use arrays for parameters you want to sweep. E.g., "lr": [0.001, 0.0005]',
+                                  )
+                                : tx('修改本次运行的默认参数。', 'Modify the default parameters for this specific run.')}
                          </p>
                     </div>
 
                     {/* Plugins & Features */}
                     <div className="space-y-6">
                         <div>
-                            <h3 className="text-sm font-bold text-gray-700 mb-2">Guided Train Overrides</h3>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('训练参数引导覆盖', 'Guided Train Overrides')}</h3>
                             <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
                                 {trainFieldSpecs.map(spec => {
                                   const trainConfig = (resolvedConfig as any)?.train || {};
@@ -1437,7 +1451,7 @@ export const CreateJob: React.FC = () => {
                                           onChange={e => updateTrainOverride(spec.key, e.target.value, spec.type)}
                                           className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
                                         >
-                                          <option value="">(default)</option>
+                                          <option value="">{tx('（默认）', '(default)')}</option>
                                           {spec.options.map(opt => (
                                             <option key={String(opt)} value={String(opt)}>
                                               {String(opt)}
@@ -1457,7 +1471,7 @@ export const CreateJob: React.FC = () => {
                                           value={value}
                                           onChange={e => updateTrainOverride(spec.key, e.target.value, spec.type)}
                                           className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                          placeholder="(default)"
+                                          placeholder={tx('（默认）', '(default)')}
                                         />
                                       ) : (
                                         <input
@@ -1465,20 +1479,20 @@ export const CreateJob: React.FC = () => {
                                           value={value}
                                           onChange={e => updateTrainOverride(spec.key, e.target.value, spec.type)}
                                           className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                          placeholder="(default)"
+                                          placeholder={tx('（默认）', '(default)')}
                                         />
                                       )}
                                     </div>
                                   );
                                 })}
                                 <div className="text-[11px] text-gray-500">
-                                  For sweeps or nested overrides, edit JSON directly.
+                                  {tx('如需搜索或嵌套覆盖，请直接编辑 JSON。', 'For sweeps or nested overrides, edit JSON directly.')}
                                 </div>
                             </div>
                         </div>
                         {algoFieldSpecs.length > 0 && (
                           <div>
-                              <h3 className="text-sm font-bold text-gray-700 mb-2">Algorithm Overrides</h3>
+                              <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('算法参数覆盖', 'Algorithm Overrides')}</h3>
                               <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
                                   {algoFieldSpecs.map(spec => {
                                     const algoConfig = (resolvedConfig as any)?.algo || {};
@@ -1498,7 +1512,7 @@ export const CreateJob: React.FC = () => {
                                             onChange={e => updateAlgoOverride(spec.key, e.target.value, spec.type)}
                                             className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
                                           >
-                                            <option value="">(default)</option>
+                                            <option value="">{tx('（默认）', '(default)')}</option>
                                             {spec.options.map(opt => (
                                               <option key={String(opt)} value={String(opt)}>
                                                 {String(opt)}
@@ -1518,7 +1532,7 @@ export const CreateJob: React.FC = () => {
                                             value={value}
                                             onChange={e => updateAlgoOverride(spec.key, e.target.value, spec.type)}
                                             className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                            placeholder="(default)"
+                                            placeholder={tx('（默认）', '(default)')}
                                           />
                                         ) : (
                                           <input
@@ -1526,21 +1540,21 @@ export const CreateJob: React.FC = () => {
                                             value={value}
                                             onChange={e => updateAlgoOverride(spec.key, e.target.value, spec.type)}
                                             className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                            placeholder="(default)"
+                                            placeholder={tx('（默认）', '(default)')}
                                           />
                                         )}
                                       </div>
                                     );
                                   })}
                                   <div className="text-[11px] text-gray-500">
-                                    Algorithm-specific overrides are optional.
+                                    {tx('算法专项覆盖为可选项。', 'Algorithm-specific overrides are optional.')}
                                   </div>
                               </div>
                           </div>
                         )}
                         {networkFieldSpecs.length > 0 && (
                           <div>
-                              <h3 className="text-sm font-bold text-gray-700 mb-2">Network Overrides</h3>
+                              <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('网络参数覆盖', 'Network Overrides')}</h3>
                               <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
                                   {networkFieldSpecs.map(spec => {
                                     const networkConfig = (resolvedConfig as any)?.network || {};
@@ -1560,7 +1574,7 @@ export const CreateJob: React.FC = () => {
                                             onChange={e => updateNetworkOverride(spec.key, e.target.value, spec.type)}
                                             className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
                                           >
-                                            <option value="">(default)</option>
+                                            <option value="">{tx('（默认）', '(default)')}</option>
                                             {spec.options.map(opt => (
                                               <option key={String(opt)} value={String(opt)}>
                                                 {String(opt)}
@@ -1580,7 +1594,7 @@ export const CreateJob: React.FC = () => {
                                             value={value}
                                             onChange={e => updateNetworkOverride(spec.key, e.target.value, spec.type)}
                                             className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                            placeholder="(default)"
+                                            placeholder={tx('（默认）', '(default)')}
                                           />
                                         ) : (
                                           <input
@@ -1588,21 +1602,24 @@ export const CreateJob: React.FC = () => {
                                             value={value}
                                             onChange={e => updateNetworkOverride(spec.key, e.target.value, spec.type)}
                                             className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                            placeholder="(default)"
+                                            placeholder={tx('（默认）', '(default)')}
                                           />
                                         )}
                                       </div>
                                     );
                                   })}
                                   <div className="text-[11px] text-gray-500">
-                                    Network overrides apply to policy/critic architecture settings. Arrays accept comma-separated or JSON (e.g. 64,64 or [64,64]).
+                                    {tx(
+                                      '网络覆盖作用于 policy/critic 结构参数。数组支持逗号分隔或 JSON（例如 64,64 或 [64,64]）。',
+                                      'Network overrides apply to policy/critic architecture settings. Arrays accept comma-separated or JSON (e.g. 64,64 or [64,64]).',
+                                    )}
                                   </div>
                               </div>
                           </div>
                         )}
                         {envFieldSpecs.length > 0 && (
                           <div>
-                              <h3 className="text-sm font-bold text-gray-700 mb-2">Env Overrides</h3>
+                              <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('环境参数覆盖', 'Env Overrides')}</h3>
                               <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
                                   {envFieldSpecs.map(spec => {
                                     const envConfig = (resolvedConfig as any)?.env || {};
@@ -1622,7 +1639,7 @@ export const CreateJob: React.FC = () => {
                                             onChange={e => updateEnvOverride(spec.key, e.target.value, spec.type)}
                                             className="text-xs px-2 py-1 rounded border border-gray-300 bg-white"
                                           >
-                                            <option value="">(default)</option>
+                                            <option value="">{tx('（默认）', '(default)')}</option>
                                             {spec.options.map(opt => (
                                               <option key={String(opt)} value={String(opt)}>
                                                 {String(opt)}
@@ -1642,7 +1659,7 @@ export const CreateJob: React.FC = () => {
                                             value={value}
                                             onChange={e => updateEnvOverride(spec.key, e.target.value, spec.type)}
                                             className="w-32 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                            placeholder="(default)"
+                                            placeholder={tx('（默认）', '(default)')}
                                           />
                                         ) : (
                                           <input
@@ -1650,23 +1667,26 @@ export const CreateJob: React.FC = () => {
                                             value={value}
                                             onChange={e => updateEnvOverride(spec.key, e.target.value, spec.type)}
                                             className="w-40 text-xs px-2 py-1 rounded border border-gray-300 bg-white"
-                                            placeholder="(default)"
+                                            placeholder={tx('（默认）', '(default)')}
                                           />
                                         )}
                                       </div>
                                     );
                                   })}
                                   <div className="text-[11px] text-gray-500">
-                                    Use these for env-specific knobs (e.g., PettingZoo maxCycles/continuousActions).
+                                    {tx(
+                                      '用于环境特定参数（例如 PettingZoo 的 maxCycles/continuousActions）。',
+                                      'Use these for env-specific knobs (e.g., PettingZoo maxCycles/continuousActions).',
+                                    )}
                                   </div>
                               </div>
                           </div>
                         )}
                         <div>
-                            <h3 className="text-sm font-bold text-gray-700 mb-2">Dataset (Offline RL)</h3>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('数据集（Offline RL）', 'Dataset (Offline RL)')}</h3>
                             <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
                               <div>
-                                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Dataset</label>
+                                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">{tx('数据集', 'Dataset')}</label>
                                 <select
                                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                                   value={selectedDatasetId}
@@ -1676,7 +1696,7 @@ export const CreateJob: React.FC = () => {
                                     updateDatasetOverride(next);
                                   }}
                                 >
-                                  <option value="">No dataset</option>
+                                  <option value="">{tx('不使用数据集', 'No dataset')}</option>
                                   {datasets.map(ds => (
                                     <option key={ds.id} value={ds.id}>
                                       {ds.name} ({ds.format})
@@ -1685,17 +1705,19 @@ export const CreateJob: React.FC = () => {
                                 </select>
                                 {datasets.length === 0 && (
                                   <p className="text-xs text-gray-500 mt-2">
-                                    No datasets registered yet. Add one in the Dataset Registry.
+                                    {tx('尚未注册数据集，请在数据集注册中心添加。', 'No datasets registered yet. Add one in the Dataset Registry.')}
                                   </p>
                                 )}
                                 <p className="text-[11px] text-gray-500 mt-2">
-                                  Selecting a dataset injects <code className="font-mono">datasetId</code> into the config.
+                                  {tx('选择数据集后会将 ', 'Selecting a dataset injects ')}
+                                  <code className="font-mono">datasetId</code>
+                                  {tx(' 注入配置。', ' into the config.')}
                                 </p>
                               </div>
                             </div>
                         </div>
                         <div>
-                            <h3 className="text-sm font-bold text-gray-700 mb-2">Features</h3>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('功能开关', 'Features')}</h3>
                             <div 
                                 onClick={() => setEnableDataCollection(!enableDataCollection)}
                                 className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between transition-colors ${
@@ -1707,8 +1729,8 @@ export const CreateJob: React.FC = () => {
                                         <Database className="w-4 h-4" />
                                     </div>
                                     <div>
-                                        <div className="text-sm font-bold text-gray-900">Data Collection</div>
-                                        <div className="text-xs text-gray-500">Save Replay Buffers for Offline RL</div>
+                                        <div className="text-sm font-bold text-gray-900">{tx('数据采集', 'Data Collection')}</div>
+                                        <div className="text-xs text-gray-500">{tx('为 Offline RL 保存回放缓冲区', 'Save Replay Buffers for Offline RL')}</div>
                                     </div>
                                 </div>
                                 <div className={`w-10 h-5 rounded-full relative transition-colors ${enableDataCollection ? 'bg-indigo-600' : 'bg-gray-300'}`}>
@@ -1718,7 +1740,7 @@ export const CreateJob: React.FC = () => {
                         </div>
 
                         <div>
-                            <h3 className="text-sm font-bold text-gray-700 mb-2">Enable Plugins</h3>
+                            <h3 className="text-sm font-bold text-gray-700 mb-2">{tx('启用插件', 'Enable Plugins')}</h3>
                         <div className="space-y-2 max-h-[300px] overflow-y-auto border border-gray-200 rounded-lg p-2 bg-white">
                             {plugins.map(p => (
                                 <div 
@@ -1739,7 +1761,7 @@ export const CreateJob: React.FC = () => {
                                     </div>
                                 </div>
                             ))}
-                            {plugins.length === 0 && <div className="p-4 text-center text-sm text-gray-500">No plugins installed.</div>}
+                            {plugins.length === 0 && <div className="p-4 text-center text-sm text-gray-500">{tx('暂无已安装插件。', 'No plugins installed.')}</div>}
                         </div>
                     </div>
                 </div>
@@ -1747,8 +1769,8 @@ export const CreateJob: React.FC = () => {
                 <div className="border-t border-gray-100 pt-4 space-y-3">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h3 className="text-sm font-bold text-gray-700">Auto Evaluation</h3>
-                            <p className="text-xs text-gray-500">Trigger evaluation after training succeeds.</p>
+                            <h3 className="text-sm font-bold text-gray-700">{tx('自动评估', 'Auto Evaluation')}</h3>
+                            <p className="text-xs text-gray-500">{tx('训练成功后自动触发评估。', 'Trigger evaluation after training succeeds.')}</p>
                         </div>
                         <button
                           type="button"
@@ -1757,19 +1779,19 @@ export const CreateJob: React.FC = () => {
                             autoEvalEnabled ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'
                           }`}
                         >
-                          {autoEvalEnabled ? 'Enabled' : 'Disabled'}
+                          {autoEvalEnabled ? tx('已启用', 'Enabled') : tx('已禁用', 'Disabled')}
                         </button>
                     </div>
                     {autoEvalEnabled && (
                       <div className="space-y-3">
                         <div>
-                          <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Protocol</label>
+                          <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">{tx('协议', 'Protocol')}</label>
                           <select
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                             value={autoEvalProtocolId}
                             onChange={(e) => setAutoEvalProtocolId(e.target.value)}
                           >
-                            <option value="">Select protocol</option>
+                            <option value="">{tx('选择协议', 'Select protocol')}</option>
                             {evalProtocols.map(p => (
                               <option key={p.id} value={p.id}>
                                 {p.name} (v{p.version})
@@ -1777,17 +1799,17 @@ export const CreateJob: React.FC = () => {
                             ))}
                           </select>
                           {evalProtocols.length === 0 && (
-                            <p className="text-xs text-gray-500 mt-1">No protocols available. Create one in Eval Protocols.</p>
+                            <p className="text-xs text-gray-500 mt-1">{tx('暂无协议，请先在评估协议页创建。', 'No protocols available. Create one in Eval Protocols.')}</p>
                           )}
                         </div>
                         <div>
-                          <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Trigger</label>
+                          <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">{tx('触发条件', 'Trigger')}</label>
                           <select
                             className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                             value={autoEvalTrigger}
                             onChange={(e) => setAutoEvalTrigger(e.target.value)}
                           >
-                            <option value="train_succeeded">On Train Success</option>
+                            <option value="train_succeeded">{tx('训练成功后', 'On Train Success')}</option>
                           </select>
                         </div>
                       </div>
@@ -1798,11 +1820,11 @@ export const CreateJob: React.FC = () => {
 
         {currentStep === 4 && (
             <div className="space-y-6">
-                <h2 className="text-lg font-semibold">Resource Allocation</h2>
+                <h2 className="text-lg font-semibold">{tx('资源分配', 'Resource Allocation')}</h2>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="space-y-4">
-                        <label className="block text-sm font-medium text-gray-700">GPU Resources (per trial)</label>
+                        <label className="block text-sm font-medium text-gray-700">{tx('GPU 资源（每个 trial）', 'GPU Resources (per trial)')}</label>
                         <div className="flex gap-4">
                             {[0, 1, 2, 4].map(g => (
                                 <button
@@ -1816,16 +1838,16 @@ export const CreateJob: React.FC = () => {
                                 </button>
                             ))}
                         </div>
-                        <p className="text-xs text-gray-500">Current Cluster load allows up to 4 GPUs immediately.</p>
+                        <p className="text-xs text-gray-500">{tx('当前集群负载下最多可立即分配 4 张 GPU。', 'Current Cluster load allows up to 4 GPUs immediately.')}</p>
                     </div>
 
                     <div className="space-y-4">
-                         <label className="block text-sm font-medium text-gray-700">Scheduling Priority</label>
+                         <label className="block text-sm font-medium text-gray-700">{tx('调度优先级', 'Scheduling Priority')}</label>
                          <div className="flex gap-4">
                             {[
-                                { val: 1, label: 'Low', color: 'bg-gray-100 text-gray-700 border-gray-200' },
-                                { val: 2, label: 'Normal', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-                                { val: 3, label: 'High', color: 'bg-red-50 text-red-700 border-red-200' }
+                                { val: 1, label: tx('低', 'Low'), color: 'bg-gray-100 text-gray-700 border-gray-200' },
+                                { val: 2, label: tx('普通', 'Normal'), color: 'bg-blue-50 text-blue-700 border-blue-200' },
+                                { val: 3, label: tx('高', 'High'), color: 'bg-red-50 text-red-700 border-red-200' }
                             ].map(opt => (
                                 <button
                                     key={opt.val}
@@ -1838,11 +1860,11 @@ export const CreateJob: React.FC = () => {
                                 </button>
                             ))}
                          </div>
-                         <p className="text-xs text-gray-500">High priority jobs preempt idle resources.</p>
+                         <p className="text-xs text-gray-500">{tx('高优先级任务会抢占空闲资源。', 'High priority jobs preempt idle resources.')}</p>
                     </div>
 
                     <div className="space-y-4">
-                         <label className="block text-sm font-medium text-gray-700">Job Timeout (seconds)</label>
+                         <label className="block text-sm font-medium text-gray-700">{tx('任务超时（秒）', 'Job Timeout (seconds)')}</label>
                          <input
                             type="number"
                             value={timeoutSec}
@@ -1851,11 +1873,11 @@ export const CreateJob: React.FC = () => {
                             min={0}
                             step={60}
                         />
-                         <p className="text-xs text-gray-500">0 uses the platform default timeout.</p>
+                         <p className="text-xs text-gray-500">{tx('0 表示使用平台默认超时。', '0 uses the platform default timeout.')}</p>
                     </div>
 
                     <div className="space-y-4">
-                         <label className="block text-sm font-medium text-gray-700">Random Seeds</label>
+                         <label className="block text-sm font-medium text-gray-700">{tx('随机种子数', 'Random Seeds')}</label>
                          <input 
                             type="number" 
                             value={seedCount}
@@ -1864,21 +1886,21 @@ export const CreateJob: React.FC = () => {
                             min={1}
                             max={10}
                         />
-                         <p className="text-xs text-gray-500">Will launch {seedCount} trials for each configuration.</p>
+                         <p className="text-xs text-gray-500">{tx(`每个配置将启动 ${seedCount} 个 trial。`, `Will launch ${seedCount} trials for each configuration.`)}</p>
                     </div>
                 </div>
 
                 <div className="mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <h3 className="text-sm font-bold text-gray-900 mb-2">Job Summary</h3>
+                    <h3 className="text-sm font-bold text-gray-900 mb-2">{tx('任务摘要', 'Job Summary')}</h3>
                     <ul className="text-sm text-gray-600 space-y-1">
-                        <li>Project: <span className="font-mono text-gray-900">{projects.find(p => p.id === selectedProject)?.name}</span></li>
-                        <li>Environment: <span className="font-mono text-gray-900">{selectedEnv} / {selectedEnvVersion} / {selectedMap}</span></li>
-                        <li>Launch Mode: <span className="font-mono text-gray-900">{launchMode === 'quick' ? 'Quick Run' : 'Template'}</span></li>
+                        <li>{tx('项目', 'Project')}: <span className="font-mono text-gray-900">{projects.find(p => p.id === selectedProject)?.name}</span></li>
+                        <li>{tx('环境', 'Environment')}: <span className="font-mono text-gray-900">{selectedEnv} / {selectedEnvVersion} / {selectedMap}</span></li>
+                        <li>{tx('启动模式', 'Launch Mode')}: <span className="font-mono text-gray-900">{launchMode === 'quick' ? tx('快速运行', 'Quick Run') : tx('模板', 'Template')}</span></li>
                         {launchMode === 'template' ? (
                           <>
-                            <li>Template: <span className="font-mono text-gray-900">{templates.find(t => t.id === selectedTemplate)?.name}</span></li>
-                            <li>Template Version: <span className="font-mono text-gray-900">{templateVersions.find(v => v.id === selectedTemplateVersionId)?.version || '-'}</span></li>
-                            <li>Algorithm: <span className="font-mono text-gray-900">
+                            <li>{tx('模板', 'Template')}: <span className="font-mono text-gray-900">{templates.find(t => t.id === selectedTemplate)?.name}</span></li>
+                            <li>{tx('模板版本', 'Template Version')}: <span className="font-mono text-gray-900">{templateVersions.find(v => v.id === selectedTemplateVersionId)?.version || '-'}</span></li>
+                            <li>{tx('算法', 'Algorithm')}: <span className="font-mono text-gray-900">
                               {(() => {
                                 const version = templateVersions.find(v => v.id === selectedTemplateVersionId);
                                 if (!version?.algoVersionId) return '-';
@@ -1890,8 +1912,8 @@ export const CreateJob: React.FC = () => {
                           </>
                         ) : (
                           <>
-                            <li>Template: <span className="font-mono text-gray-900">Quick Run (auto)</span></li>
-                            <li>Algorithm: <span className="font-mono text-gray-900">
+                            <li>{tx('模板', 'Template')}: <span className="font-mono text-gray-900">{tx('Quick Run（自动）', 'Quick Run (auto)')}</span></li>
+                            <li>{tx('算法', 'Algorithm')}: <span className="font-mono text-gray-900">
                               {(() => {
                                 const algo = algos.find(a => a.id === selectedAlgoId);
                                 const version = (algoVersions[selectedAlgoId] || []).find(v => v.id === selectedAlgoVersionId);
@@ -1901,22 +1923,22 @@ export const CreateJob: React.FC = () => {
                             </span></li>
                           </>
                         )}
-                        <li>Auto Eval: <span className="font-mono text-gray-900">
+                        <li>{tx('自动评估', 'Auto Eval')}: <span className="font-mono text-gray-900">
                           {autoEvalEnabled
-                            ? evalProtocols.find(p => p.id === autoEvalProtocolId)?.name || autoEvalProtocolId || 'Enabled'
-                            : 'Off'}
+                            ? evalProtocols.find(p => p.id === autoEvalProtocolId)?.name || autoEvalProtocolId || tx('已启用', 'Enabled')
+                            : tx('关闭', 'Off')}
                         </span></li>
-                        <li>Dataset: <span className="font-mono text-gray-900">
+                        <li>{tx('数据集', 'Dataset')}: <span className="font-mono text-gray-900">
                           {selectedDatasetId
                             ? datasets.find(d => d.id === selectedDatasetId)?.name || selectedDatasetId
-                            : 'None'}
+                            : tx('无', 'None')}
                         </span></li>
-                        <li>Job Type: <span className={`font-bold ${isSweepMode ? 'text-purple-600' : 'text-gray-900'}`}>{isSweepMode ? 'Hyperparameter Sweep' : 'Single Run'}</span></li>
-                        <li>Timeout: <span className="font-mono text-gray-900">{timeoutSec > 0 ? `${timeoutSec}s` : 'Default'}</span></li>
-                        <li>Total Jobs: <span className="font-bold text-gray-900">
-                            {sweepCombinations} Configs × {seedCount} Seeds = {sweepCombinations * seedCount} Trials
+                        <li>{tx('任务类型', 'Job Type')}: <span className={`font-bold ${isSweepMode ? 'text-purple-600' : 'text-gray-900'}`}>{isSweepMode ? tx('超参数搜索', 'Hyperparameter Sweep') : tx('单次运行', 'Single Run')}</span></li>
+                        <li>{tx('超时', 'Timeout')}: <span className="font-mono text-gray-900">{timeoutSec > 0 ? `${timeoutSec}s` : tx('默认', 'Default')}</span></li>
+                        <li>{tx('任务总数', 'Total Jobs')}: <span className="font-bold text-gray-900">
+                            {sweepCombinations} {tx('个配置', 'Configs')} × {seedCount} {tx('个种子', 'Seeds')} = {sweepCombinations * seedCount} {tx('个试验', 'Trials')}
                         </span></li>
-                        <li>Est. Compute: <span className="font-mono text-gray-900">{(sweepCombinations * seedCount * gpuCount)} GPUs requested</span></li>
+                        <li>{tx('预估算力', 'Est. Compute')}: <span className="font-mono text-gray-900">{(sweepCombinations * seedCount * gpuCount)} {tx('张 GPU 申请', 'GPUs requested')}</span></li>
                     </ul>
                 </div>
             </div>
@@ -1930,7 +1952,7 @@ export const CreateJob: React.FC = () => {
             disabled={currentStep === 0}
             className="px-6 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 font-medium disabled:opacity-50 hover:bg-gray-50"
         >
-            Back
+            {tx('返回', 'Back')}
         </button>
         <button 
             onClick={handleNext}
@@ -1940,11 +1962,11 @@ export const CreateJob: React.FC = () => {
             {currentStep === steps.length - 1 ? (
                 <>
                     <PlayCircle className="w-5 h-5 mr-2" />
-                    {isSubmitting ? 'Submitting...' : 'Launch Job'}
+                    {isSubmitting ? tx('提交中...', 'Submitting...') : tx('启动任务', 'Launch Job')}
                 </>
             ) : (
                 <>
-                    Next <ChevronRight className="w-5 h-5 ml-1" />
+                    {tx('下一步', 'Next')} <ChevronRight className="w-5 h-5 ml-1" />
                 </>
             )}
         </button>

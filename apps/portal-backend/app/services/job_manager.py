@@ -1,7 +1,7 @@
 import json
 import queue
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 import httpx
 from pathlib import Path
@@ -327,26 +327,46 @@ class JobManager:
                     else None,
                 }
 
+            def eval_entrypoint_requires_model(config: Dict) -> bool:
+                algo_cfg = config.get("algo") if isinstance(config, dict) else None
+                if not isinstance(algo_cfg, dict):
+                    return False
+                entrypoint = str(algo_cfg.get("entrypoint") or "").lower()
+                # Real policy evaluators require a resolved local checkpoint path.
+                return "sb3_eval" in entrypoint or "marl_eval" in entrypoint
+
             # --- Inject Model Path for Eval Jobs ---
             # If this is an Eval run, we need to resolve the policySnapshotId to a real path
             if run.type == "EVAL" and isinstance(run.config, dict):
                 snapshot_id = run.config.get("policySnapshotId")
+                model_resolved = bool(run.config.get("modelPath"))
                 if snapshot_id:
                     ckpt = db.query(models.Checkpoint).filter(models.Checkpoint.id == snapshot_id).first()
                     if ckpt:
                         parent_run_id = ckpt.run_id
+                        parent_run = db.query(models.Run).filter(models.Run.id == parent_run_id).first()
                         eval_run_dir = paths.run_root(run.id)
                         eval_run_dir.mkdir(parents=True, exist_ok=True)
                         local_model_path = download_model_artifact(parent_run_id, snapshot_id, eval_run_dir)
+                        policy_meta = resolve_policy_meta(parent_run)
+                        run.config["policyMeta"] = policy_meta
                         if local_model_path:
                             run.config["modelPath"] = str(local_model_path)
-                            policy_meta = resolve_policy_meta(db.query(models.Run).filter(models.Run.id == parent_run_id).first())
-                            run.config["policyMeta"] = policy_meta
+                            model_resolved = True
                             if policy_meta.get("family") == "marl":
                                 run.config.setdefault("algo", {})
                                 run.config["algo"]["entrypoint"] = "algorithms.marl_eval:evaluate"
                                 run.config["algo"]["name"] = "MARL Evaluator"
                             config_updated = True
+                        else:
+                            config_updated = True
+
+                if eval_entrypoint_requires_model(run.config) and not model_resolved:
+                    job.status = "FAILED"
+                    job.message = "eval_model_artifact_missing"
+                    run.status = "FAILED"
+                    db.commit()
+                    return
 
             # --- Inject Protocol & Snapshot Paths for Matrix Jobs ---
             if run.type == "MATRIX" and isinstance(run.config, dict):
@@ -693,6 +713,49 @@ class JobManager:
                     # Check for Eval outputs
                     eval_dir = run_dir / "eval"
                     if eval_dir.exists():
+                        replay_files = list(eval_dir.glob("*.replay.json"))
+                        if not replay_files:
+                            summary_payload = {}
+                            results_payload = []
+                            summary_path = eval_dir / "summary.json"
+                            results_path = eval_dir / "results.json"
+                            if summary_path.exists():
+                                try:
+                                    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+                                except Exception:
+                                    summary_payload = {}
+                            if results_path.exists():
+                                try:
+                                    parsed = json.loads(results_path.read_text(encoding="utf-8"))
+                                    if isinstance(parsed, list):
+                                        results_payload = parsed
+                                except Exception:
+                                    results_payload = []
+                            replay_payload = {
+                                "kind": "rl_eval_replay_v1",
+                                "title": f"Eval replay for run {run.id[:8]}",
+                                "runId": run.id,
+                                "summary": summary_payload,
+                                "events": [
+                                    {
+                                        "t": idx,
+                                        "type": "episode",
+                                        "seed": item.get("seed"),
+                                        "episode": item.get("episode"),
+                                        "return": item.get("return"),
+                                        "win": item.get("win"),
+                                    }
+                                    for idx, item in enumerate(results_payload[:32])
+                                    if isinstance(item, dict)
+                                ],
+                            }
+                            try:
+                                (eval_dir / "eval_matchup_overview.replay.json").write_text(
+                                    json.dumps(replay_payload, indent=2),
+                                    encoding="utf-8",
+                                )
+                            except Exception:
+                                pass
                         for item in eval_dir.glob("*.json"):
                             try:
                                 content = item.read_text(encoding="utf-8")
@@ -889,7 +952,7 @@ class JobManager:
                     "run_id": run.id,
                     "status": final_status,
                     "exit_code": exit_code,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 })
             except Exception:
                 pass
@@ -931,7 +994,7 @@ class JobManager:
             db.refresh(project)
         eval_run = models.Run(
             project_id=project.id,
-            name=f"eval-{protocol_id}-{datetime.utcnow().strftime('%H%M%S')}",
+            name=f"eval-{protocol_id}-{datetime.now(timezone.utc).strftime('%H%M%S')}",
             type="EVAL",
             status="PENDING",
             algo="eval",
