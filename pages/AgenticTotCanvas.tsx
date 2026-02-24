@@ -385,6 +385,34 @@ export const AgenticTotCanvas: React.FC = () => {
     };
   }, [visibleNodes, visibleNodeMap]);
 
+  const searchReplayEvents = useMemo(() => {
+    const replayRows: SearchReplayEvent[] = [];
+    const eventRows = Array.isArray(detail?.events) ? detail?.events : [];
+    eventRows.forEach((row, idx) => {
+      const event = String((row as any)?.event || '');
+      if (event !== 'search_node_selected' && event !== 'tot_node_expanded') return;
+      const payload = ((row as any)?.payload || {}) as Record<string, unknown>;
+      const nodeId = String(payload.nodeId || payload.node_id || '');
+      if (!nodeId) return;
+      replayRows.push({
+        idx,
+        event,
+        ts: String((row as any)?.ts || ''),
+        nodeId,
+        summary: String((row as any)?.message || event),
+      });
+    });
+    return replayRows;
+  }, [detail?.events]);
+
+  const replayActiveEvent = useMemo(() => {
+    if (searchReplayEvents.length === 0 || replayStep <= 0) return null;
+    const idx = Math.min(searchReplayEvents.length - 1, replayStep - 1);
+    return searchReplayEvents[idx] || null;
+  }, [searchReplayEvents, replayStep]);
+
+  const replayNodeId = replayActiveEvent?.nodeId || '';
+
   const focusedNodeId = useMemo(() => {
     if (selectedNodeId && visibleNodeMap.has(selectedNodeId)) return selectedNodeId;
     if (hoveredNodeId && visibleNodeMap.has(hoveredNodeId)) return hoveredNodeId;
@@ -452,34 +480,6 @@ export const AgenticTotCanvas: React.FC = () => {
       },
     ];
   }, [selectedRunId, searchStats, runStats, selectedRunSummary, detail?.status]);
-
-  const searchReplayEvents = useMemo(() => {
-    const replayRows: SearchReplayEvent[] = [];
-    const eventRows = Array.isArray(detail?.events) ? detail?.events : [];
-    eventRows.forEach((row, idx) => {
-      const event = String((row as any)?.event || '');
-      if (event !== 'search_node_selected' && event !== 'tot_node_expanded') return;
-      const payload = ((row as any)?.payload || {}) as Record<string, unknown>;
-      const nodeId = String(payload.nodeId || payload.node_id || '');
-      if (!nodeId) return;
-      replayRows.push({
-        idx,
-        event,
-        ts: String((row as any)?.ts || ''),
-        nodeId,
-        summary: String((row as any)?.message || event),
-      });
-    });
-    return replayRows;
-  }, [detail?.events]);
-
-  const replayActiveEvent = useMemo(() => {
-    if (searchReplayEvents.length === 0 || replayStep <= 0) return null;
-    const idx = Math.min(searchReplayEvents.length - 1, replayStep - 1);
-    return searchReplayEvents[idx] || null;
-  }, [searchReplayEvents, replayStep]);
-
-  const replayNodeId = replayActiveEvent?.nodeId || '';
 
   const fitGraphToViewport = useCallback(() => {
     const viewport = graphViewportRef.current;
