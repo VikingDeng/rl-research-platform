@@ -2600,6 +2600,121 @@ const summarizeAgenticRun = (detail: AgenticRunDetail): AgenticRunSummary => ({
   failureReason: (detail.registryRecord as any)?.failureReason || null,
 });
 
+const seedAgenticShowcaseRun = () => {
+  if (Object.keys(state.agenticRuns || {}).length > 0) return;
+  const idea: AgenticIdeaInput = {
+    title: 'Auto-Science Showcase Run',
+    taskGoal: 'Automatically explore and converge on a robust branch under constrained budget.',
+    environment: 'pettingzoo.smac_v2:3s5z',
+    dataSources: ['registry://baseline_runs', 'registry://historical_failures'],
+    successMetrics: { winRate: '>=0.62', eloLift: '>=25' },
+    budget: { gpuHours: 2, wallclockMinutes: 90 },
+    constraints: {
+      compliance: ['no_pii', 'no_external_data_push'],
+      forbiddenActions: ['data_exfiltration'],
+      allowNetwork: false,
+      allowDependencyInstall: false,
+    },
+    executionMode: 'offline_stub',
+    requestedActions: [],
+  };
+
+  const runId = 'agentic_demo_showcase';
+  const detail = makeAgenticRunDetail(runId, idea);
+  const choosePending = () =>
+    detail.totTree.find(node => String(node.status || '').toUpperCase() === 'PENDING' || String(node.status || '').toUpperCase() === 'RETRY_PENDING');
+  const nextNodeId = () => {
+    let idx = detail.totTree.length;
+    let id = `n${idx}`;
+    while (detail.totTree.some(node => node.nodeId === id)) {
+      idx += 1;
+      id = `n${idx}`;
+    }
+    return id;
+  };
+
+  for (let round = 0; round < 8; round += 1) {
+    const node = choosePending();
+    if (!node) break;
+    const ts = new Date(Date.now() - (8 - round) * 60000).toISOString();
+    const search = (((node.evidence || {}) as Record<string, unknown>).search || {}) as Record<string, unknown>;
+    const depth = Number(search.depth || 0);
+    node.status = 'SUCCEEDED';
+    node.evidence = {
+      ...(node.evidence || {}),
+      executedAt: ts,
+      mode: 'offline_stub',
+      search: {
+        ...search,
+        visits: Number(search.visits || 0) + 1,
+        selectedCount: Number(search.selectedCount || 0) + 1,
+        value: Number((0.56 + Math.random() * 0.32 - depth * 0.05).toFixed(4)),
+        frontierScore: Number((0.64 + Math.random() * 0.22).toFixed(4)),
+        depth,
+        updatedAt: ts,
+      },
+    };
+    detail.timeline.push({ ts, nodeId: node.nodeId, phase: 'executed', status: 'SUCCEEDED', cost: 0.012 });
+    detail.events.push({
+      ts,
+      event: 'search_node_selected',
+      message: `${node.nodeId} selected from frontier`,
+      payload: { nodeId: node.nodeId, depth },
+    });
+    detail.events.push({
+      ts,
+      event: 'node_succeeded',
+      message: `${node.nodeId} succeeded`,
+      payload: { nodeId: node.nodeId },
+    });
+
+    if ((node.children || []).length === 0 && depth < 2 && detail.totTree.length < 24) {
+      const childCount = depth === 0 ? 2 : 1;
+      const childIds: string[] = [];
+      for (let i = 0; i < childCount; i += 1) {
+        const child = createAgenticNode(
+          nextNodeId(),
+          i % 2 === 0 ? 'ResearchAgent' : 'EvalAgent',
+          `${node.title} · showcase branch ${i + 1}`,
+          node.nodeId,
+          depth === 0 ? 'medium' : 'low',
+          'PENDING',
+        );
+        child.hypothesis = `Showcase branch ${i + 1} for ${node.nodeId}`;
+        child.executionPlan = `Evaluate branch ${i + 1}, compare with sibling, and keep the better node.`;
+        child.expectedMetrics = { ...(node.expectedMetrics || {}) };
+        ensureNodeSearchMeta(child, depth + 1);
+        detail.totTree.push(child);
+        childIds.push(child.nodeId);
+      }
+      node.children = [...(node.children || []), ...childIds];
+      detail.events.push({
+        ts,
+        event: 'tot_node_expanded',
+        message: `${node.nodeId} expanded`,
+        payload: { nodeId: node.nodeId, childIds },
+      });
+    }
+  }
+
+  if (!detail.totTree.some(node => String(node.status || '').toUpperCase() === 'PENDING' || String(node.status || '').toUpperCase() === 'RETRY_PENDING')) {
+    detail.status = 'SUCCEEDED';
+  } else {
+    detail.status = 'RUNNING';
+  }
+  detail.updatedAt = new Date().toISOString();
+  detail.registryRecord = {
+    ...(detail.registryRecord || {}),
+    status: detail.status,
+    updatedAt: detail.updatedAt,
+  };
+  refreshAgenticSearchMeta(detail);
+  detail.searchStats = computeAgenticSearchStats(detail);
+  state.agenticRuns[runId] = detail;
+};
+
+seedAgenticShowcaseRun();
+
 export const resetMockState = () => {
   if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
     blobCache.forEach(url => {
@@ -2610,6 +2725,7 @@ export const resetMockState = () => {
   }
   blobCache.clear();
   state = makeInitialState();
+  seedAgenticShowcaseRun();
 };
 
 export const createMockApi = (_apiBaseUrl: string) => ({

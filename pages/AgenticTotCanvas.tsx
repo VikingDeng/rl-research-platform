@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Bot, Play, RefreshCcw, ShieldAlert, Sparkles, WandSparkles } from 'lucide-react';
+import { ArrowRight, Bot, ChevronDown, ChevronUp, Pause, Play, RefreshCcw, ShieldAlert, SlidersHorizontal, Sparkles, WandSparkles } from 'lucide-react';
 import { api, isDemoMode } from '../services/api';
 import { useI18n } from '../services/i18n';
 import type { AgenticIdeaInput, AgenticNode, AgenticRunDetail, AgenticRunSummary } from '../types';
@@ -10,6 +10,14 @@ type GraphLayoutPoint = {
   x: number;
   y: number;
   depth: number;
+};
+
+type SearchReplayEvent = {
+  idx: number;
+  event: string;
+  ts: string;
+  nodeId: string;
+  summary: string;
 };
 
 const statusBadgeClass = (status: string) => {
@@ -160,6 +168,10 @@ export const AgenticTotCanvas: React.FC = () => {
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [hoveredNodeId, setHoveredNodeId] = useState('');
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Record<string, boolean>>({});
+  const [presentationMode, setPresentationMode] = useState(true);
+  const [showAdvancedControls, setShowAdvancedControls] = useState(false);
+  const [replayStep, setReplayStep] = useState(0);
+  const [replayPlaying, setReplayPlaying] = useState(false);
   const graphViewportRef = useRef<HTMLDivElement | null>(null);
 
   const selectedRunSummary = useMemo(() => runs.find(item => item.runId === selectedRunId) || null, [runs, selectedRunId]);
@@ -193,7 +205,16 @@ export const AgenticTotCanvas: React.FC = () => {
     setLoadingRun(true);
     try {
       const payload = await api.getAgenticRun(runId);
-      setDetail(payload);
+      setDetail(prev => {
+        if (!prev) return payload;
+        const unchanged =
+          String(prev.updatedAt || '') === String(payload.updatedAt || '')
+          && String(prev.status || '') === String(payload.status || '')
+          && (prev.totTree?.length || 0) === (payload.totTree?.length || 0)
+          && (prev.events?.length || 0) === (payload.events?.length || 0)
+          && (prev.timeline?.length || 0) === (payload.timeline?.length || 0);
+        return unchanged ? prev : payload;
+      });
     } catch (error) {
       setMessage(toErrorMessage(error));
       setDetail(null);
@@ -216,19 +237,23 @@ export const AgenticTotCanvas: React.FC = () => {
 
   useEffect(() => {
     if (!selectedRunId) return;
+    if (autoExploring) return;
     const status = String(detail?.status || '').toUpperCase();
     if (status !== 'RUNNING' && status !== 'PENDING' && status !== 'BLOCKED') return;
+    const intervalMs = status === 'BLOCKED' ? 10000 : 2500;
     const timer = window.setInterval(() => {
       loadRun(selectedRunId).catch(() => undefined);
-    }, 2500);
+    }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [selectedRunId, detail?.status, loadRun]);
+  }, [selectedRunId, detail?.status, loadRun, autoExploring]);
 
   useEffect(() => {
     if (selectedRunId) {
       setSelectedNodeId('');
       setHoveredNodeId('');
       setCollapsedNodeIds({});
+      setReplayStep(0);
+      setReplayPlaying(false);
     }
   }, [selectedRunId]);
 
@@ -363,8 +388,9 @@ export const AgenticTotCanvas: React.FC = () => {
   const focusedNodeId = useMemo(() => {
     if (selectedNodeId && visibleNodeMap.has(selectedNodeId)) return selectedNodeId;
     if (hoveredNodeId && visibleNodeMap.has(hoveredNodeId)) return hoveredNodeId;
+    if (replayNodeId && visibleNodeMap.has(replayNodeId)) return replayNodeId;
     return visibleNodes[0]?.nodeId || '';
-  }, [selectedNodeId, hoveredNodeId, visibleNodes, visibleNodeMap]);
+  }, [selectedNodeId, hoveredNodeId, replayNodeId, visibleNodes, visibleNodeMap]);
 
   const focusedNode = useMemo(() => (focusedNodeId ? nodeById.get(focusedNodeId) || null : null), [focusedNodeId, nodeById]);
 
@@ -427,6 +453,33 @@ export const AgenticTotCanvas: React.FC = () => {
     ];
   }, [selectedRunId, searchStats, runStats, selectedRunSummary, detail?.status]);
 
+  const searchReplayEvents = useMemo(() => {
+    const rows: SearchReplayEvent[] = [];
+    (detail?.events || []).forEach((row, idx) => {
+      const event = String((row as any)?.event || '');
+      if (event !== 'search_node_selected' && event !== 'tot_node_expanded') return;
+      const payload = ((row as any)?.payload || {}) as Record<string, unknown>;
+      const nodeId = String(payload.nodeId || payload.node_id || '');
+      if (!nodeId) return;
+      rows.push({
+        idx,
+        event,
+        ts: String((row as any)?.ts || ''),
+        nodeId,
+        summary: String((row as any)?.message || event),
+      });
+    });
+    return rows;
+  }, [detail?.events]);
+
+  const replayActiveEvent = useMemo(() => {
+    if (searchReplayEvents.length === 0 || replayStep <= 0) return null;
+    const idx = Math.min(searchReplayEvents.length - 1, replayStep - 1);
+    return searchReplayEvents[idx] || null;
+  }, [searchReplayEvents, replayStep]);
+
+  const replayNodeId = replayActiveEvent?.nodeId || '';
+
   const fitGraphToViewport = useCallback(() => {
     const viewport = graphViewportRef.current;
     if (!viewport) return;
@@ -452,9 +505,46 @@ export const AgenticTotCanvas: React.FC = () => {
     });
   }, [graph.layout, graph.cardWidth, graphZoomPct]);
 
+  const setReplayStepAndFocus = useCallback((nextStep: number, behavior: ScrollBehavior = 'smooth') => {
+    const normalized = Math.max(0, Math.min(searchReplayEvents.length, nextStep));
+    setReplayStep(normalized);
+    if (normalized <= 0) return;
+    const event = searchReplayEvents[Math.min(searchReplayEvents.length - 1, normalized - 1)];
+    if (!event?.nodeId) return;
+    setSelectedNodeId(event.nodeId);
+    centerNodeInViewport(event.nodeId, behavior);
+  }, [searchReplayEvents, centerNodeInViewport]);
+
   const toggleNodeCollapsed = useCallback((nodeId: string) => {
     setCollapsedNodeIds(prev => ({ ...prev, [nodeId]: !prev[nodeId] }));
   }, []);
+
+  useEffect(() => {
+    if (searchReplayEvents.length === 0) {
+      setReplayStep(0);
+      setReplayPlaying(false);
+      return;
+    }
+    setReplayStep(prev => {
+      if (prev <= 0) return searchReplayEvents.length;
+      return Math.min(prev, searchReplayEvents.length);
+    });
+  }, [searchReplayEvents.length]);
+
+  useEffect(() => {
+    if (!replayPlaying) return;
+    if (searchReplayEvents.length === 0) return;
+    const timer = window.setInterval(() => {
+      setReplayStep(prev => {
+        if (prev >= searchReplayEvents.length) {
+          setReplayPlaying(false);
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, 850);
+    return () => window.clearInterval(timer);
+  }, [replayPlaying, searchReplayEvents.length]);
 
   useEffect(() => {
     if (visibleNodes.length === 0) {
@@ -465,6 +555,14 @@ export const AgenticTotCanvas: React.FC = () => {
       setSelectedNodeId(visibleNodes[0].nodeId);
     }
   }, [visibleNodes, selectedNodeId]);
+
+  useEffect(() => {
+    if (!replayActiveEvent?.nodeId) return;
+    if (!visibleNodeMap.has(replayActiveEvent.nodeId)) return;
+    if (!replayPlaying) return;
+    setSelectedNodeId(replayActiveEvent.nodeId);
+    centerNodeInViewport(replayActiveEvent.nodeId, 'smooth');
+  }, [replayActiveEvent?.idx, replayActiveEvent?.nodeId, replayPlaying, visibleNodeMap, centerNodeInViewport]);
 
   const runExecutionAction = async (mode: 'next' | 'all' | 'recover') => {
     if (!selectedRunId) return;
@@ -562,6 +660,20 @@ export const AgenticTotCanvas: React.FC = () => {
                 {selectedRunSummary.status}
               </div>
             )}
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !presentationMode;
+                  setPresentationMode(next);
+                  if (next) setShowAdvancedControls(false);
+                }}
+                className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <SlidersHorizontal className="mr-1 h-3.5 w-3.5" />
+                {presentationMode ? tx('切到专家模式', 'Switch to Expert') : tx('切到评委模式', 'Switch to Judge')}
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -629,54 +741,112 @@ export const AgenticTotCanvas: React.FC = () => {
             <Play className="mr-1.5 h-4 w-4" />
             {tx('Search Step', 'Search Step')}
           </button>
-          <button
-            type="button"
-            onClick={() => runExecutionAction('all')}
-            disabled={!selectedRunId || isActionBusy}
-            className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {tx('Auto Search', 'Auto Search')}
-          </button>
-          <button
-            type="button"
-            onClick={() => runExecutionAction('recover')}
-            disabled={!selectedRunId || isActionBusy}
-            className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-          >
-            <ShieldAlert className="mr-1.5 h-4 w-4" />
-            {tx('恢复', 'Recover')}
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/agentic/new')}
-            className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
-          >
-            {tx('Idea 输入', 'Idea Input')}
-          </button>
-          <button
-            type="button"
-            onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
-            disabled={!selectedRunId}
-            className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-          >
-            <Bot className="mr-1.5 h-4 w-4" />
-            {tx('Agent 面板', 'Agent Panel')}
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/agentic/classic')}
-            className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-          >
-            <WandSparkles className="mr-1.5 h-4 w-4" />
-            {tx('经典控制台', 'Classic Console')}
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/agentic/workbench')}
-            className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
-          >
-            {tx('探索洞察', 'Exploration Insights')}
-          </button>
+          {!presentationMode && (
+            <>
+              <button
+                type="button"
+                onClick={() => runExecutionAction('all')}
+                disabled={!selectedRunId || isActionBusy}
+                className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {tx('Auto Search', 'Auto Search')}
+              </button>
+              <button
+                type="button"
+                onClick={() => runExecutionAction('recover')}
+                disabled={!selectedRunId || isActionBusy}
+                className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+              >
+                <ShieldAlert className="mr-1.5 h-4 w-4" />
+                {tx('恢复', 'Recover')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/agentic/new')}
+                className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
+              >
+                {tx('Idea 输入', 'Idea Input')}
+              </button>
+              <button
+                type="button"
+                onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
+                disabled={!selectedRunId}
+                className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+              >
+                <Bot className="mr-1.5 h-4 w-4" />
+                {tx('Agent 面板', 'Agent Panel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/agentic/classic')}
+                className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                <WandSparkles className="mr-1.5 h-4 w-4" />
+                {tx('经典控制台', 'Classic Console')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/agentic/workbench')}
+                className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
+              >
+                {tx('探索洞察', 'Exploration Insights')}
+              </button>
+            </>
+          )}
+          {presentationMode && (
+            <button
+              type="button"
+              onClick={() => setShowAdvancedControls(prev => !prev)}
+              className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              {showAdvancedControls ? <ChevronUp className="mr-1.5 h-4 w-4" /> : <ChevronDown className="mr-1.5 h-4 w-4" />}
+              {showAdvancedControls ? tx('收起高级入口', 'Hide Advanced') : tx('展开高级入口', 'Show Advanced')}
+            </button>
+          )}
+          {presentationMode && showAdvancedControls && (
+            <>
+              <button
+                type="button"
+                onClick={() => runExecutionAction('all')}
+                disabled={!selectedRunId || isActionBusy}
+                className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {tx('Auto Search', 'Auto Search')}
+              </button>
+              <button
+                type="button"
+                onClick={() => runExecutionAction('recover')}
+                disabled={!selectedRunId || isActionBusy}
+                className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+              >
+                <ShieldAlert className="mr-1.5 h-4 w-4" />
+                {tx('恢复', 'Recover')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/agentic/new')}
+                className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
+              >
+                {tx('Idea 输入', 'Idea Input')}
+              </button>
+              <button
+                type="button"
+                onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
+                disabled={!selectedRunId}
+                className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+              >
+                <Bot className="mr-1.5 h-4 w-4" />
+                {tx('Agent 面板', 'Agent Panel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/agentic/workbench')}
+                className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
+              >
+                {tx('探索洞察', 'Exploration Insights')}
+              </button>
+            </>
+          )}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
@@ -707,21 +877,84 @@ export const AgenticTotCanvas: React.FC = () => {
         </div>
       </section>
 
+      {searchReplayEvents.length > 0 && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-800">{tx('探索回放', 'Exploration Replay')}</div>
+            <div className="text-xs text-slate-500">
+              {tx('拖动滑杆可回看树是如何被逐步扩展的。', 'Use the slider to replay how the tree expanded step by step.')}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (replayPlaying) {
+                  setReplayPlaying(false);
+                  return;
+                }
+                if (replayStep >= searchReplayEvents.length) {
+                  setReplayStepAndFocus(1, 'auto');
+                }
+                setReplayPlaying(true);
+              }}
+              className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {replayPlaying ? <Pause className="mr-1.5 h-3.5 w-3.5" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
+              {replayPlaying ? tx('暂停', 'Pause') : tx('播放', 'Play')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setReplayPlaying(false);
+                setReplayStepAndFocus(0, 'auto');
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50"
+            >
+              {tx('重置', 'Reset')}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={searchReplayEvents.length}
+              step={1}
+              value={replayStep}
+              onChange={e => {
+                setReplayPlaying(false);
+                setReplayStepAndFocus(Number(e.target.value || 0), 'auto');
+              }}
+              className="min-w-[16rem] flex-1 accent-indigo-600"
+            />
+            <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
+              {replayStep}/{searchReplayEvents.length}
+            </span>
+          </div>
+          {replayActiveEvent && (
+            <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+              <div className="font-semibold">{replayActiveEvent.event} · {replayActiveEvent.nodeId}</div>
+              <div className="mt-0.5 text-indigo-800">{replayActiveEvent.summary}</div>
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
-              <span>{graphZoomPct}%</span>
-              <input
-                type="range"
-                min={65}
-                max={160}
-                step={5}
-                value={graphZoomPct}
-                onChange={e => setGraphZoomPct(Number(e.target.value || 100))}
-                className="w-24 accent-blue-600"
-              />
-            </label>
+            {!presentationMode && (
+              <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                <span>{graphZoomPct}%</span>
+                <input
+                  type="range"
+                  min={65}
+                  max={160}
+                  step={5}
+                  value={graphZoomPct}
+                  onChange={e => setGraphZoomPct(Number(e.target.value || 100))}
+                  className="w-24 accent-blue-600"
+                />
+              </label>
+            )}
             <button
               type="button"
               onClick={fitGraphToViewport}
@@ -817,6 +1050,7 @@ export const AgenticTotCanvas: React.FC = () => {
                 const nodeTitle = splitLines(node.title || node.nodeId, 20, 2);
                 const normStatus = String(node.status || '').toUpperCase();
                 const isFocused = node.nodeId === focusedNodeId;
+                const isReplayActive = replayNodeId === node.nodeId;
                 const isRunning = normStatus === 'RUNNING';
                 const riskLabel = String(node.risk || 'low').toLowerCase();
                 const hasChildren = (filteredChildCountByParent.get(node.nodeId) || 0) > 0;
@@ -845,8 +1079,8 @@ export const AgenticTotCanvas: React.FC = () => {
                       height={graph.cardHeight}
                       rx={14}
                       fill={cardBg}
-                      stroke={isFocused ? 'rgba(37,99,235,.9)' : 'rgba(148,163,184,.7)'}
-                      strokeWidth={isFocused ? 1.9 : 1.2}
+                      stroke={isReplayActive ? 'rgba(99,102,241,.92)' : (isFocused ? 'rgba(37,99,235,.9)' : 'rgba(148,163,184,.7)')}
+                      strokeWidth={isReplayActive ? 2.2 : (isFocused ? 1.9 : 1.2)}
                       filter={isFocused ? 'url(#tree-node-focus-canvas)' : 'url(#tree-node-shadow-canvas)'}
                     />
                     <circle cx={12} cy={13} r={3.5} fill={statusDot(node.status)}>
