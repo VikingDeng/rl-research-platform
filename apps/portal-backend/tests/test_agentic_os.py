@@ -238,6 +238,11 @@ def test_f2_search_expansion_generates_multilevel_tot(client):
     assert _max_depth(tot) >= 2
     assert any(evt["event"] == "search_node_selected" for evt in detail["events"])
     assert any(evt["event"] == "tot_node_expanded" for evt in detail["events"])
+    search_stats = detail.get("searchStats") or {}
+    assert int(search_stats.get("maxDepth") or 0) >= 2
+    assert int(search_stats.get("expandedNodes") or 0) >= 1
+    assert int(search_stats.get("selectionEvents") or 0) >= 1
+    assert float(search_stats.get("explorationCoverage") or 0.0) > 0
 
 
 def test_f2_sub_agent_spawn_and_nested_chain(client):

@@ -162,6 +162,22 @@ export type AgenticContractReport = {
   missing: string[];
 };
 
+export type AgenticSearchStats = {
+  totalNodes: number;
+  rootNodes: number;
+  maxDepth: number;
+  expandedNodes: number;
+  visitedNodes: number;
+  pendingNodes: number;
+  avgBranchingFactor: number;
+  avgFrontierScore: number;
+  avgValue: number;
+  totalVisits: number;
+  selectionEvents: number;
+  expansionEvents: number;
+  explorationCoverage: number;
+};
+
 export type AgenticMatrixCell = {
   row: string;
   col: string;
@@ -213,6 +229,7 @@ export type AgenticRunDetail = {
   events: Array<Record<string, unknown>>;
   pendingApprovals: Array<Record<string, unknown>>;
   contract: AgenticContractReport;
+  searchStats: AgenticSearchStats;
   matrix?: AgenticMatrix | null;
   registryRecord: Record<string, unknown>;
   reproBundle?: Record<string, unknown> | null;

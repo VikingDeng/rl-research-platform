@@ -156,6 +156,22 @@ class AgenticRunSummary(APIModel):
     failure_reason: Optional[str] = None
 
 
+class AgenticSearchStats(APIModel):
+    total_nodes: int = 0
+    root_nodes: int = 0
+    max_depth: int = 0
+    expanded_nodes: int = 0
+    visited_nodes: int = 0
+    pending_nodes: int = 0
+    avg_branching_factor: float = 0.0
+    avg_frontier_score: float = 0.0
+    avg_value: float = 0.0
+    total_visits: int = 0
+    selection_events: int = 0
+    expansion_events: int = 0
+    exploration_coverage: float = 0.0
+
+
 class AgenticRunDetail(APIModel):
     run_id: str
     status: str
@@ -171,6 +187,7 @@ class AgenticRunDetail(APIModel):
     events: List[Dict[str, Any]] = Field(default_factory=list)
     pending_approvals: List[Dict[str, Any]] = Field(default_factory=list)
     contract: AgenticContractReport
+    search_stats: AgenticSearchStats = Field(default_factory=AgenticSearchStats)
     matrix: Optional[Dict[str, Any]] = None
     registry_record: Dict[str, Any] = Field(default_factory=dict)
     repro_bundle: Optional[Dict[str, Any]] = None

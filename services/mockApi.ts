@@ -12,6 +12,7 @@ import {
   type AgenticRunReportResponse,
   type AgenticRunCreateResponse,
   type AgenticRunDetail,
+  type AgenticSearchStats,
   type AgenticRunSummary,
   type AgenticSubAgentListResponse,
   type AgenticSpecValidationResponse,
@@ -1764,6 +1765,129 @@ const createAgenticNode = (
   children: [],
 });
 
+const ensureNodeSearchMeta = (node: AgenticNode, depth: number) => {
+  const evidence = (node.evidence || {}) as Record<string, unknown>;
+  const search = ((evidence.search as Record<string, unknown>) || {}) as Record<string, unknown>;
+  const visits = Number(search.visits || 0);
+  const selectedCount = Number(search.selectedCount || 0);
+  const value = Number(search.value || 0);
+  const frontierScore = Number(search.frontierScore || 0);
+  node.evidence = {
+    ...evidence,
+    search: {
+      visits: Number.isFinite(visits) ? visits : 0,
+      value: Number.isFinite(value) ? value : 0,
+      expanded: Boolean(search.expanded),
+      selectedCount: Number.isFinite(selectedCount) ? selectedCount : 0,
+      frontierScore: Number.isFinite(frontierScore) ? frontierScore : 0,
+      depth,
+      updatedAt: search.updatedAt || new Date().toISOString(),
+    },
+  };
+};
+
+const refreshAgenticSearchMeta = (detail: AgenticRunDetail) => {
+  const byId = new Map(detail.totTree.map(node => [node.nodeId, node]));
+  const depthMemo = new Map<string, number>();
+  const resolveDepth = (nodeId: string): number => {
+    if (depthMemo.has(nodeId)) return depthMemo.get(nodeId) || 0;
+    const node = byId.get(nodeId);
+    if (!node) return 0;
+    const parentId = node.parentId || null;
+    if (!parentId || !byId.has(parentId)) {
+      depthMemo.set(nodeId, 0);
+      return 0;
+    }
+    const depth = resolveDepth(parentId) + 1;
+    depthMemo.set(nodeId, depth);
+    return depth;
+  };
+  detail.totTree.forEach(node => {
+    ensureNodeSearchMeta(node, resolveDepth(node.nodeId));
+  });
+};
+
+const computeAgenticSearchStats = (detail: AgenticRunDetail): AgenticSearchStats => {
+  const nodes = detail.totTree || [];
+  if (nodes.length === 0) {
+    return {
+      totalNodes: 0,
+      rootNodes: 0,
+      maxDepth: 0,
+      expandedNodes: 0,
+      visitedNodes: 0,
+      pendingNodes: 0,
+      avgBranchingFactor: 0,
+      avgFrontierScore: 0,
+      avgValue: 0,
+      totalVisits: 0,
+      selectionEvents: 0,
+      expansionEvents: 0,
+      explorationCoverage: 0,
+    };
+  }
+
+  const byId = new Map(nodes.map(node => [node.nodeId, node]));
+  const childCount = new Map<string, number>();
+  let rootNodes = 0;
+  let expandedNodes = 0;
+  let visitedNodes = 0;
+  let pendingNodes = 0;
+  let totalVisits = 0;
+  let frontierSum = 0;
+  let valueSum = 0;
+  let maxDepth = 0;
+
+  nodes.forEach(node => {
+    const parentId = node.parentId || null;
+    if (!parentId || !byId.has(parentId)) {
+      rootNodes += 1;
+    } else {
+      childCount.set(parentId, (childCount.get(parentId) || 0) + 1);
+    }
+
+    const status = String(node.status || '').toUpperCase();
+    if (status === 'PENDING' || status === 'RETRY_PENDING' || status === 'RUNNING') {
+      pendingNodes += 1;
+    }
+
+    const search = ((node.evidence || {}) as Record<string, unknown>).search as Record<string, unknown> | undefined;
+    const visits = Number(search?.visits || 0);
+    const value = Number(search?.value || 0);
+    const frontier = Number(search?.frontierScore || 0);
+    const depth = Number(search?.depth || 0);
+    if (Number.isFinite(visits) && visits > 0) visitedNodes += 1;
+    if (Boolean(search?.expanded)) expandedNodes += 1;
+    totalVisits += Number.isFinite(visits) ? visits : 0;
+    frontierSum += Number.isFinite(frontier) ? frontier : 0;
+    valueSum += Number.isFinite(value) ? value : 0;
+    if (Number.isFinite(depth)) maxDepth = Math.max(maxDepth, depth);
+  });
+
+  const branchRows = Array.from(childCount.values()).filter(count => count > 0);
+  const avgBranchingFactor = branchRows.length > 0 ? branchRows.reduce((acc, cur) => acc + cur, 0) / branchRows.length : 0;
+  const avgFrontierScore = frontierSum / Math.max(1, nodes.length);
+  const avgValue = valueSum / Math.max(1, nodes.length);
+  const selectionEvents = (detail.events || []).filter(event => String((event as any).event || '') === 'search_node_selected').length;
+  const expansionEvents = (detail.events || []).filter(event => String((event as any).event || '') === 'tot_node_expanded').length;
+
+  return {
+    totalNodes: nodes.length,
+    rootNodes,
+    maxDepth,
+    expandedNodes,
+    visitedNodes,
+    pendingNodes,
+    avgBranchingFactor: Number(avgBranchingFactor.toFixed(4)),
+    avgFrontierScore: Number(avgFrontierScore.toFixed(4)),
+    avgValue: Number(avgValue.toFixed(4)),
+    totalVisits,
+    selectionEvents,
+    expansionEvents,
+    explorationCoverage: Number((visitedNodes / Math.max(1, nodes.length)).toFixed(4)),
+  };
+};
+
 const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const parseMetricTarget = (raw: unknown): number | null => {
@@ -2196,8 +2320,7 @@ const makeAgenticRunDetail = (runId: string, idea: AgenticIdeaInput): AgenticRun
   const now = new Date().toISOString();
   const drafts = buildAgenticDraftsFromIdea(idea);
   const tree = buildAgenticTotTree(idea, drafts);
-
-  return {
+  const detail: AgenticRunDetail = {
     runId,
     status: 'PENDING',
     createdAt: now,
@@ -2238,6 +2361,21 @@ const makeAgenticRunDetail = (runId: string, idea: AgenticIdeaInput): AgenticRun
     ],
     pendingApprovals: [],
     contract: makeAgenticContract(),
+    searchStats: {
+      totalNodes: 0,
+      rootNodes: 0,
+      maxDepth: 0,
+      expandedNodes: 0,
+      visitedNodes: 0,
+      pendingNodes: 0,
+      avgBranchingFactor: 0,
+      avgFrontierScore: 0,
+      avgValue: 0,
+      totalVisits: 0,
+      selectionEvents: 0,
+      expansionEvents: 0,
+      explorationCoverage: 0,
+    },
     matrix: null,
     registryRecord: {
       runId,
@@ -2249,6 +2387,9 @@ const makeAgenticRunDetail = (runId: string, idea: AgenticIdeaInput): AgenticRun
     },
     reproBundle: null,
   };
+  refreshAgenticSearchMeta(detail);
+  detail.searchStats = computeAgenticSearchStats(detail);
+  return detail;
 };
 
 const AGENTIC_HIGH_RISK_BASELINE = ['external_dependency_install', 'unknown_script_execution', 'data_exfiltration'];
@@ -3704,6 +3845,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
         payload: { runId },
       });
     }
+    refreshAgenticSearchMeta(detail);
+    detail.searchStats = computeAgenticSearchStats(detail);
     state.agenticRuns[runId] = detail;
     return respond({ runId, status: detail.status, detail });
   },
@@ -3875,7 +4018,14 @@ export const createMockApi = (_apiBaseUrl: string) => ({
   executeAgenticRun: async (runId: string, payload?: { mode?: 'all' | 'next' }): Promise<AgenticActionResponse> => {
     const detail = must(state.agenticRuns[runId], `agentic_run_not_found:${runId}`);
     const mode = payload?.mode || 'all';
-    const pending = detail.totTree.filter(node => node.status === 'PENDING' || node.status === 'RETRY_PENDING');
+    refreshAgenticSearchMeta(detail);
+    const pending = detail.totTree
+      .filter(node => node.status === 'PENDING' || node.status === 'RETRY_PENDING')
+      .sort((a, b) => {
+        const sa = Number((((a.evidence || {}) as Record<string, unknown>).search as any)?.frontierScore || 0);
+        const sb = Number((((b.evidence || {}) as Record<string, unknown>).search as any)?.frontierScore || 0);
+        return sb - sa;
+      });
     const targetNodes = mode === 'next' ? pending.slice(0, 1) : pending;
     const forbidden = new Set(((detail.researchSpec as any)?.constraints?.forbiddenActions as string[]) || []);
     const requested = ((detail.researchSpec as any)?.requestedActions as string[]) || [];
@@ -3907,7 +4057,46 @@ export const createMockApi = (_apiBaseUrl: string) => ({
       } as any);
     };
 
+    const nodeExists = (nodeId: string) => detail.totTree.some(node => node.nodeId === nodeId);
+    const nextNodeId = () => {
+      let idx = detail.totTree.length;
+      let nodeId = `n${idx}`;
+      while (nodeExists(nodeId)) {
+        idx += 1;
+        nodeId = `n${idx}`;
+      }
+      return nodeId;
+    };
+
     targetNodes.forEach(node => {
+      const nodeTs = new Date().toISOString();
+      const evidence = (node.evidence || {}) as Record<string, unknown>;
+      const search = ((evidence.search as Record<string, unknown>) || {}) as Record<string, unknown>;
+      const depth = Number(search.depth || 0);
+      const prevVisits = Number(search.visits || 0);
+      const prevValue = Number(search.value || 0);
+      const prevSelected = Number(search.selectedCount || 0);
+      const frontierBase = clampNumber(0.55 + depth * 0.09 + Math.random() * 0.22, 0.35, 0.98);
+      node.evidence = {
+        ...evidence,
+        search: {
+          ...search,
+          selectedCount: prevSelected + 1,
+          frontierScore: Number(frontierBase.toFixed(4)),
+          updatedAt: nodeTs,
+        },
+      };
+      detail.events.push({
+        ts: nodeTs,
+        event: 'search_node_selected',
+        message: `${node.nodeId} selected from search frontier`,
+        payload: {
+          nodeId: node.nodeId,
+          depth,
+          frontierScore: Number(frontierBase.toFixed(4)),
+        },
+      });
+
       if (node.agent === 'SafetyAgent') {
         const blocked = requested.filter(action => forbidden.has(action));
         if (blocked.length > 0) {
@@ -3941,10 +4130,20 @@ export const createMockApi = (_apiBaseUrl: string) => ({
         }
       }
       node.status = 'SUCCEEDED';
-      const nodeTs = new Date().toISOString();
+      const reward = clampNumber(0.45 + Math.random() * 0.5 - depth * 0.05, 0.18, 0.95);
+      const nextVisits = prevVisits + 1;
+      const value = ((prevValue * prevVisits) + reward) / Math.max(1, nextVisits);
       node.evidence = {
+        ...node.evidence,
         executedAt: nodeTs,
         mode: executionMode,
+        search: {
+          ...(((node.evidence || {}) as Record<string, unknown>).search as Record<string, unknown>),
+          visits: nextVisits,
+          value: Number(value.toFixed(4)),
+          frontierScore: Number((frontierBase * 0.86).toFixed(4)),
+          updatedAt: nodeTs,
+        },
         ...(executionMode === 'mle_runner'
           ? {
               mle: {
@@ -3999,6 +4198,76 @@ export const createMockApi = (_apiBaseUrl: string) => ({
           },
         });
       }
+
+      const hasChildren = (node.children || []).length > 0;
+      const canExpand = !hasChildren && depth < 3 && detail.totTree.length < 36;
+      if (canExpand) {
+        const childCount = depth <= 1 ? 2 : 1;
+        const childAgentPool = ['ResearchAgent', 'IntegrationAgent', 'EvalAgent', 'OpsAgent', 'SafetyAgent'];
+        const createdIds: string[] = [];
+        for (let i = 0; i < childCount; i += 1) {
+          const childId = nextNodeId();
+          const childAgent = childAgentPool[(depth + i + childId.length) % childAgentPool.length];
+          const child = createAgenticNode(
+            childId,
+            childAgent,
+            `${node.title} · branch ${i + 1}`,
+            node.nodeId,
+            depth >= 2 ? 'low' : 'medium',
+            'PENDING',
+          );
+          child.hypothesis = `Branch ${i + 1}: test an alternative assumption under ${node.nodeId}.`;
+          child.executionPlan = `Run branch ${i + 1} derived from ${node.nodeId}, then compare evidence.`;
+          child.nextSuggestions = ['Execute branch', 'Compare sibling branches', 'Keep best branch'];
+          child.expectedMetrics = { ...(node.expectedMetrics || {}) };
+          child.budget = {
+            gpuHours: Number(Math.max(0.05, Number((node.budget as any)?.gpuHours || 0.15) * 0.72).toFixed(2)),
+            wallclockMinutes: Math.max(4, Math.round(Number((node.budget as any)?.wallclockMinutes || 12) * 0.7)),
+          };
+          ensureNodeSearchMeta(child, depth + 1);
+          const childEvidence = (child.evidence || {}) as Record<string, unknown>;
+          const childSearch = ((childEvidence.search as Record<string, unknown>) || {}) as Record<string, unknown>;
+          child.evidence = {
+            ...childEvidence,
+            search: {
+              ...childSearch,
+              frontierScore: Number(clampNumber(frontierBase + (i + 1) * 0.07, 0.25, 0.99).toFixed(4)),
+              updatedAt: nodeTs,
+            },
+          };
+          detail.totTree.push(child);
+          createdIds.push(childId);
+        }
+        node.children = [...(node.children || []), ...createdIds];
+        const currentEvidence = (node.evidence || {}) as Record<string, unknown>;
+        const currentSearch = ((currentEvidence.search as Record<string, unknown>) || {}) as Record<string, unknown>;
+        node.evidence = {
+          ...currentEvidence,
+          search: {
+            ...currentSearch,
+            expanded: true,
+            expandedAt: nodeTs,
+            updatedAt: nodeTs,
+          },
+        };
+        detail.timeline.push({
+          ts: nodeTs,
+          nodeId: node.nodeId,
+          phase: 'search_expanded',
+          status: 'SUCCEEDED',
+          cost: 0.007,
+        });
+        detail.events.push({
+          ts: nodeTs,
+          event: 'tot_node_expanded',
+          message: `${node.nodeId} expanded into ${createdIds.length} branches`,
+          payload: {
+            nodeId: node.nodeId,
+            childIds: createdIds,
+            depth,
+          },
+        });
+      }
     });
 
     if (!detail.totTree.some(node => node.status === 'PENDING' || node.status === 'RETRY_PENDING' || node.status === 'BLOCKED')) {
@@ -4012,6 +4281,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
       status: detail.status,
       updatedAt: detail.updatedAt,
     };
+    refreshAgenticSearchMeta(detail);
+    detail.searchStats = computeAgenticSearchStats(detail);
     state.agenticRuns[runId] = detail;
     return respond({ ok: true, message: `run_status=${detail.status}`, detail });
   },
@@ -4051,6 +4322,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
         message: 'Approvals reopened',
         payload: { approvalIds: payload.approvalIds, actorId: payload.actorId, actorRole: payload.actorRole, comment: payload.comment || '' },
       });
+      refreshAgenticSearchMeta(detail);
+      detail.searchStats = computeAgenticSearchStats(detail);
       state.agenticRuns[runId] = detail;
       return respond({ ok: true, message: 'approval_reopened', detail });
     }
@@ -4139,6 +4412,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
         comment: payload.comment || '',
       },
     });
+    refreshAgenticSearchMeta(detail);
+    detail.searchStats = computeAgenticSearchStats(detail);
     state.agenticRuns[runId] = detail;
     return respond({ ok: true, message: 'approval_updated', detail });
   },
@@ -4158,6 +4433,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
       message: `Recovered run status to ${detail.status}`,
       payload: { runId },
     });
+    refreshAgenticSearchMeta(detail);
+    detail.searchStats = computeAgenticSearchStats(detail);
     state.agenticRuns[runId] = detail;
     return respond({ ok: true, message: `run_recovered status=${detail.status}`, detail });
   },
@@ -4196,6 +4473,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
     const parent = detail.totTree.find(item => item.nodeId === nodeId);
     if (parent) parent.children = [...(parent.children || []), newNodeId];
     detail.updatedAt = new Date().toISOString();
+    refreshAgenticSearchMeta(detail);
+    detail.searchStats = computeAgenticSearchStats(detail);
     state.agenticRuns[runId] = detail;
     return respond({ ok: true, message: 'branch_added', detail });
   },
@@ -4222,6 +4501,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
       children: (node.children || []).filter(child => !removeIds.has(child)),
     }));
     detail.updatedAt = new Date().toISOString();
+    refreshAgenticSearchMeta(detail);
+    detail.searchStats = computeAgenticSearchStats(detail);
     state.agenticRuns[runId] = detail;
     return respond({ ok: true, message: 'branch_deleted', detail });
   },

@@ -38,6 +38,7 @@ from app.schemas.agentic_os import (
     AgenticRunCreateRequest,
     AgenticRunDetail,
     AgenticRunSummary,
+    AgenticSearchStats,
     AgenticSubAgentRecord,
     AgenticSpecValidationResponse,
 )
@@ -1390,10 +1391,140 @@ PY
             state = self._load_state(run_id)
             return self._write_run_report(state)
 
+    def _collect_search_stats(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        def _safe_int(value: Any, default: int = 0) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        def _safe_float(value: Any, default: float = 0.0) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        nodes = list(state.get("tot_tree") or [])
+        if not nodes:
+            return {
+                "total_nodes": 0,
+                "root_nodes": 0,
+                "max_depth": 0,
+                "expanded_nodes": 0,
+                "visited_nodes": 0,
+                "pending_nodes": 0,
+                "avg_branching_factor": 0.0,
+                "avg_frontier_score": 0.0,
+                "avg_value": 0.0,
+                "total_visits": 0,
+                "selection_events": 0,
+                "expansion_events": 0,
+                "exploration_coverage": 0.0,
+            }
+
+        by_id = {str(node.get("node_id") or ""): node for node in nodes}
+        child_count: Dict[str, int] = {}
+        root_nodes = 0
+        max_depth = 0
+        expanded_nodes = 0
+        visited_nodes = 0
+        pending_nodes = 0
+        total_visits = 0
+        frontier_scores: List[float] = []
+        node_values: List[float] = []
+        child_edges = 0
+        branch_nodes = 0
+
+        for node in nodes:
+            node_id = str(node.get("node_id") or "")
+            parent_id = str(node.get("parent_id") or "")
+            if not parent_id or parent_id not in by_id:
+                root_nodes += 1
+            elif node_id:
+                child_count[parent_id] = child_count.get(parent_id, 0) + 1
+
+            status = str(node.get("status") or "").upper()
+            if status in {"PENDING", "RETRY_PENDING", "RUNNING"}:
+                pending_nodes += 1
+
+            evidence = node.get("evidence") or {}
+            search = evidence.get("search") if isinstance(evidence, dict) else {}
+            if not isinstance(search, dict):
+                search = {}
+
+            visits = _safe_int(search.get("visits"), 0)
+            value = _safe_float(search.get("value"), 0.0)
+            frontier = _safe_float(search.get("frontierScore"), 0.0)
+            expanded = bool(search.get("expanded"))
+
+            total_visits += visits
+            if visits > 0:
+                visited_nodes += 1
+            if expanded:
+                expanded_nodes += 1
+            frontier_scores.append(frontier)
+            node_values.append(value)
+
+        for parent, count in child_count.items():
+            if parent:
+                child_edges += count
+                if count > 0:
+                    branch_nodes += 1
+
+        for node in nodes:
+            depth = 0
+            seen = set()
+            cursor = node
+            while True:
+                parent_id = str(cursor.get("parent_id") or "")
+                if not parent_id or parent_id in seen:
+                    break
+                seen.add(parent_id)
+                parent = by_id.get(parent_id)
+                if not parent:
+                    break
+                depth += 1
+                cursor = parent
+                if depth > len(nodes):
+                    break
+            max_depth = max(max_depth, depth)
+
+        selection_events = 0
+        expansion_events = 0
+        for event in state.get("events") or []:
+            event_name = str((event or {}).get("event") or "")
+            if event_name == "search_node_selected":
+                selection_events += 1
+            elif event_name == "tot_node_expanded":
+                expansion_events += 1
+
+        total_nodes = len(nodes)
+        avg_branching = float(child_edges / branch_nodes) if branch_nodes > 0 else 0.0
+        avg_frontier = float(sum(frontier_scores) / len(frontier_scores)) if frontier_scores else 0.0
+        avg_value = float(sum(node_values) / len(node_values)) if node_values else 0.0
+        coverage = float(visited_nodes / max(1, total_nodes))
+
+        return {
+            "total_nodes": total_nodes,
+            "root_nodes": root_nodes,
+            "max_depth": max_depth,
+            "expanded_nodes": expanded_nodes,
+            "visited_nodes": visited_nodes,
+            "pending_nodes": pending_nodes,
+            "avg_branching_factor": round(avg_branching, 4),
+            "avg_frontier_score": round(avg_frontier, 4),
+            "avg_value": round(avg_value, 4),
+            "total_visits": total_visits,
+            "selection_events": selection_events,
+            "expansion_events": expansion_events,
+            "exploration_coverage": round(coverage, 4),
+        }
+
     def get_run_detail(self, run_id: str) -> AgenticRunDetail:
         state = self._load_state(run_id)
         contract = self._validate_contract(run_id)
         record = self._registry_record(run_id)
+        search_stats = self._collect_search_stats(state)
 
         return AgenticRunDetail(
             run_id=run_id,
@@ -1410,6 +1541,7 @@ PY
             events=state.get("events") or [],
             pending_approvals=state.get("pending_approvals") or [],
             contract=contract,
+            search_stats=AgenticSearchStats.model_validate(search_stats),
             matrix=state.get("matrix"),
             registry_record=record,
             repro_bundle=state.get("repro_bundle"),
@@ -2080,6 +2212,7 @@ PY
                 "failed": sum(1 for n in state.get("tot_tree", []) if n.get("status") == "FAILED"),
                 "succeeded": sum(1 for n in state.get("tot_tree", []) if n.get("status") == "SUCCEEDED"),
             },
+            "searchSummary": self._collect_search_stats(state),
         }
         (run_dir / "artifacts" / "metrics.json").parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(

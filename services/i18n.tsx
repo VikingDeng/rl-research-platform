@@ -7,7 +7,7 @@ const LOCALE_STORAGE_KEY = 'ui_language';
 const messages: Record<AppLocale, Record<string, string>> = {
   'zh-CN': {
     'layout.header.dashboard': '仪表盘',
-    'layout.header.agentic': 'Agentic 实验室',
+    'layout.header.agentic': 'ToT 画布',
     'layout.header.project': '项目工作区',
     'layout.header.registries': '注册中心',
     'layout.header.matrix': '矩阵评估',
@@ -25,7 +25,7 @@ const messages: Record<AppLocale, Record<string, string>> = {
     'sidebar.clusterQueue': '集群与队列',
     'sidebar.analysisTools': '分析工具',
     'sidebar.compareRuns': '运行对比',
-    'sidebar.agenticLab': 'Agentic 实验室',
+    'sidebar.agenticLab': 'ToT 画布',
     'sidebar.hyperparamTuning': '超参数调优',
     'sidebar.matrixCrossPlay': '矩阵与交叉对战',
     'sidebar.modelRegistry': '模型注册',
@@ -267,7 +267,7 @@ const messages: Record<AppLocale, Record<string, string>> = {
   },
   'en-US': {
     'layout.header.dashboard': 'Dashboard',
-    'layout.header.agentic': 'Agentic Lab',
+    'layout.header.agentic': 'ToT Canvas',
     'layout.header.project': 'Project Workspace',
     'layout.header.registries': 'Registries',
     'layout.header.matrix': 'Matrix',
@@ -285,7 +285,7 @@ const messages: Record<AppLocale, Record<string, string>> = {
     'sidebar.clusterQueue': 'Cluster & Queue',
     'sidebar.analysisTools': 'Analysis Tools',
     'sidebar.compareRuns': 'Compare Runs',
-    'sidebar.agenticLab': 'Agentic Lab',
+    'sidebar.agenticLab': 'ToT Canvas',
     'sidebar.hyperparamTuning': 'Hyperparameter Tuning',
     'sidebar.matrixCrossPlay': 'Matrix & Cross-Play',
     'sidebar.modelRegistry': 'Model Registry',

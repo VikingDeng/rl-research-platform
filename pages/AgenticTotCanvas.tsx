@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Bot, Play, RefreshCcw, Search, ShieldAlert, Sparkles, WandSparkles } from 'lucide-react';
+import { ArrowRight, Bot, Play, RefreshCcw, ShieldAlert, Sparkles, WandSparkles } from 'lucide-react';
 import { api, isDemoMode } from '../services/api';
 import { useI18n } from '../services/i18n';
-import type { AgenticNode, AgenticRunDetail, AgenticRunSummary } from '../types';
+import type { AgenticIdeaInput, AgenticNode, AgenticRunDetail, AgenticRunSummary } from '../types';
 
 type GraphLayoutPoint = {
   nodeId: string;
@@ -120,6 +120,29 @@ const mctsLikeScore = (node: AgenticNode, parentBranching: number, childCount: n
   return Math.max(0, Math.min(1, blended));
 };
 
+const buildAutoScienceIdea = (): AgenticIdeaInput => ({
+  title: 'Auto-Science Demo: Budgeted MARL Uplift',
+  taskGoal: 'Find a robust branch that improves win-rate while keeping budget and safety constraints.',
+  environment: 'pettingzoo.smac_v2:3s5z',
+  dataSources: ['registry://baseline_runs', 'registry://historical_failures'],
+  successMetrics: {
+    winRate: '>=0.62',
+    eloLift: '>=25',
+  },
+  budget: {
+    gpuHours: 2,
+    wallclockMinutes: 90,
+  },
+  constraints: {
+    compliance: ['no_pii', 'no_external_data_push'],
+    forbiddenActions: ['data_exfiltration'],
+    allowNetwork: false,
+    allowDependencyInstall: false,
+  },
+  executionMode: 'offline_stub',
+  requestedActions: [],
+});
+
 export const AgenticTotCanvas: React.FC = () => {
   const navigate = useNavigate();
   const { tx } = useI18n();
@@ -130,12 +153,10 @@ export const AgenticTotCanvas: React.FC = () => {
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [loadingRun, setLoadingRun] = useState(false);
   const [busyAction, setBusyAction] = useState<'none' | 'next' | 'all' | 'recover'>('none');
+  const [autoExploring, setAutoExploring] = useState(false);
   const [message, setMessage] = useState('');
 
-  const [query, setQuery] = useState('');
-  const [showActiveOnly, setShowActiveOnly] = useState(false);
   const [graphZoomPct, setGraphZoomPct] = useState(100);
-  const [graphViewportBox, setGraphViewportBox] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [hoveredNodeId, setHoveredNodeId] = useState('');
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Record<string, boolean>>({});
@@ -223,14 +244,7 @@ export const AgenticTotCanvas: React.FC = () => {
     return map;
   }, [nodes]);
 
-  const filteredNodes = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return nodes.filter(node => {
-      if (showActiveOnly && String(node.status || '').toUpperCase() === 'SUCCEEDED') return false;
-      if (!normalizedQuery) return true;
-      return `${node.nodeId} ${node.title} ${node.hypothesis}`.toLowerCase().includes(normalizedQuery);
-    });
-  }, [nodes, query, showActiveOnly]);
+  const filteredNodes = useMemo(() => nodes, [nodes]);
 
   const filteredNodeMap = useMemo(() => new Map(filteredNodes.map(node => [node.nodeId, node])), [filteredNodes]);
   const filteredChildCountByParent = useMemo(() => {
@@ -346,29 +360,11 @@ export const AgenticTotCanvas: React.FC = () => {
     };
   }, [visibleNodes, visibleNodeMap]);
 
-  const frontierRanking = useMemo(() => {
-    const rows = visibleNodes.map(node => {
-      const parentCount = node.parentId ? childCountByParent.get(node.parentId) || 0 : 1;
-      const childCount = childCountByParent.get(node.nodeId) || 0;
-      const baseScore = mctsLikeScore(node, parentCount, childCount);
-      const searchMeta = getSearchMeta(node);
-      const score = searchMeta.frontierScore > 0 ? searchMeta.frontierScore : baseScore;
-      return {
-        node,
-        score,
-        childCount,
-        searchMeta,
-      };
-    });
-    return rows.sort((a, b) => b.score - a.score).slice(0, 10);
-  }, [visibleNodes, childCountByParent]);
-
   const focusedNodeId = useMemo(() => {
     if (selectedNodeId && visibleNodeMap.has(selectedNodeId)) return selectedNodeId;
     if (hoveredNodeId && visibleNodeMap.has(hoveredNodeId)) return hoveredNodeId;
-    if (frontierRanking.length > 0) return frontierRanking[0].node.nodeId;
     return visibleNodes[0]?.nodeId || '';
-  }, [selectedNodeId, hoveredNodeId, frontierRanking, visibleNodes, visibleNodeMap]);
+  }, [selectedNodeId, hoveredNodeId, visibleNodes, visibleNodeMap]);
 
   const focusedNode = useMemo(() => (focusedNodeId ? nodeById.get(focusedNodeId) || null : null), [focusedNodeId, nodeById]);
 
@@ -384,6 +380,52 @@ export const AgenticTotCanvas: React.FC = () => {
     });
     return stats;
   }, [nodes]);
+  const searchStats = detail?.searchStats || null;
+  const storyStages = useMemo(() => {
+    const hasRun = !!selectedRunId;
+    const depth = Number(searchStats?.maxDepth || 0);
+    const expansions = Number(searchStats?.expandedNodes || 0);
+    const selections = Number(searchStats?.selectionEvents || 0);
+    const coverage = Math.round(Number(searchStats?.explorationCoverage || 0) * 100);
+    const succeeded = Number(runStats.succeeded || 0);
+    const contractPass = Math.round(Number(selectedRunSummary?.contractPassRate || 0) * 100);
+    const finalSucceeded = String(detail?.status || '').toUpperCase() === 'SUCCEEDED';
+
+    return [
+      {
+        key: 'idea',
+        titleZh: '1) 接收 Idea',
+        titleEn: '1) Capture Idea',
+        done: hasRun,
+        metricZh: hasRun ? `Run ${selectedRunId}` : '等待输入',
+        metricEn: hasRun ? `Run ${selectedRunId}` : 'Waiting input',
+      },
+      {
+        key: 'expand',
+        titleZh: '2) 自动展开假设',
+        titleEn: '2) Expand Hypotheses',
+        done: depth >= 2 || expansions >= 1,
+        metricZh: `深度 ${depth} · 扩展 ${expansions}`,
+        metricEn: `Depth ${depth} · Expanded ${expansions}`,
+      },
+      {
+        key: 'execute',
+        titleZh: '3) 执行与筛选',
+        titleEn: '3) Execute & Select',
+        done: selections >= 1 && succeeded >= 1,
+        metricZh: `选择 ${selections} · 成功 ${succeeded}`,
+        metricEn: `Selected ${selections} · Succeeded ${succeeded}`,
+      },
+      {
+        key: 'synthesize',
+        titleZh: '4) 形成证据结论',
+        titleEn: '4) Synthesize Evidence',
+        done: finalSucceeded || contractPass >= 95,
+        metricZh: `覆盖 ${coverage}% · 合同 ${contractPass}%`,
+        metricEn: `Coverage ${coverage}% · Contract ${contractPass}%`,
+      },
+    ];
+  }, [selectedRunId, searchStats, runStats, selectedRunSummary, detail?.status]);
 
   const fitGraphToViewport = useCallback(() => {
     const viewport = graphViewportRef.current;
@@ -394,18 +436,6 @@ export const AgenticTotCanvas: React.FC = () => {
     const snapped = Math.round(target / 5) * 5;
     setGraphZoomPct(Math.max(65, Math.min(160, snapped || 100)));
   }, [graph.width, graph.height]);
-
-  const refreshGraphViewportBox = useCallback(() => {
-    const viewport = graphViewportRef.current;
-    if (!viewport) return;
-    const scale = graphZoomPct / 100;
-    setGraphViewportBox({
-      x: viewport.scrollLeft / scale,
-      y: viewport.scrollTop / scale,
-      width: viewport.clientWidth / scale,
-      height: viewport.clientHeight / scale,
-    });
-  }, [graphZoomPct]);
 
   const centerNodeInViewport = useCallback((nodeId: string, behavior: ScrollBehavior = 'smooth') => {
     if (!nodeId) return;
@@ -422,53 +452,9 @@ export const AgenticTotCanvas: React.FC = () => {
     });
   }, [graph.layout, graph.cardWidth, graphZoomPct]);
 
-  const miniMapLayout = useMemo(() => {
-    const width = 220;
-    const height = 130;
-    const scale = Math.min(width / Math.max(1, graph.width), height / Math.max(1, graph.height));
-    const renderWidth = graph.width * scale;
-    const renderHeight = graph.height * scale;
-    return {
-      width,
-      height,
-      scale,
-      offsetX: (width - renderWidth) / 2,
-      offsetY: (height - renderHeight) / 2,
-    };
-  }, [graph.width, graph.height]);
-
-  const handleMiniMapClick = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
-    const viewport = graphViewportRef.current;
-    if (!viewport || miniMapLayout.scale <= 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const localX = event.clientX - rect.left - miniMapLayout.offsetX;
-    const localY = event.clientY - rect.top - miniMapLayout.offsetY;
-    const graphX = Math.max(0, Math.min(graph.width, localX / miniMapLayout.scale));
-    const graphY = Math.max(0, Math.min(graph.height, localY / miniMapLayout.scale));
-    const zoomScale = graphZoomPct / 100;
-    viewport.scrollTo({
-      left: Math.max(0, graphX * zoomScale - viewport.clientWidth / 2),
-      top: Math.max(0, graphY * zoomScale - viewport.clientHeight / 2),
-      behavior: 'smooth',
-    });
-  }, [miniMapLayout, graph.width, graph.height, graphZoomPct]);
-
   const toggleNodeCollapsed = useCallback((nodeId: string) => {
     setCollapsedNodeIds(prev => ({ ...prev, [nodeId]: !prev[nodeId] }));
   }, []);
-
-  useEffect(() => {
-    refreshGraphViewportBox();
-    const viewport = graphViewportRef.current;
-    if (!viewport) return;
-    const onScroll = () => refreshGraphViewportBox();
-    viewport.addEventListener('scroll', onScroll);
-    window.addEventListener('resize', refreshGraphViewportBox);
-    return () => {
-      viewport.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', refreshGraphViewportBox);
-    };
-  }, [refreshGraphViewportBox, graph.width, graph.height]);
 
   useEffect(() => {
     if (visibleNodes.length === 0) {
@@ -498,6 +484,51 @@ export const AgenticTotCanvas: React.FC = () => {
     }
   };
 
+  const runAutoScience = async () => {
+    if (autoExploring) return;
+    setAutoExploring(true);
+    setMessage('');
+    try {
+      let runId = selectedRunId;
+      let current = detail;
+
+      if (!runId) {
+        const created = await api.createAgenticRun({
+          idea: buildAutoScienceIdea(),
+          autoExecute: false,
+        });
+        runId = created.runId;
+        current = created.detail;
+        setSelectedRunId(runId);
+        setDetail(created.detail);
+        await refreshRuns();
+      }
+
+      let rounds = 0;
+      const maxRounds = isDemoMode ? 10 : 14;
+      while (runId && rounds < maxRounds) {
+        const status = String(current?.status || '').toUpperCase();
+        if (status === 'SUCCEEDED' || status === 'FAILED' || status === 'BLOCKED') break;
+        const res = await api.executeAgenticRun(runId, { mode: 'next' });
+        current = res.detail;
+        setDetail(res.detail);
+        rounds += 1;
+      }
+
+      await refreshRuns();
+      const finalStatus = String(current?.status || '').toUpperCase();
+      if (finalStatus === 'BLOCKED') {
+        setMessage(tx('自动探索已暂停：遇到安全审批，请到 Agent 面板处理后继续。', 'Auto exploration paused: safety approval required. Approve in Agent Panel and continue.'));
+      } else {
+        setMessage(tx('自动探索已完成一轮：你可以继续点击 Auto Explore 让树继续生长。', 'Auto exploration round complete. Click Auto Explore again to keep growing the tree.'));
+      }
+    } catch (error) {
+      setMessage(toErrorMessage(error));
+    } finally {
+      setAutoExploring(false);
+    }
+  };
+
   const openNodeEvidence = (nodeId: string) => {
     if (!selectedRunId) return;
     navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/nodes/${encodeURIComponent(nodeId)}`);
@@ -520,6 +551,9 @@ export const AgenticTotCanvas: React.FC = () => {
             <p className="mt-1.5 text-sm text-slate-600">
               {tx('这里只展示决策树。Idea 输入、Agent 面板、节点证据都跳转到独立页面。', 'This page is tree-only. Idea input, agent panel, and node evidence are separate pages.')}
             </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {tx('目标：让评委 10 秒理解“给一个 idea -> 自动展开探索 -> 产出证据结论”。', 'Goal: make it obvious in 10 seconds: one idea -> automatic exploration -> evidence-backed outcome.')}
+            </p>
           </div>
           <div className="text-right text-xs text-slate-500">
             <div>{tx('链路来源', 'Pipeline source')}: <span className="font-semibold">{isDemoMode ? 'Demo API' : 'Live API'}</span></div>
@@ -529,6 +563,30 @@ export const AgenticTotCanvas: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-sm font-semibold text-slate-800">{tx('Auto-Science 进度', 'Auto-Science Progress')}</div>
+          <div className="text-xs text-slate-500">{tx('简化叙事，先看这四步再看树。', 'Narrative first, tree second.')}</div>
+        </div>
+        <div className="grid gap-2 md:grid-cols-4">
+          {storyStages.map(stage => (
+            <div
+              key={stage.key}
+              className={`rounded-xl border px-3 py-2 ${
+                stage.done
+                  ? 'border-emerald-200 bg-emerald-50'
+                  : 'border-slate-200 bg-slate-50'
+              }`}
+            >
+              <div className={`text-xs font-semibold ${stage.done ? 'text-emerald-700' : 'text-slate-700'}`}>
+                {tx(stage.titleZh, stage.titleEn)}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-600">{tx(stage.metricZh, stage.metricEn)}</div>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -552,6 +610,15 @@ export const AgenticTotCanvas: React.FC = () => {
           >
             <RefreshCcw className={`mr-1.5 h-4 w-4 ${loadingRuns ? 'animate-spin' : ''}`} />
             {tx('刷新', 'Refresh')}
+          </button>
+          <button
+            type="button"
+            onClick={() => runAutoScience()}
+            disabled={autoExploring || isActionBusy}
+            className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+          >
+            <Sparkles className={`mr-1.5 h-4 w-4 ${autoExploring ? 'animate-pulse' : ''}`} />
+            {autoExploring ? tx('自动探索中...', 'Auto Exploring...') : tx('Auto Explore', 'Auto Explore')}
           </button>
           <button
             type="button"
@@ -603,6 +670,13 @@ export const AgenticTotCanvas: React.FC = () => {
             <WandSparkles className="mr-1.5 h-4 w-4" />
             {tx('经典控制台', 'Classic Console')}
           </button>
+          <button
+            type="button"
+            onClick={() => navigate('/agentic/workbench')}
+            className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
+          >
+            {tx('探索洞察', 'Exploration Insights')}
+          </button>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
@@ -612,6 +686,21 @@ export const AgenticTotCanvas: React.FC = () => {
           <span className="rounded bg-amber-50 px-2 py-1 text-amber-700">{tx('阻塞', 'Blocked')} {runStats.blocked}</span>
           <span className="rounded bg-rose-50 px-2 py-1 text-rose-700">{tx('失败', 'Failed')} {runStats.failed}</span>
           <span className="rounded bg-slate-100 px-2 py-1">{tx('待执行', 'Pending')} {runStats.pending}</span>
+          {searchStats && (
+            <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
+              {tx('搜索深度', 'Search depth')} {searchStats.maxDepth}
+            </span>
+          )}
+          {searchStats && (
+            <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
+              {tx('已扩展', 'Expanded')} {searchStats.expandedNodes}
+            </span>
+          )}
+          {searchStats && (
+            <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
+              {tx('探索覆盖', 'Coverage')} {Math.round((searchStats.explorationCoverage || 0) * 100)}%
+            </span>
+          )}
           {selectedRunSummary && (
             <span className="rounded bg-slate-100 px-2 py-1">{tx('合同', 'Contract')} {Math.round((selectedRunSummary.contractPassRate || 0) * 100)}%</span>
           )}
@@ -621,24 +710,6 @@ export const AgenticTotCanvas: React.FC = () => {
       <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1">
-              <Search className="h-3.5 w-3.5 text-slate-400" />
-              <input
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                placeholder={tx('搜索节点', 'Search nodes')}
-                className="w-40 bg-transparent text-xs text-slate-700 outline-none"
-              />
-            </div>
-            <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={showActiveOnly}
-                onChange={e => setShowActiveOnly(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300"
-              />
-              {tx('只看未完成', 'Pending only')}
-            </label>
             <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
               <span>{graphZoomPct}%</span>
               <input
@@ -829,102 +900,38 @@ export const AgenticTotCanvas: React.FC = () => {
           )}
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-12">
-          <div className="lg:col-span-8 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-            {!focusedNode ? (
-              <div className="text-xs text-slate-500">{tx('暂无聚焦节点。', 'No focused node.')}</div>
-            ) : (
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">{focusedNode.nodeId}</span>
-                    <span className={`rounded px-1.5 py-0.5 font-semibold ${statusBadgeClass(focusedNode.status)}`}>{focusedNode.status}</span>
-                    <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">UCT {Math.round((getSearchMeta(focusedNode).frontierScore || 0) * 100) || '-'}</span>
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-800">{focusedNode.title || focusedNode.nodeId}</div>
-                  <p className="mt-1 line-clamp-2 text-xs text-slate-600">{focusedNode.hypothesis || '-'}</p>
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          {!focusedNode ? (
+            <div className="text-xs text-slate-500">{tx('暂无聚焦节点。', 'No focused node.')}</div>
+          ) : (
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">{focusedNode.nodeId}</span>
+                  <span className={`rounded px-1.5 py-0.5 font-semibold ${statusBadgeClass(focusedNode.status)}`}>{focusedNode.status}</span>
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">UCT {Math.round((getSearchMeta(focusedNode).frontierScore || 0) * 100) || '-'}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => centerNodeInViewport(focusedNode.nodeId)}
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
-                  >
-                    {tx('定位', 'Center')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openNodeEvidence(focusedNode.nodeId)}
-                    className="inline-flex items-center rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
-                  >
-                    {tx('证据页', 'Evidence')} <ArrowRight className="ml-1 h-3 w-3" />
-                  </button>
-                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-800">{focusedNode.title || focusedNode.nodeId}</div>
+                <p className="mt-1 line-clamp-2 text-xs text-slate-600">{focusedNode.hypothesis || '-'}</p>
               </div>
-            )}
-          </div>
-          <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-2">
-            <svg
-              width={miniMapLayout.width}
-              height={miniMapLayout.height}
-              viewBox={`0 0 ${miniMapLayout.width} ${miniMapLayout.height}`}
-              className="w-full cursor-crosshair rounded-md border border-slate-200 bg-slate-50"
-              onClick={handleMiniMapClick}
-            >
-              {graph.edges.map(edge => {
-                const from = graph.layout.get(edge.from);
-                const to = graph.layout.get(edge.to);
-                if (!from || !to) return null;
-                const x1 = miniMapLayout.offsetX + (from.x + graph.cardWidth) * miniMapLayout.scale;
-                const y1 = miniMapLayout.offsetY + from.y * miniMapLayout.scale;
-                const x2 = miniMapLayout.offsetX + to.x * miniMapLayout.scale;
-                const y2 = miniMapLayout.offsetY + to.y * miniMapLayout.scale;
-                const highlighted = edge.from === focusedNodeId || edge.to === focusedNodeId;
-                return (
-                  <line
-                    key={`mini-edge-${edge.from}-${edge.to}`}
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke={highlighted ? '#2563eb' : '#cbd5e1'}
-                    strokeWidth={highlighted ? 1.2 : 0.8}
-                  />
-                );
-              })}
-              {visibleNodes.map(node => {
-                const point = graph.layout.get(node.nodeId);
-                if (!point) return null;
-                const x = miniMapLayout.offsetX + point.x * miniMapLayout.scale;
-                const y = miniMapLayout.offsetY + (point.y - graph.cardHeight / 2) * miniMapLayout.scale;
-                const w = Math.max(2, graph.cardWidth * miniMapLayout.scale);
-                const h = Math.max(2, graph.cardHeight * miniMapLayout.scale);
-                const focused = node.nodeId === focusedNodeId;
-                return (
-                  <rect
-                    key={`mini-node-${node.nodeId}`}
-                    x={x}
-                    y={y}
-                    width={w}
-                    height={h}
-                    rx={2}
-                    fill={focused ? 'rgba(37,99,235,.38)' : 'rgba(148,163,184,.24)'}
-                    stroke={focused ? '#1d4ed8' : '#94a3b8'}
-                    strokeWidth={focused ? 1.1 : 0.7}
-                  />
-                );
-              })}
-              <rect
-                x={miniMapLayout.offsetX + graphViewportBox.x * miniMapLayout.scale}
-                y={miniMapLayout.offsetY + graphViewportBox.y * miniMapLayout.scale}
-                width={Math.max(6, graphViewportBox.width * miniMapLayout.scale)}
-                height={Math.max(6, graphViewportBox.height * miniMapLayout.scale)}
-                fill="rgba(37,99,235,.09)"
-                stroke="#2563eb"
-                strokeWidth={1}
-              />
-            </svg>
-          </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => centerNodeInViewport(focusedNode.nodeId)}
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+                >
+                  {tx('定位', 'Center')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openNodeEvidence(focusedNode.nodeId)}
+                  className="inline-flex items-center rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+                >
+                  {tx('证据页', 'Evidence')} <ArrowRight className="ml-1 h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
