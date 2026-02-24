@@ -24,6 +24,8 @@ type RightPanelTab = 'dialogue' | 'approvals' | 'subagents' | 'report' | 'audit'
 type LayoutMode = 'balanced' | 'focus_tree' | 'focus_evidence';
 type UxMode = 'guided' | 'expert';
 type WorkspaceDensity = 'focused' | 'full';
+type SurfaceMode = 'tree_first' | 'classic';
+type TopInputMode = 'idea' | 'search';
 type ApprovalActorRole = 'admin' | 'ops' | 'security';
 type UiTone = 'neutral' | 'success' | 'warn' | 'danger' | 'info';
 type ApprovalActorOption = {
@@ -402,6 +404,10 @@ export const AgenticLab: React.FC = () => {
   const [timelineSyncNode, setTimelineSyncNode] = useState<boolean>(true);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('balanced');
   const [uxMode, setUxMode] = useState<UxMode>('guided');
+  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>('tree_first');
+  const [showContextPanel, setShowContextPanel] = useState<boolean>(false);
+  const [topInputMode, setTopInputMode] = useState<TopInputMode>('idea');
+  const [topInputValue, setTopInputValue] = useState<string>(defaultIdea.title);
   const [workspaceDensity, setWorkspaceDensity] = useState<WorkspaceDensity>(() => {
     if (typeof window === 'undefined') return 'focused';
     const saved = window.localStorage.getItem('agentic_workspace_density');
@@ -416,6 +422,7 @@ export const AgenticLab: React.FC = () => {
   const [approvalStrictMode, setApprovalStrictMode] = useState<boolean>(true);
 
   const subAgentPageSize = 8;
+  const isTreeFirst = surfaceMode === 'tree_first';
   const isFocusedWorkspace = workspaceDensity === 'focused';
   const resolvedSubAgentPolicy = useMemo<AgenticSubAgentPolicy>(
     () => ({ ...defaultSubAgentPolicy, ...(idea.subAgentPolicy || {}) }),
@@ -553,6 +560,23 @@ export const AgenticLab: React.FC = () => {
     setShowAuditEvents(false);
     setShowAllPendingApprovals(false);
   }, [workspaceDensity]);
+  useEffect(() => {
+    if (topInputMode !== 'search') return;
+    setTopInputValue(nodeQuery);
+  }, [topInputMode, nodeQuery]);
+  useEffect(() => {
+    if (topInputMode !== 'idea') return;
+    setTopInputValue((idea.title || idea.taskGoal || '').trim());
+  }, [topInputMode, idea.title, idea.taskGoal]);
+  useEffect(() => {
+    if (surfaceMode !== 'tree_first') return;
+    setLayoutMode('focus_tree');
+    setUxMode('guided');
+    setWorkspaceDensity('focused');
+    setShowSpecWorkspace(false);
+    setShowQuickStart(false);
+    setShowAgenticGuide(false);
+  }, [surfaceMode]);
 
   const applyApprovalTemplate = (templateId: string) => {
     const selected = approvalPolicyTemplates.find(item => item.templateId === templateId);
@@ -1005,19 +1029,25 @@ export const AgenticLab: React.FC = () => {
       riskIndex,
     };
   }, [detail, selectedNode, selectedNodePath.length, selectedSubtreeNodeIds]);
-  const leftColClass = uxMode === 'guided'
+  const leftColClass = isTreeFirst
+    ? (showContextPanel ? 'xl:col-span-7' : 'xl:col-span-8')
+    : uxMode === 'guided'
     ? 'xl:col-span-3'
     : layoutMode === 'focus_tree'
     ? 'xl:col-span-4'
     : 'xl:col-span-2';
-  const centerColClass = uxMode === 'guided'
+  const centerColClass = isTreeFirst
+    ? (showContextPanel ? 'xl:col-span-3' : 'xl:col-span-4')
+    : uxMode === 'guided'
     ? 'xl:col-span-6'
     : layoutMode === 'focus_evidence'
     ? 'xl:col-span-8'
     : layoutMode === 'focus_tree'
     ? 'xl:col-span-5'
     : 'xl:col-span-7';
-  const rightColClass = uxMode === 'guided'
+  const rightColClass = isTreeFirst
+    ? 'xl:col-span-2'
+    : uxMode === 'guided'
     ? 'xl:col-span-3'
     : layoutMode === 'focus_evidence'
     ? 'xl:col-span-2'
@@ -1878,6 +1908,15 @@ export const AgenticLab: React.FC = () => {
   const pendingRowsFromDetail = (run: AgenticRunDetail) => {
     return (run.pendingApprovals || []).filter(item => String((item as Record<string, unknown>).status || '').toUpperCase() === 'PENDING');
   };
+  const buildIdeaDraftFromPrompt = (prompt: string): AgenticIdeaInput => {
+    const text = prompt.trim();
+    if (!text) return idea;
+    return {
+      ...idea,
+      title: text,
+      taskGoal: text,
+    };
+  };
 
   const handleValidate = () => runAction('validate', async () => {
     const res = await api.validateAgenticSpec(idea);
@@ -1899,6 +1938,47 @@ export const AgenticLab: React.FC = () => {
     setSelectedRunId(created.runId);
     setMessage(`${tx('已创建运行', 'Created run')} ${created.runId}`);
   });
+  const handleTopIdeaValidate = () => runAction('idea-validate', async () => {
+    const draft = buildIdeaDraftFromPrompt(topInputValue);
+    setIdea(draft);
+    const res = await api.validateAgenticSpec(draft);
+    setValidationText(buildValidationText(res as Record<string, any>));
+    setMessage(tx('已根据顶部 Idea 生成规范草案。', 'Spec draft generated from top Idea input.'));
+  });
+  const handleTopIdeaCreateRun = () => runAction('idea-create-run', async () => {
+    const draft = buildIdeaDraftFromPrompt(topInputValue);
+    setIdea(draft);
+    const created = await api.createAgenticRun({ idea: draft, autoExecute: false, induceFailure: false });
+    await refreshRuns();
+    setSelectedRunId(created.runId);
+    setMessage(`${tx('已创建运行', 'Created run')} ${created.runId}`);
+  });
+  const handleTopSearch = () => {
+    const query = topInputValue.trim();
+    setNodeQuery(query);
+    if (!query) {
+      setMessage(tx('请输入节点关键词。', 'Enter a node keyword.'));
+      return;
+    }
+    const lowered = query.toLowerCase();
+    const firstMatch = sortedNodes.find(({ node }) =>
+      `${node.nodeId} ${node.title} ${node.hypothesis}`.toLowerCase().includes(lowered),
+    );
+    if (!firstMatch) {
+      setMessage(tx('未找到匹配节点。', 'No matching node found.'));
+      return;
+    }
+    setSelectedNodeId(firstMatch.node.nodeId);
+    window.setTimeout(() => centerNodeInViewport(firstMatch.node.nodeId, 'smooth'), 30);
+    setMessage(`${tx('已定位节点', 'Focused node')}: ${firstMatch.node.nodeId}`);
+  };
+  const handleTopInputSubmit = () => {
+    if (topInputMode === 'search') {
+      handleTopSearch();
+      return;
+    }
+    handleTopIdeaValidate();
+  };
 
   const handleExecute = (mode: 'all' | 'next') => runAction('execute', async () => {
     if (!detail) return;
@@ -2312,101 +2392,251 @@ export const AgenticLab: React.FC = () => {
             <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
               <button
                 type="button"
-                onClick={() => setUxMode('guided')}
+                onClick={() => setSurfaceMode('tree_first')}
                 className={`rounded-md px-2 py-1 text-[11px] font-medium ${
-                  uxMode === 'guided' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                  isTreeFirst ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
-                {tx('引导模式', 'Guided')}
+                {tx('树优先', 'Tree-First')}
               </button>
               <button
                 type="button"
-                onClick={() => setUxMode('expert')}
+                onClick={() => setSurfaceMode('classic')}
                 className={`rounded-md px-2 py-1 text-[11px] font-medium ${
-                  uxMode === 'expert' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                  !isTreeFirst ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
-                {tx('专家模式', 'Expert')}
+                {tx('工作室', 'Studio')}
               </button>
             </div>
-            <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
-              <button
-                type="button"
-                onClick={() => setWorkspaceDensity('focused')}
-                className={`rounded-md px-2 py-1 text-[11px] font-medium ${
-                  workspaceDensity === 'focused' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
-                }`}
-              >
-                {tx('简洁视图', 'Focused')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setWorkspaceDensity('full')}
-                className={`rounded-md px-2 py-1 text-[11px] font-medium ${
-                  workspaceDensity === 'full' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
-                }`}
-              >
-                {tx('完整视图', 'Full')}
-              </button>
-            </div>
-            <button
-              onClick={handleRunQuickDemo}
-              disabled={Boolean(busy)}
-              className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {t('agentic.hero.quickChain', 'One-click Full Chain')}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/settings?panel=docs')}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {tx('什么是 ToT？', 'What is ToT?')}
-            </button>
-            <button
-              onClick={() => setShowSpecWorkspace(prev => !prev)}
-              className={`rounded-lg border px-3 py-2 text-sm font-medium ${
-                showSpecWorkspace
-                  ? 'border-blue-300 bg-blue-50 text-blue-700'
-                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              {showSpecWorkspace ? tx('收起规范工作区', 'Hide Spec Workspace') : tx('打开规范工作区', 'Open Spec Workspace')}
-            </button>
-            {uxMode === 'expert' && (
+            {isTreeFirst ? (
               <>
-                <button onClick={handleValidate} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                  {tx('校验规范', 'Validate Spec')}
+                <button
+                  type="button"
+                  onClick={() => setShowContextPanel(prev => !prev)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                    showContextPanel
+                      ? 'border-blue-300 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {showContextPanel ? tx('隐藏上下文', 'Hide Context') : tx('显示上下文', 'Show Context')}
                 </button>
-                <button onClick={handleSuggestApprovalPolicy} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                  <WandSparkles className="mr-1 inline h-4 w-4" />{tx('建议策略', 'Suggest Policy')}
-                </button>
-                <button onClick={handleCreateRun} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                  {tx('创建运行', 'Create Run')}
-                </button>
-                <button onClick={() => refreshRuns()} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-                  <RefreshCcw className="mr-1 inline h-4 w-4" />{tx('刷新', 'Refresh')}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSurfaceMode('classic');
+                    setShowSpecWorkspace(true);
+                    setShowAdvancedConfig(true);
+                  }}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {tx('打开高级配置', 'Open Advanced Config')}
                 </button>
               </>
+            ) : (
+              <>
+                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setUxMode('guided')}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                      uxMode === 'guided' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                    }`}
+                  >
+                    {tx('引导模式', 'Guided')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUxMode('expert')}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                      uxMode === 'expert' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                    }`}
+                  >
+                    {tx('专家模式', 'Expert')}
+                  </button>
+                </div>
+                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceDensity('focused')}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                      workspaceDensity === 'focused' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                    }`}
+                  >
+                    {tx('简洁视图', 'Focused')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceDensity('full')}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                      workspaceDensity === 'full' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                    }`}
+                  >
+                    {tx('完整视图', 'Full')}
+                  </button>
+                </div>
+                <button
+                  onClick={handleRunQuickDemo}
+                  disabled={Boolean(busy)}
+                  className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t('agentic.hero.quickChain', 'One-click Full Chain')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/settings?panel=docs')}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {tx('什么是 ToT？', 'What is ToT?')}
+                </button>
+                <button
+                  onClick={() => setShowSpecWorkspace(prev => !prev)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                    showSpecWorkspace
+                      ? 'border-blue-300 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {showSpecWorkspace ? tx('收起规范工作区', 'Hide Spec Workspace') : tx('打开规范工作区', 'Open Spec Workspace')}
+                </button>
+                {uxMode === 'expert' && (
+                  <>
+                    <button onClick={handleValidate} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      {tx('校验规范', 'Validate Spec')}
+                    </button>
+                    <button onClick={handleSuggestApprovalPolicy} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      <WandSparkles className="mr-1 inline h-4 w-4" />{tx('建议策略', 'Suggest Policy')}
+                    </button>
+                    <button onClick={handleCreateRun} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                      {tx('创建运行', 'Create Run')}
+                    </button>
+                    <button onClick={() => refreshRuns()} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                      <RefreshCcw className="mr-1 inline h-4 w-4" />{tx('刷新', 'Refresh')}
+                    </button>
+                  </>
+                )}
+                <label className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-500">
+                  {tx('运行', 'Run')}
+                  <select
+                    value={selectedRunId}
+                    onChange={e => setSelectedRunId(e.target.value)}
+                    className="max-w-48 bg-transparent text-xs text-gray-700 outline-none"
+                  >
+                    <option value="">{tx('选择', 'select')}</option>
+                    {runs.map(run => (
+                      <option key={run.runId} value={run.runId}>
+                        {run.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
             )}
-            <label className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-500">
-              {tx('运行', 'Run')}
-              <select
-                value={selectedRunId}
-                onChange={e => setSelectedRunId(e.target.value)}
-                className="max-w-48 bg-transparent text-xs text-gray-700 outline-none"
-              >
-                <option value="">{tx('选择', 'select')}</option>
-                {runs.map(run => (
-                  <option key={run.runId} value={run.runId}>
-                    {run.title}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
         </div>
 
+        {isTreeFirst && (
+          <div className="agentic-ribbon mt-4 rounded-2xl border border-slate-200 p-3">
+            <div className="grid gap-2 lg:grid-cols-[auto_auto_1fr_auto_auto_auto]">
+              <label className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-500">
+                {tx('运行', 'Run')}
+                <select
+                  value={selectedRunId}
+                  onChange={e => setSelectedRunId(e.target.value)}
+                  className="max-w-52 bg-transparent text-xs text-gray-700 outline-none"
+                >
+                  <option value="">{tx('选择', 'select')}</option>
+                  {runs.map(run => (
+                    <option key={run.runId} value={run.runId}>
+                      {run.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTopInputMode('idea');
+                    setTopInputValue((idea.title || idea.taskGoal || '').trim());
+                  }}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                    topInputMode === 'idea' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                  }`}
+                >
+                  {tx('Idea', 'Idea')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTopInputMode('search');
+                    setTopInputValue(nodeQuery);
+                  }}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                    topInputMode === 'search' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                  }`}
+                >
+                  {tx('检索树', 'Search Tree')}
+                </button>
+              </div>
+              <input
+                value={topInputValue}
+                onChange={e => setTopInputValue(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleTopInputSubmit();
+                  }
+                }}
+                placeholder={
+                  topInputMode === 'idea'
+                    ? tx('输入 Idea，回车生成规范草案…', 'Type your idea and press Enter to draft spec...')
+                    : tx('搜索节点ID/标题/假设…', 'Search by node id/title/hypothesis...')
+                }
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-blue-300"
+              />
+              <button
+                type="button"
+                onClick={handleTopInputSubmit}
+                className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+              >
+                {topInputMode === 'idea' ? tx('生成规范', 'Draft Spec') : tx('定位节点', 'Locate Node')}
+              </button>
+              <button
+                type="button"
+                onClick={handleTopIdeaCreateRun}
+                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                {tx('创建运行', 'Create Run')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExecute('next')}
+                disabled={!detail}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {tx('执行下一步', 'Run Next')}
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+              <span>
+                {tx(
+                  '主路径：输入 Idea -> 生成树 -> 选节点 -> 执行/分支。',
+                  'Main flow: Idea -> Tree -> Node -> Execute/Branch.',
+                )}
+              </span>
+              {selectedRunSummary && (
+                <span className={`rounded px-1.5 py-0.5 font-semibold ${statusColor(selectedRunSummary.status)}`}>
+                  {selectedRunSummary.title} · {statusLabel(selectedRunSummary.status)}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!isTreeFirst && (
+        <>
         {showSpecWorkspace ? (
           <div className="mt-4 grid gap-4 xl:grid-cols-[2fr_1fr]">
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -2865,9 +3095,11 @@ export const AgenticLab: React.FC = () => {
         )}
 
         {validationText && <pre className="mt-3 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-emerald-200">{validationText}</pre>}
+        </>
+        )}
       </div>
 
-      {workspaceDensity === 'full' && showAgenticGuide && (
+      {!isTreeFirst && workspaceDensity === 'full' && showAgenticGuide && (
         <section className="agentic-ribbon rounded-2xl border border-slate-200 p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2894,7 +3126,7 @@ export const AgenticLab: React.FC = () => {
           </div>
         </section>
       )}
-      {workspaceDensity === 'full' && !showAgenticGuide && (
+      {!isTreeFirst && workspaceDensity === 'full' && !showAgenticGuide && (
         <div className="flex justify-end">
           <button
             type="button"
@@ -2905,7 +3137,7 @@ export const AgenticLab: React.FC = () => {
           </button>
         </div>
       )}
-      {workspaceDensity === 'full' && showQuickStart && (
+      {!isTreeFirst && workspaceDensity === 'full' && showQuickStart && (
         <section className="agentic-ribbon rounded-2xl border border-slate-200 p-4 shadow-sm">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2979,7 +3211,7 @@ export const AgenticLab: React.FC = () => {
           </div>
         </section>
       )}
-      {workspaceDensity === 'full' && !showQuickStart && (
+      {!isTreeFirst && workspaceDensity === 'full' && !showQuickStart && (
         <div className="flex justify-end">
           <button
             type="button"
@@ -2990,7 +3222,7 @@ export const AgenticLab: React.FC = () => {
           </button>
         </div>
       )}
-      {workspaceDensity === 'focused' && (
+      {!isTreeFirst && workspaceDensity === 'focused' && (
         <section className="agentic-ribbon rounded-2xl border border-slate-200 p-3 shadow-sm">
           <div className="grid gap-2 md:grid-cols-[1.2fr_1fr_auto]">
             <div>
@@ -3030,6 +3262,7 @@ export const AgenticLab: React.FC = () => {
         </section>
       )}
 
+      {!isTreeFirst && (
       <div className="agentic-ribbon flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 shadow-sm">
         <div className="text-xs text-slate-500">
           {tx('布局控制：在树图探索与证据检查之间切换关注重点。', 'Layout controls: optimize your focus between tree exploration and evidence inspection.')}
@@ -3065,6 +3298,7 @@ export const AgenticLab: React.FC = () => {
           </button>
         </div>
       </div>
+      )}
 
       <div className="grid gap-4 xl:grid-cols-12">
         <aside className={`${leftColClass} agentic-pane agentic-pane-tree rounded-2xl border border-slate-200 p-3 shadow-sm`}>
@@ -3209,7 +3443,61 @@ export const AgenticLab: React.FC = () => {
           )}
           <div ref={graphViewportRef} className="agentic-tree-canvas max-h-[34rem] overflow-auto rounded-xl border border-slate-200">
             {visibleNodes.length === 0 ? (
-              <div className="p-3 text-xs text-slate-500">{tx('没有匹配当前过滤条件的节点。', 'No nodes match current filter.')}</div>
+              isTreeFirst && !detail ? (
+                <div className="p-4">
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                    <div className="text-sm font-semibold text-slate-800">{tx('Root Idea 输入节点', 'Root Idea Input Node')}</div>
+                    <div className="mt-1 text-xs text-slate-600">
+                      {tx(
+                        '在这里输入研究目标，生成第一层 ToT 计划树。',
+                        'Type your research objective here to generate the first ToT planning tree.',
+                      )}
+                    </div>
+                    <input
+                      value={topInputValue}
+                      onChange={e => setTopInputValue(e.target.value)}
+                      onFocus={() => setTopInputMode('idea')}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleTopIdeaValidate();
+                        }
+                      }}
+                      placeholder={tx('例如：在 2 GPUh 内提升 win-rate 到 0.62', 'e.g. Lift win-rate to 0.62 under 2 GPUh budget')}
+                      className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-300"
+                    />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleTopIdeaValidate}
+                        className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                      >
+                        {tx('生成规范草案', 'Draft Spec')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTopIdeaCreateRun}
+                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                      >
+                        {tx('创建 Root 运行', 'Create Root Run')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSurfaceMode('classic');
+                          setShowSpecWorkspace(true);
+                          setShowAdvancedConfig(true);
+                        }}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        {tx('打开高级配置', 'Open Advanced Config')}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 text-xs text-slate-500">{tx('没有匹配当前过滤条件的节点。', 'No nodes match current filter.')}</div>
+              )
             ) : (
               <svg
                 width={Math.round((totGraph.width * graphZoomPct) / 100)}
@@ -3448,6 +3736,19 @@ export const AgenticLab: React.FC = () => {
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-800">{tx('节点证据', 'Node Evidence')}</h2>
             <div className="flex flex-wrap gap-2">
+              {isTreeFirst && (
+                <button
+                  type="button"
+                  onClick={() => setShowContextPanel(prev => !prev)}
+                  className={`rounded-md border px-2 py-1 text-xs ${
+                    showContextPanel
+                      ? 'border-blue-300 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {showContextPanel ? tx('隐藏右侧面板', 'Hide Right Panel') : tx('打开右侧面板', 'Open Right Panel')}
+                </button>
+              )}
               <button onClick={() => handleExecute('next')} className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50">
                 <Play className="mr-1 inline h-3 w-3" />{tx('单步', 'Step')}
               </button>
@@ -3947,6 +4248,7 @@ export const AgenticLab: React.FC = () => {
           )}
         </section>
 
+        {(!isTreeFirst || showContextPanel) && (
         <aside className={`${rightColClass} agentic-pane agentic-pane-agent rounded-2xl border border-slate-200 p-4 shadow-sm`}>
           <div className="mb-3 flex items-start justify-between gap-2">
             <div>
@@ -4689,6 +4991,7 @@ export const AgenticLab: React.FC = () => {
             </div>
           )}
         </aside>
+        )}
       </div>
 
       {(busy || message) && (
