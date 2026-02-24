@@ -25,6 +25,9 @@ const Workspaces = lazy(() => import('./pages/Workspaces').then(mod => ({ defaul
 const Login = lazy(() => import('./pages/Login').then(mod => ({ default: mod.Login })));
 const GroupSummary = lazy(() => import('./pages/GroupSummary').then(mod => ({ default: mod.GroupSummary })));
 const AgenticLab = lazy(() => import('./pages/AgenticLab').then(mod => ({ default: mod.AgenticLab })));
+const AgenticLabClassic = lazy(() => import('./pages/AgenticLabClassic').then(mod => ({ default: mod.AgenticLab })));
+const AgenticNodeEvidence = lazy(() => import('./pages/AgenticNodeEvidence').then(mod => ({ default: mod.AgenticNodeEvidence })));
+const AgenticAgents = lazy(() => import('./pages/AgenticAgents').then(mod => ({ default: mod.AgenticAgents })));
 const CommandPalette = lazy(() => import('./components/CommandPalette').then(mod => ({ default: mod.CommandPalette })));
 
 const RouteFallback: React.FC = () => {
@@ -80,6 +83,9 @@ const App: React.FC = () => {
                         <Route path="/runs/:id" element={<RunDetail />} />
                         <Route path="/groups/:groupId" element={<GroupSummary />} />
                         <Route path="/agentic" element={<AgenticLab />} />
+                        <Route path="/agentic/classic" element={<AgenticLabClassic />} />
+                        <Route path="/agentic/runs/:runId/nodes/:nodeId" element={<AgenticNodeEvidence />} />
+                        <Route path="/agentic/runs/:runId/agents" element={<AgenticAgents />} />
                         
                         {/* Analysis */}
                         <Route path="/matrix" element={<MatrixView />} />
