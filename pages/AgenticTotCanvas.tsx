@@ -197,12 +197,13 @@ export const AgenticTotCanvas: React.FC = () => {
     }
   }, [selectedRunId]);
 
-  const loadRun = useCallback(async (runId: string) => {
+  const loadRun = useCallback(async (runId: string, options?: { background?: boolean }) => {
+    const background = !!options?.background;
     if (!runId) {
       setDetail(null);
       return;
     }
-    setLoadingRun(true);
+    if (!background) setLoadingRun(true);
     try {
       const payload = await api.getAgenticRun(runId);
       setDetail(prev => {
@@ -216,10 +217,12 @@ export const AgenticTotCanvas: React.FC = () => {
         return unchanged ? prev : payload;
       });
     } catch (error) {
-      setMessage(toErrorMessage(error));
-      setDetail(null);
+      if (!background) {
+        setMessage(toErrorMessage(error));
+        setDetail(null);
+      }
     } finally {
-      setLoadingRun(false);
+      if (!background) setLoadingRun(false);
     }
   }, []);
 
@@ -232,7 +235,7 @@ export const AgenticTotCanvas: React.FC = () => {
       setDetail(null);
       return;
     }
-    loadRun(selectedRunId).catch(() => undefined);
+    loadRun(selectedRunId, { background: false }).catch(() => undefined);
   }, [selectedRunId, loadRun]);
 
   useEffect(() => {
@@ -242,7 +245,7 @@ export const AgenticTotCanvas: React.FC = () => {
     if (status !== 'RUNNING' && status !== 'PENDING' && status !== 'BLOCKED') return;
     const intervalMs = status === 'BLOCKED' ? 10000 : 2500;
     const timer = window.setInterval(() => {
-      loadRun(selectedRunId).catch(() => undefined);
+      loadRun(selectedRunId, { background: true }).catch(() => undefined);
     }, intervalMs);
     return () => window.clearInterval(timer);
   }, [selectedRunId, detail?.status, loadRun, autoExploring]);
