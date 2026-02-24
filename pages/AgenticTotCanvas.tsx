@@ -257,7 +257,7 @@ export const AgenticTotCanvas: React.FC = () => {
     }
   }, [selectedRunId]);
 
-  const nodes = useMemo(() => detail?.totTree || [], [detail]);
+  const nodes = useMemo(() => (Array.isArray(detail?.totTree) ? detail?.totTree : []), [detail]);
   const nodeById = useMemo(() => new Map(nodes.map(node => [node.nodeId, node])), [nodes]);
 
   const childCountByParent = useMemo(() => {
@@ -454,14 +454,15 @@ export const AgenticTotCanvas: React.FC = () => {
   }, [selectedRunId, searchStats, runStats, selectedRunSummary, detail?.status]);
 
   const searchReplayEvents = useMemo(() => {
-    const rows: SearchReplayEvent[] = [];
-    (detail?.events || []).forEach((row, idx) => {
+    const replayRows: SearchReplayEvent[] = [];
+    const eventRows = Array.isArray(detail?.events) ? detail?.events : [];
+    eventRows.forEach((row, idx) => {
       const event = String((row as any)?.event || '');
       if (event !== 'search_node_selected' && event !== 'tot_node_expanded') return;
       const payload = ((row as any)?.payload || {}) as Record<string, unknown>;
       const nodeId = String(payload.nodeId || payload.node_id || '');
       if (!nodeId) return;
-      rows.push({
+      replayRows.push({
         idx,
         event,
         ts: String((row as any)?.ts || ''),
@@ -469,7 +470,7 @@ export const AgenticTotCanvas: React.FC = () => {
         summary: String((row as any)?.message || event),
       });
     });
-    return rows;
+    return replayRows;
   }, [detail?.events]);
 
   const replayActiveEvent = useMemo(() => {

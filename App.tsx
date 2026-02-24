@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ToastProvider } from './components/Toast.tsx';
+import { RouteErrorBoundary } from './components/RouteErrorBoundary';
 import { useI18n } from './services/i18n';
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then(mod => ({ default: mod.Dashboard })));
@@ -84,7 +85,14 @@ const App: React.FC = () => {
                         <Route path="/create-job" element={<CreateJob />} />
                         <Route path="/runs/:id" element={<RunDetail />} />
                         <Route path="/groups/:groupId" element={<GroupSummary />} />
-                        <Route path="/agentic" element={<AgenticTotCanvas />} />
+                        <Route
+                          path="/agentic"
+                          element={(
+                            <RouteErrorBoundary title="ToT page render failed">
+                              <AgenticTotCanvas />
+                            </RouteErrorBoundary>
+                          )}
+                        />
                         <Route path="/agentic/new" element={<AgenticIdeaBuilder />} />
                         <Route path="/agentic/workbench" element={<AgenticLab />} />
                         <Route path="/agentic/classic" element={<AgenticLabClassic />} />
