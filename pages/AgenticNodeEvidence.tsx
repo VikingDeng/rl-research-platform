@@ -25,6 +25,16 @@ type TimelineRow = {
   ts: number;
 };
 
+type NodeMutationPlan = {
+  strategy: string;
+  mutationKind: string;
+  changeSummary: string;
+  targetFiles: string[];
+  validationCommand: string;
+  risk: string;
+  source: string;
+};
+
 type EvidenceTab = 'overview' | 'timeline' | 'llm' | 'branch' | 'contract';
 
 const statusBadgeClass = (status: string) => {
@@ -63,6 +73,60 @@ const parseTimestamp = (value: unknown): number => {
     if (Number.isFinite(parsed)) return parsed;
   }
   return Date.now();
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const asStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => String(item || '').trim()).filter(Boolean);
+};
+
+const extractNodeMutationPlans = (node: AgenticNode): NodeMutationPlan[] => {
+  const evidence = asRecord(node.evidence);
+  const expansion = asRecord(evidence.expansion);
+  const direct = expansion.mutationPlan;
+  const rows = Array.isArray(direct) ? direct : direct ? [direct] : [];
+  return rows
+    .map(item => asRecord(item))
+    .filter(item => Object.keys(item).length > 0)
+    .map(item => ({
+      strategy: String(item.strategy || 'code_mutation'),
+      mutationKind: String(item.mutationKind || 'code').toLowerCase(),
+      changeSummary: String(item.changeSummary || ''),
+      targetFiles: asStringArray(item.targetFiles),
+      validationCommand: String(item.validationCommand || ''),
+      risk: String(item.risk || ''),
+      source: String(item.source || expansion.strategy || 'node_expansion'),
+    }));
+};
+
+const extractNodeRunMutationPlans = (run: AgenticNodeRunRecord): NodeMutationPlan[] => {
+  const rows = Array.isArray(run.patchPlan) ? run.patchPlan : [];
+  return rows
+    .map(item => asRecord(item))
+    .filter(item => Object.keys(item).length > 0)
+    .map(item => ({
+      strategy: String(item.strategy || 'code_mutation'),
+      mutationKind: String(item.mutationKind || 'code').toLowerCase(),
+      changeSummary: String(item.changeSummary || ''),
+      targetFiles: asStringArray(item.targetFiles),
+      validationCommand: String(item.validationCommand || ''),
+      risk: String(item.risk || ''),
+      source: `node_run:${run.nodeRunId}`,
+    }));
+};
+
+const mutationTagClass = (kind: string) => {
+  const normalized = String(kind || '').toLowerCase();
+  if (normalized === 'architecture') return 'bg-cyan-100 text-cyan-700';
+  if (normalized === 'loss' || normalized === 'objective') return 'bg-emerald-100 text-emerald-700';
+  if (normalized === 'integration' || normalized === 'ops') return 'bg-amber-100 text-amber-700';
+  if (normalized === 'evaluation') return 'bg-violet-100 text-violet-700';
+  return 'bg-slate-100 text-slate-700';
 };
 
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -208,6 +272,22 @@ export const AgenticNodeEvidence: React.FC = () => {
       .filter(item => String(item.nodeId || '') === nodeId)
       .sort((a, b) => parseTimestamp(b.startedAt) - parseTimestamp(a.startedAt));
   }, [detail, nodeId]);
+  const mutationPlansForNode = useMemo(() => {
+    if (!selectedNode) return [] as NodeMutationPlan[];
+    return extractNodeMutationPlans(selectedNode);
+  }, [selectedNode]);
+  const mutationPlansFromNodeRuns = useMemo(
+    () => nodeRunsForNode.flatMap(run => extractNodeRunMutationPlans(run)),
+    [nodeRunsForNode],
+  );
+  const mergedMutationPlans = useMemo(() => {
+    const map = new Map<string, NodeMutationPlan>();
+    [...mutationPlansForNode, ...mutationPlansFromNodeRuns].forEach(plan => {
+      const key = `${plan.mutationKind}|${plan.strategy}|${plan.changeSummary}|${plan.targetFiles.join(',')}`;
+      if (!map.has(key)) map.set(key, plan);
+    });
+    return Array.from(map.values());
+  }, [mutationPlansForNode, mutationPlansFromNodeRuns]);
   const llmTracesForNode = useMemo(() => {
     if (!detail) return [] as AgenticLlmTraceRecord[];
     return (detail.llmTraces || [])
@@ -441,7 +521,7 @@ export const AgenticNodeEvidence: React.FC = () => {
                   {statusLabel(selectedNode.status)}
                 </span>
                 <div className="text-xs text-slate-500">
-                  UCT-like: <span className="font-semibold text-blue-700">{Math.round(selectedNodeScore * 100)}</span>
+                  {tx('搜索评分', 'Search score')}: <span className="font-semibold text-blue-700">{Math.round(selectedNodeScore * 100)}</span>
                 </div>
                 <div className="text-xs text-slate-500">
                   {tx('风险', 'Risk')}: <span className="font-semibold text-slate-700">{String(selectedNode.risk || 'low').toLowerCase()}</span>
@@ -526,6 +606,69 @@ export const AgenticNodeEvidence: React.FC = () => {
             <section className="grid gap-4 xl:grid-cols-12">
               <div className="space-y-4 xl:col-span-8">
                 <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('代码变更探索（非超参搜索）', 'Code Mutation Exploration (Not Hyper-parameter Sweep)')}</h2>
+                  <p className="mt-2 text-xs text-slate-600">
+                    {tx(
+                      '该节点的核心是“代码改动分支”：每个分支都应有 mutation kind、改动摘要、目标文件和校验命令。',
+                      'This node is a code-mutation branch: each branch should include mutation kind, change summary, target files, and validation command.',
+                    )}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                    <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">
+                      {tx('节点计划', 'Node plans')}: {mutationPlansForNode.length}
+                    </span>
+                    <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">
+                      {tx('Run 证据计划', 'Run evidence plans')}: {mutationPlansFromNodeRuns.length}
+                    </span>
+                    <span className="rounded bg-blue-100 px-2 py-0.5 text-blue-700">
+                      {tx('合并唯一计划', 'Merged unique plans')}: {mergedMutationPlans.length}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {mergedMutationPlans.length === 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                        {tx(
+                          '当前节点还没有结构化的代码变更计划，建议先执行该节点以生成 patch plan 证据。',
+                          'No structured code-mutation plan for this node yet. Execute this node to generate patch-plan evidence.',
+                        )}
+                      </div>
+                    )}
+                    {mergedMutationPlans.map((plan, idx) => (
+                      <div key={`mutation-plan-${idx}-${plan.strategy}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className={`rounded px-1.5 py-0.5 font-semibold ${mutationTagClass(plan.mutationKind)}`}>
+                            {String(plan.mutationKind || 'code').toUpperCase()}
+                          </span>
+                          <span className="rounded bg-white px-1.5 py-0.5 text-slate-700">{plan.strategy}</span>
+                          <span className="rounded bg-white px-1.5 py-0.5 text-slate-500">{plan.source}</span>
+                          {plan.risk && (
+                            <span className="rounded bg-white px-1.5 py-0.5 text-slate-500">
+                              {tx('风险', 'Risk')}: {plan.risk}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-700">
+                          {plan.changeSummary || tx('无变更摘要。', 'No change summary.')}
+                        </div>
+                        {plan.targetFiles.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {plan.targetFiles.map(path => (
+                              <span key={`target-${idx}-${path}`} className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
+                                {path}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {plan.validationCommand && (
+                          <div className="mt-2 rounded bg-white px-2 py-1 font-mono text-[11px] text-slate-600">
+                            {plan.validationCommand}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </article>
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('执行计划', 'Execution Plan')}</h2>
                   <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selectedNode.executionPlan || '-'}</p>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -582,7 +725,25 @@ export const AgenticNodeEvidence: React.FC = () => {
                         <div className="mt-2 grid gap-2 lg:grid-cols-2">
                           <div className="rounded border border-slate-200 bg-white p-2">
                             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('Patch 计划', 'Patch Plan')}</div>
-                            <pre className="mt-1 max-h-32 overflow-auto text-[11px] text-slate-700">{JSON.stringify(run.patchPlan || [], null, 2)}</pre>
+                            <div className="mt-1 max-h-40 space-y-1 overflow-auto text-[11px] text-slate-700">
+                              {(() => {
+                                const runPlans = extractNodeRunMutationPlans(run);
+                                if (runPlans.length === 0) {
+                                  return <div className="rounded bg-slate-50 px-1.5 py-1 text-slate-500">-</div>;
+                                }
+                                return runPlans.map((plan, idx) => (
+                                  <div key={`run-plan-${run.nodeRunId}-${idx}`} className="rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
+                                    <div className="font-semibold text-slate-700">
+                                      {String(plan.mutationKind || 'code').toUpperCase()} · {plan.strategy}
+                                    </div>
+                                    <div className="mt-0.5 text-slate-600">{plan.changeSummary || '-'}</div>
+                                    {plan.targetFiles.length > 0 && (
+                                      <div className="mt-0.5 font-mono text-[10px] text-slate-500">{plan.targetFiles.join(', ')}</div>
+                                    )}
+                                  </div>
+                                ));
+                              })()}
+                            </div>
                           </div>
                           <div className="rounded border border-slate-200 bg-white p-2">
                             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('运行指标', 'Run Metrics')}</div>

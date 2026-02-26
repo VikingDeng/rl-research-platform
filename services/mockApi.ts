@@ -1741,6 +1741,171 @@ const makeAgenticContract = (): AgenticContractReport => ({
   missing: [],
 });
 
+type MockMutationPlan = {
+  strategy: string;
+  mutationKind: string;
+  changeSummary: string;
+  targetFiles: string[];
+  validationCommand: string;
+  risk: 'low' | 'medium' | 'high';
+};
+
+const AGENTIC_MOCK_MUTATION_TEMPLATES: Record<string, MockMutationPlan[]> = {
+  ResearchAgent: [
+    {
+      strategy: 'architecture_residual_encoder',
+      mutationKind: 'architecture',
+      changeSummary: 'Add residual shared encoder and gated layer norm before policy/value heads.',
+      targetFiles: ['apps/portal-backend/runner/algorithms/simple_train.py', 'MLE/src/toto/engine/runner.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k agentic -q',
+      risk: 'medium',
+    },
+    {
+      strategy: 'loss_advantage_clip_balance',
+      mutationKind: 'loss',
+      changeSummary: 'Adjust policy/value coefficient and adaptive entropy schedule.',
+      targetFiles: ['apps/portal-backend/runner/algorithms/simple_train.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k agentic -q',
+      risk: 'medium',
+    },
+    {
+      strategy: 'credit_assignment_temporal',
+      mutationKind: 'objective',
+      changeSummary: 'Add temporal credit assignment regularizer for lower-variance updates.',
+      targetFiles: ['apps/portal-backend/runner/algorithms/simple_train.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k agentic -q',
+      risk: 'high',
+    },
+  ],
+  IntegrationAgent: [
+    {
+      strategy: 'adapter_contract_guard',
+      mutationKind: 'integration',
+      changeSummary: 'Strengthen adapter contract checks with explicit failure reason codes.',
+      targetFiles: ['apps/portal-backend/app/services/agentic_os.py', 'apps/portal-backend/runner/runner_main.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k contract -q',
+      risk: 'medium',
+    },
+    {
+      strategy: 'adapter_dependency_fallback',
+      mutationKind: 'integration',
+      changeSummary: 'Patch adapter resolver with deterministic fallback route.',
+      targetFiles: ['apps/portal-backend/app/services/agentic_os.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k failure -q',
+      risk: 'low',
+    },
+  ],
+  EvalAgent: [
+    {
+      strategy: 'league_confidence_calibration',
+      mutationKind: 'evaluation',
+      changeSummary: 'Add calibrated confidence interval computation for matrix cells.',
+      targetFiles: ['apps/portal-backend/app/services/eval_matrix.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k matrix -q',
+      risk: 'low',
+    },
+    {
+      strategy: 'adversarial_eval_slice',
+      mutationKind: 'evaluation',
+      changeSummary: 'Add adversarial opponent slice and stratified verdict fields.',
+      targetFiles: ['apps/portal-backend/app/services/eval_matrix.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k matrix -q',
+      risk: 'medium',
+    },
+  ],
+  OpsAgent: [
+    {
+      strategy: 'runtime_observability_patch',
+      mutationKind: 'ops',
+      changeSummary: 'Emit per-phase timings and standardized failure taxonomy.',
+      targetFiles: ['apps/portal-backend/app/services/agentic_os.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k audit -q',
+      risk: 'low',
+    },
+    {
+      strategy: 'execution_retry_policy',
+      mutationKind: 'ops',
+      changeSummary: 'Adjust retry policy thresholds and failure budget handling.',
+      targetFiles: ['apps/portal-backend/app/services/agentic_os.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k retry -q',
+      risk: 'low',
+    },
+  ],
+  SafetyAgent: [
+    {
+      strategy: 'approval_policy_guard',
+      mutationKind: 'integration',
+      changeSummary: 'Enforce high-risk action approval matrix with stronger role checks.',
+      targetFiles: ['apps/portal-backend/app/services/agentic_os.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -k approval -q',
+      risk: 'medium',
+    },
+  ],
+  default: [
+    {
+      strategy: 'generic_code_mutation',
+      mutationKind: 'code',
+      changeSummary: 'Apply minimal code mutation and verify execution contract.',
+      targetFiles: ['apps/portal-backend/app/services/agentic_os.py'],
+      validationCommand: 'python -m pytest apps/portal-backend/tests -q',
+      risk: 'medium',
+    },
+  ],
+};
+
+const buildMockMutationPlanForNode = (node: AgenticNode, seed = 0): MockMutationPlan => {
+  const pool = AGENTIC_MOCK_MUTATION_TEMPLATES[node.agent] || AGENTIC_MOCK_MUTATION_TEMPLATES.default;
+  const index = Math.abs(seed) % Math.max(1, pool.length);
+  const selected = pool[index] || AGENTIC_MOCK_MUTATION_TEMPLATES.default[0];
+  return {
+    strategy: selected.strategy,
+    mutationKind: selected.mutationKind,
+    changeSummary: selected.changeSummary,
+    targetFiles: [...selected.targetFiles],
+    validationCommand: selected.validationCommand,
+    risk: selected.risk,
+  };
+};
+
+const applyMockMutationPlan = (
+  node: AgenticNode,
+  mutationPlan: MockMutationPlan,
+  options?: { rewriteNarrative?: boolean; createdAt?: string },
+) => {
+  const rewriteNarrative = options?.rewriteNarrative !== false;
+  const createdAt = options?.createdAt || new Date().toISOString();
+  const evidence = (node.evidence || {}) as Record<string, unknown>;
+  const expansion = ((evidence.expansion as Record<string, unknown>) || {}) as Record<string, unknown>;
+  const mutationKind = String(mutationPlan.mutationKind || 'code').toLowerCase();
+  const prefixedTitle = String(node.title || '').toLowerCase().startsWith(`[${mutationKind}]`)
+    ? String(node.title || '')
+    : `[${String(mutationPlan.mutationKind || 'code').toUpperCase()}] ${node.title}`;
+  node.title = prefixedTitle;
+  if (rewriteNarrative) {
+    node.hypothesis = `${mutationPlan.changeSummary} This branch changes source code (${mutationKind}).`;
+    const files = mutationPlan.targetFiles.map(path => path.split('/').pop() || path).join(', ');
+    node.executionPlan = `Apply code patch and run branch validation. Patch files: ${files}.`;
+  }
+  node.risk = String(mutationPlan.risk || node.risk || 'medium');
+  node.evidence = {
+    ...evidence,
+    expansion: {
+      ...expansion,
+      strategy: mutationPlan.strategy,
+      mutationPlan: {
+        strategy: mutationPlan.strategy,
+        mutationKind: mutationPlan.mutationKind,
+        changeSummary: mutationPlan.changeSummary,
+        targetFiles: mutationPlan.targetFiles,
+        validationCommand: mutationPlan.validationCommand,
+        risk: mutationPlan.risk,
+        source: 'mock_llm',
+      },
+      createdAt,
+    },
+  };
+};
+
 const createAgenticNode = (
   nodeId: string,
   agent: string,
@@ -2211,6 +2376,9 @@ const buildAgenticTotTree = (idea: AgenticIdeaInput, drafts: ReturnType<typeof b
     };
     node.rationale = `${row.agent} generates step-level decision evidence from spec context.`;
     node.nextSuggestions = row.suggestions;
+    const branchSeed = Number(String(row.id || '').replace(/[^\d]/g, '') || 0);
+    const mutationPlan = buildMockMutationPlanForNode(node, branchSeed);
+    applyMockMutationPlan(node, mutationPlan, { rewriteNarrative: true });
     return node;
   });
 
@@ -2705,16 +2873,17 @@ const seedAgenticShowcaseRun = () => {
       const childCount = depth === 0 ? 2 : 1;
       const childIds: string[] = [];
       for (let i = 0; i < childCount; i += 1) {
+        const childId = nextNodeId();
         const child = createAgenticNode(
-          nextNodeId(),
+          childId,
           i % 2 === 0 ? 'ResearchAgent' : 'EvalAgent',
           `${node.title} · showcase branch ${i + 1}`,
           node.nodeId,
           depth === 0 ? 'medium' : 'low',
           'PENDING',
         );
-        child.hypothesis = `Showcase branch ${i + 1} for ${node.nodeId}`;
-        child.executionPlan = `Evaluate branch ${i + 1}, compare with sibling, and keep the better node.`;
+        const mutationPlan = buildMockMutationPlanForNode(child, depth + i + round + 1);
+        applyMockMutationPlan(child, mutationPlan, { rewriteNarrative: true, createdAt: ts });
         child.expectedMetrics = { ...(node.expectedMetrics || {}) };
         ensureNodeSearchMeta(child, depth + 1);
         detail.totTree.push(child);
@@ -2725,7 +2894,7 @@ const seedAgenticShowcaseRun = () => {
         ts,
         event: 'tot_node_expanded',
         message: `${node.nodeId} expanded`,
-        payload: { nodeId: node.nodeId, childIds },
+        payload: { nodeId: node.nodeId, childIds, createdNodeIds: childIds },
       });
     }
   }
@@ -4216,6 +4385,39 @@ export const createMockApi = (_apiBaseUrl: string) => ({
       }
       return nodeId;
     };
+    const resolveNodePatchPlan = (node: AgenticNode, seed: number) => {
+      const evidence = (node.evidence || {}) as Record<string, unknown>;
+      const expansion = ((evidence.expansion as Record<string, unknown>) || {}) as Record<string, unknown>;
+      const direct = expansion.mutationPlan;
+      const rows = Array.isArray(direct) ? direct : direct ? [direct] : [];
+      const normalized = rows
+        .map(item => ((item && typeof item === 'object' && !Array.isArray(item)) ? (item as Record<string, unknown>) : null))
+        .filter(Boolean)
+        .map(item => ({
+          strategy: String((item as Record<string, unknown>).strategy || 'code_mutation'),
+          mutationKind: String((item as Record<string, unknown>).mutationKind || 'code'),
+          changeSummary: String((item as Record<string, unknown>).changeSummary || ''),
+          targetFiles: Array.isArray((item as Record<string, unknown>).targetFiles)
+            ? ((item as Record<string, unknown>).targetFiles as unknown[]).map(v => String(v || '').trim()).filter(Boolean)
+            : [],
+          validationCommand: String((item as Record<string, unknown>).validationCommand || 'python -m pytest apps/portal-backend/tests -q'),
+          risk: String((item as Record<string, unknown>).risk || 'medium'),
+        }))
+        .filter(item => item.targetFiles.length > 0);
+      if (normalized.length > 0) return normalized;
+      const fallback = buildMockMutationPlanForNode(node, seed);
+      applyMockMutationPlan(node, fallback, { rewriteNarrative: false });
+      return [
+        {
+          strategy: fallback.strategy,
+          mutationKind: fallback.mutationKind,
+          changeSummary: fallback.changeSummary,
+          targetFiles: fallback.targetFiles,
+          validationCommand: fallback.validationCommand,
+          risk: fallback.risk,
+        },
+      ];
+    };
 
     targetNodes.forEach(node => {
       const nodeTs = new Date().toISOString();
@@ -4261,7 +4463,7 @@ export const createMockApi = (_apiBaseUrl: string) => ({
           return;
         }
       }
-      if (node.title === 'Execute Candidate Run' && executionMode === 'local_shell') {
+      if (String(node.title || '').toLowerCase().includes('execute candidate run') && executionMode === 'local_shell') {
         const hasApprovedScript = detail.pendingApprovals.some(
           item => item.action === 'unknown_script_execution' && item.status === 'APPROVED',
         );
@@ -4282,6 +4484,10 @@ export const createMockApi = (_apiBaseUrl: string) => ({
       const reward = clampNumber(0.45 + Math.random() * 0.5 - depth * 0.05, 0.18, 0.95);
       const nextVisits = prevVisits + 1;
       const value = ((prevValue * prevVisits) + reward) / Math.max(1, nextVisits);
+      const patchPlan = resolveNodePatchPlan(node, depth + nextVisits);
+      const nodeRunId = randomToken('nr');
+      const artifactBase = `artifacts/node_runs/${nodeRunId}`;
+      const resolvedTargets = patchPlan.reduce((acc, plan) => acc + (plan.targetFiles || []).length, 0);
       node.evidence = {
         ...node.evidence,
         executedAt: nodeTs,
@@ -4302,6 +4508,42 @@ export const createMockApi = (_apiBaseUrl: string) => ({
             }
           : {}),
       };
+      detail.nodeRuns.unshift({
+        nodeRunId,
+        runId,
+        nodeId: node.nodeId,
+        parentNodeId: node.parentId || null,
+        parentNodeRunId: null,
+        agent: node.agent,
+        title: `${node.title} run`,
+        status: 'SUCCEEDED',
+        startedAt: nodeTs,
+        finishedAt: nodeTs,
+        patchPlan,
+        metrics: {
+          reward: Number(reward.toFixed(4)),
+          value: Number(value.toFixed(4)),
+          frontierScore: Number((frontierBase * 0.86).toFixed(4)),
+          nodeRunArtifacts: {
+            diffFiles: resolvedTargets,
+            resolvedTargets,
+            unresolvedTargets: 0,
+            pythonSyntaxFailed: 0,
+          },
+        },
+        artifactPaths: [
+          `${artifactBase}/patch_plan.json`,
+          `${artifactBase}/manifest.json`,
+          `${artifactBase}/diff.patch`,
+        ],
+        replayRef: {
+          runId,
+          nodeId: node.nodeId,
+          nodeRunId,
+          step: nextVisits,
+        },
+        error: null,
+      });
       const spawned = spawnSubAgentsForNode(detail, node);
       if (spawned.length > 0) {
         node.evidence = {
@@ -4365,8 +4607,8 @@ export const createMockApi = (_apiBaseUrl: string) => ({
             depth >= 2 ? 'low' : 'medium',
             'PENDING',
           );
-          child.hypothesis = `Branch ${i + 1}: test an alternative assumption under ${node.nodeId}.`;
-          child.executionPlan = `Run branch ${i + 1} derived from ${node.nodeId}, then compare evidence.`;
+          const childMutationPlan = buildMockMutationPlanForNode(child, depth + i + nextVisits + 1);
+          applyMockMutationPlan(child, childMutationPlan, { rewriteNarrative: true, createdAt: nodeTs });
           child.nextSuggestions = ['Execute branch', 'Compare sibling branches', 'Keep best branch'];
           child.expectedMetrics = { ...(node.expectedMetrics || {}) };
           child.budget = {
@@ -4413,6 +4655,7 @@ export const createMockApi = (_apiBaseUrl: string) => ({
           payload: {
             nodeId: node.nodeId,
             childIds: createdIds,
+            createdNodeIds: createdIds,
             depth,
           },
         });

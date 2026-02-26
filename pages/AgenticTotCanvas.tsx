@@ -21,6 +21,63 @@ type SearchReplayEvent = {
   childIds: string[];
 };
 
+type NodeMutationPlan = {
+  strategy: string;
+  mutationKind: string;
+  changeSummary: string;
+  targetFiles: string[];
+  validationCommand: string;
+  risk: string;
+  source: string;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const asStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => String(item || '').trim()).filter(Boolean);
+};
+
+const extractNodeMutationPlans = (node: AgenticNode): NodeMutationPlan[] => {
+  const evidence = asRecord(node.evidence);
+  const expansion = asRecord(evidence.expansion);
+  const direct = expansion.mutationPlan;
+  const rows = Array.isArray(direct) ? direct : direct ? [direct] : [];
+  return rows
+    .map(item => asRecord(item))
+    .filter(item => Object.keys(item).length > 0)
+    .map(item => ({
+      strategy: String(item.strategy || 'code_mutation'),
+      mutationKind: String(item.mutationKind || 'code').toLowerCase(),
+      changeSummary: String(item.changeSummary || ''),
+      targetFiles: asStringArray(item.targetFiles),
+      validationCommand: String(item.validationCommand || ''),
+      risk: String(item.risk || ''),
+      source: String(item.source || expansion.strategy || 'node_expansion'),
+    }));
+};
+
+const mutationBadgeColors = (kind: string) => {
+  const normalized = String(kind || '').toLowerCase();
+  if (normalized === 'architecture') return { fill: 'rgba(14,116,144,.14)', stroke: 'rgba(14,116,144,.42)', text: '#0e7490' };
+  if (normalized === 'loss' || normalized === 'objective') return { fill: 'rgba(22,163,74,.14)', stroke: 'rgba(22,163,74,.4)', text: '#15803d' };
+  if (normalized === 'integration' || normalized === 'ops') return { fill: 'rgba(217,119,6,.14)', stroke: 'rgba(217,119,6,.4)', text: '#b45309' };
+  if (normalized === 'evaluation') return { fill: 'rgba(124,58,237,.14)', stroke: 'rgba(124,58,237,.4)', text: '#6d28d9' };
+  return { fill: 'rgba(71,85,105,.14)', stroke: 'rgba(71,85,105,.35)', text: '#475569' };
+};
+
+const mutationTagClass = (kind: string) => {
+  const normalized = String(kind || '').toLowerCase();
+  if (normalized === 'architecture') return 'bg-cyan-100 text-cyan-700';
+  if (normalized === 'loss' || normalized === 'objective') return 'bg-emerald-100 text-emerald-700';
+  if (normalized === 'integration' || normalized === 'ops') return 'bg-amber-100 text-amber-700';
+  if (normalized === 'evaluation') return 'bg-violet-100 text-violet-700';
+  return 'bg-slate-100 text-slate-700';
+};
+
 const statusBadgeClass = (status: string) => {
   const normalized = String(status || '').toUpperCase();
   if (normalized === 'SUCCEEDED') return 'bg-emerald-100 text-emerald-700';
@@ -517,6 +574,17 @@ export const AgenticTotCanvas: React.FC = () => {
   }, [selectedNodeId, hoveredNodeId, replayNodeId, visibleNodes, visibleNodeMap, replayRevealedNodeIds]);
 
   const focusedNode = useMemo(() => (focusedNodeId ? nodeById.get(focusedNodeId) || null : null), [focusedNodeId, nodeById]);
+  const mutationPlansByNode = useMemo(() => {
+    const map = new Map<string, NodeMutationPlan[]>();
+    nodes.forEach(node => {
+      map.set(node.nodeId, extractNodeMutationPlans(node));
+    });
+    return map;
+  }, [nodes]);
+  const focusedNodeMutationPlans = useMemo(
+    () => (focusedNode ? mutationPlansByNode.get(focusedNode.nodeId) || [] : []),
+    [focusedNode, mutationPlansByNode],
+  );
 
   const runStats = useMemo(() => {
     const stats = { total: nodes.length, running: 0, failed: 0, blocked: 0, succeeded: 0, pending: 0 };
@@ -1385,6 +1453,20 @@ export const AgenticTotCanvas: React.FC = () => {
                 const llmStat = llmTraceByNode.get(node.nodeId);
                 const llmCalls = llmStat?.total || 0;
                 const llmFailed = llmStat?.failed || 0;
+                const mutationPlans = mutationPlansByNode.get(node.nodeId) || [];
+                const primaryMutation = mutationPlans[0] || null;
+                const mutationKind = String(primaryMutation?.mutationKind || '').toLowerCase();
+                const mutationTag = mutationKind ? mutationKind.toUpperCase() : '';
+                const mutationColors = mutationBadgeColors(mutationKind);
+                const mutationBadgeWidth = Math.max(40, Math.min(122, mutationTag.length * 6 + 20));
+                const mutationTargets = primaryMutation?.targetFiles || [];
+                const mutationTargetHintRaw = mutationTargets
+                  .slice(0, 2)
+                  .map(path => String(path || '').split('/').pop() || String(path || ''))
+                  .join(', ');
+                const mutationTargetHint = mutationTargetHintRaw
+                  ? splitLines(mutationTargetHintRaw, 22, 1)[0]
+                  : '';
                 const revealStep = firstSeenStepByNode.get(node.nodeId) ?? 0;
                 const isJustRevealed = replayStep > 0 && revealStep === replayStep;
                 const cardBg = normStatus === 'FAILED'
@@ -1404,7 +1486,7 @@ export const AgenticTotCanvas: React.FC = () => {
                     onDoubleClick={() => openNodeEvidence(node.nodeId)}
                   >
                     <title>
-                      {`${node.nodeId} · ${node.title} · score ${scorePct} · llm ${llmCalls} · failed ${llmFailed} · latency ${llmStat?.avgLatencyMs || 0}ms${llmStat?.lastTask ? ` · ${llmStat.lastTask}` : ''}`}
+                      {`${node.nodeId} · ${node.title} · score ${scorePct} · llm ${llmCalls} · failed ${llmFailed} · latency ${llmStat?.avgLatencyMs || 0}ms${primaryMutation ? ` · mutation ${primaryMutation.mutationKind} · files ${primaryMutation.targetFiles.length}` : ''}${llmStat?.lastTask ? ` · ${llmStat.lastTask}` : ''}`}
                     </title>
                     {isJustRevealed && (
                       <rect
@@ -1440,6 +1522,23 @@ export const AgenticTotCanvas: React.FC = () => {
                         <tspan key={`${node.nodeId}-${idx}`} x={20} dy={idx === 0 ? 0 : 12}>{line}</tspan>
                       ))}
                     </text>
+                    {primaryMutation && (
+                      <>
+                        <rect
+                          x={20}
+                          y={50}
+                          width={mutationBadgeWidth}
+                          height={13}
+                          rx={6.5}
+                          fill={mutationColors.fill}
+                          stroke={mutationColors.stroke}
+                          strokeWidth={0.7}
+                        />
+                        <text x={26} y={59.5} fontSize={7.7} fontWeight={700} fill={mutationColors.text}>
+                          {mutationTag}
+                        </text>
+                      </>
+                    )}
                     {llmCalls > 0 && (
                       <>
                         {llmCalls >= 3 && (
@@ -1488,8 +1587,12 @@ export const AgenticTotCanvas: React.FC = () => {
                         {isCollapsed && <line x1={0} y1={-3} x2={0} y2={3} stroke="#334155" strokeWidth={1.2} strokeLinecap="round" />}
                       </g>
                     )}
-                    <text x={20} y={graph.cardHeight - 38} fontSize={8.2} fill="#475569">N {searchMeta.visits} · V {(searchMeta.value || 0).toFixed(2)}</text>
-                    <text x={20} y={graph.cardHeight - 28} fontSize={8.2} fill="#475569">Sel {searchMeta.selectedCount} · D {searchMeta.depth}</text>
+                    <text x={20} y={graph.cardHeight - 38} fontSize={8.2} fill="#475569">
+                      {primaryMutation ? `${tx('代码变更', 'Code change')} · ${mutationTag || 'CODE'} · files ${mutationTargets.length}` : `N ${searchMeta.visits} · V ${(searchMeta.value || 0).toFixed(2)}`}
+                    </text>
+                    <text x={20} y={graph.cardHeight - 28} fontSize={8.2} fill="#475569">
+                      {primaryMutation ? (mutationTargetHint || `${tx('策略', 'Strategy')}: ${primaryMutation.strategy}`) : `Sel ${searchMeta.selectedCount} · D ${searchMeta.depth}`}
+                    </text>
                     <rect x={20} y={graph.cardHeight - 20} width={30} height={14} rx={7} fill="rgba(148,163,184,.16)" />
                     <text x={35} y={graph.cardHeight - 10} textAnchor="middle" fontSize={8.4} fontWeight={700} fill="#475569">
                       {riskLabel === 'high' ? 'H' : riskLabel === 'medium' ? 'M' : 'L'}
@@ -1508,7 +1611,7 @@ export const AgenticTotCanvas: React.FC = () => {
                       {scorePct}
                     </text>
                     <text x={graph.cardWidth - 6} y={graph.cardHeight - 11} textAnchor="end" fontSize={8.1} fill="#64748b">
-                      UCT
+                      {tx('评分', 'Score')}
                     </text>
                   </g>
                 );
@@ -1526,7 +1629,9 @@ export const AgenticTotCanvas: React.FC = () => {
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                   <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">{focusedNode.nodeId}</span>
                   <span className={`rounded px-1.5 py-0.5 font-semibold ${statusBadgeClass(focusedNode.status)}`}>{focusedNode.status}</span>
-                  <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">UCT {Math.round((getSearchMeta(focusedNode).frontierScore || 0) * 100) || '-'}</span>
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">
+                    {tx('搜索评分', 'Search score')} {Math.round((getSearchMeta(focusedNode).frontierScore || 0) * 100) || '-'}
+                  </span>
                   <span className={`rounded px-1.5 py-0.5 font-semibold ${(focusedNodeLlm?.total || 0) > 0 ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>
                     LLM {focusedNodeLlm?.total || 0}
                   </span>
@@ -1538,6 +1643,35 @@ export const AgenticTotCanvas: React.FC = () => {
                 </div>
                 <div className="mt-1 text-sm font-semibold text-slate-800">{focusedNode.title || focusedNode.nodeId}</div>
                 <p className="mt-1 line-clamp-2 text-xs text-slate-600">{focusedNode.hypothesis || '-'}</p>
+                {focusedNodeMutationPlans.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                    {focusedNodeMutationPlans.slice(0, 3).map((item, idx) => {
+                      const files = item.targetFiles
+                        .slice(0, 2)
+                        .map(path => String(path || '').split('/').pop() || String(path || ''))
+                        .join(', ');
+                      return (
+                        <span
+                          key={`focus-mutation-${idx}-${item.strategy}`}
+                          className={`inline-flex items-center rounded px-1.5 py-0.5 font-semibold ${mutationTagClass(item.mutationKind)}`}
+                          title={`${item.changeSummary}${files ? ` | files: ${files}` : ''}`}
+                        >
+                          {String(item.mutationKind || 'code').toUpperCase()}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {focusedNodeMutationPlans[0]?.changeSummary && (
+                  <div className="mt-1 text-[11px] text-slate-600">
+                    {tx('代码改动', 'Code change')}: {focusedNodeMutationPlans[0].changeSummary}
+                  </div>
+                )}
+                {focusedNodeMutationPlans[0]?.targetFiles?.length > 0 && (
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    {tx('目标文件', 'Target files')}: {focusedNodeMutationPlans[0].targetFiles.slice(0, 3).join(', ')}
+                  </div>
+                )}
                 {(focusedNodeLlm?.total || 0) > 0 && (
                   <div className="mt-1 text-[11px] text-violet-700">
                     {tx('最近 LLM 任务', 'Latest LLM task')}: {focusedNodeLlm?.lastTask || '-'} · {tx('均延迟', 'avg latency')} {focusedNodeLlm?.avgLatencyMs || 0}ms

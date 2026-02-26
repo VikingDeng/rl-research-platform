@@ -6455,7 +6455,10 @@ PY
                 message=f"Expanded {node.get('node_id')} with {len(created_ids)} child nodes",
                 payload={
                     "node_id": node.get("node_id"),
+                    "nodeId": node.get("node_id"),
                     "created_node_ids": created_ids,
+                    "createdNodeIds": created_ids,
+                    "childIds": created_ids,
                     "depth": depth + 1,
                     "branch_factor": int(plan.get("branchFactor") or 2),
                 },
@@ -6483,11 +6486,23 @@ PY
                 "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
                 "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q"),
             }
+            mutation_kind = str(mutation_plan.get("mutationKind") or "code").strip().lower() or "code"
+            title_raw = str(item.get("title") or f"{node_id} Code Branch {idx}").strip()
+            title = title_raw if title_raw.lower().startswith(f"[{mutation_kind}]") else f"[{mutation_kind.upper()}] {title_raw}"
+            targets = [str(v) for v in (mutation_plan.get("targetFiles") or []) if str(v).strip()]
+            target_hint = ", ".join(Path(path).name for path in targets[:2])
+            execution_plan_raw = str(item.get("executionPlan") or "Apply patch proposal and execute branch run.").strip()
+            execution_plan = execution_plan_raw
+            if targets and "patch files:" not in execution_plan_raw.lower():
+                execution_plan = f"{execution_plan_raw} Patch files: {target_hint}."
+            hypothesis = str(item.get("hypothesis") or f"Code-level mutation can improve {primary_metric}.").strip()
+            if "code" not in hypothesis.lower() and mutation_kind not in hypothesis.lower():
+                hypothesis = f"{hypothesis} This branch changes source code ({mutation_kind})."
             rows.append(
                 {
-                    "title": str(item.get("title") or f"{node_id} Code Branch {idx}"),
-                    "hypothesis": str(item.get("hypothesis") or f"Code-level mutation can improve {primary_metric}."),
-                    "execution_plan": str(item.get("executionPlan") or "Apply patch proposal and execute branch run."),
+                    "title": title,
+                    "hypothesis": hypothesis,
+                    "execution_plan": execution_plan,
                     "agent": agent,
                     "expected_metrics": expected,
                     "budget": budget,
