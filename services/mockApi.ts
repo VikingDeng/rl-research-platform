@@ -5,6 +5,7 @@ import {
   type AgenticActionResponse,
   type AgenticContractReport,
   type AgenticIdeaInput,
+  type AgenticLlmTraceRecord,
   type AgenticListResponse,
   type AgenticMatrixResponse,
   type AgenticNode,
@@ -2320,6 +2321,36 @@ const makeAgenticRunDetail = (runId: string, idea: AgenticIdeaInput): AgenticRun
   const now = new Date().toISOString();
   const drafts = buildAgenticDraftsFromIdea(idea);
   const tree = buildAgenticTotTree(idea, drafts);
+  const llmTraces: AgenticLlmTraceRecord[] = [
+    {
+      ts: now,
+      task: 'lane_plans_research',
+      status: 'succeeded',
+      model: 'gpt-4.1-mini',
+      attempt: 1,
+      latencyMs: 126,
+      nodeId: null,
+      role: 'lane_planner:research',
+      promptHash: randomToken('prompt'),
+      responseHash: randomToken('resp'),
+      schemaValid: true,
+      error: null,
+    },
+    {
+      ts: now,
+      task: 'mutation_templates_research',
+      status: 'succeeded',
+      model: 'gpt-4.1-mini',
+      attempt: 1,
+      latencyMs: 188,
+      nodeId: 'n0',
+      role: 'ResearchAgent',
+      promptHash: randomToken('prompt'),
+      responseHash: randomToken('resp'),
+      schemaValid: true,
+      error: null,
+    },
+  ];
   const detail: AgenticRunDetail = {
     runId,
     status: 'PENDING',
@@ -2360,6 +2391,8 @@ const makeAgenticRunDetail = (runId: string, idea: AgenticIdeaInput): AgenticRun
       },
     ],
     pendingApprovals: [],
+    nodeRuns: [],
+    llmTraces,
     contract: makeAgenticContract(),
     searchStats: {
       totalNodes: 0,

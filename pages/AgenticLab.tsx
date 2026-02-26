@@ -41,6 +41,35 @@ const parseMetricNumber = (raw: unknown): number | null => {
 
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+const normalizeLlmIssue = (raw: string, tx: (zh: string, en: string) => string): string => {
+  const detail = String(raw || '');
+  if (detail.includes('llm_required_missing_api_key')) {
+    return tx(
+      '未配置 LLM API Key（AGENTIC_LLM_API_KEY）。请先在后端环境变量中配置，再重试。',
+      'LLM API key is missing (AGENTIC_LLM_API_KEY). Configure backend env and retry.',
+    );
+  }
+  if (detail.includes('llm_required_missing_model')) {
+    return tx(
+      '未配置 LLM 模型（AGENTIC_LLM_MODEL）。请先配置模型名，再重试。',
+      'LLM model is missing (AGENTIC_LLM_MODEL). Configure model and retry.',
+    );
+  }
+  if (detail.includes('llm_required_missing_provider')) {
+    return tx(
+      '未配置 LLM Provider（AGENTIC_LLM_PROVIDER）。请先配置 provider，再重试。',
+      'LLM provider is missing (AGENTIC_LLM_PROVIDER). Configure provider and retry.',
+    );
+  }
+  if (detail.includes('llm_required_')) {
+    return tx(
+      `LLM 核心链路校验失败：${detail}`,
+      `LLM core-chain check failed: ${detail}`,
+    );
+  }
+  return detail;
+};
+
 const splitLines = (value: string, maxChars: number, maxLines: number) => {
   const rawTokens = String(value || '').split(/\s+/).filter(Boolean);
   const tokens = rawTokens.flatMap(token => {
@@ -414,6 +443,21 @@ export const AgenticLab: React.FC = () => {
     });
     return stats;
   }, [nodes]);
+  const llmTraceSummary = useMemo(() => {
+    const traces = Array.isArray(detail?.llmTraces) ? detail?.llmTraces : [];
+    const total = traces.length;
+    const failed = traces.filter(item => String(item.status || '').toLowerCase() !== 'succeeded').length;
+    const succeeded = total - failed;
+    const avgLatencyMs = total > 0
+      ? Math.round(
+          traces.reduce((acc, item) => {
+            const latency = Number(item.latencyMs || 0);
+            return acc + (Number.isFinite(latency) ? Math.max(0, latency) : 0);
+          }, 0) / total,
+        )
+      : 0;
+    return { total, succeeded, failed, avgLatencyMs };
+  }, [detail?.llmTraces]);
 
   const fitGraphToViewport = useCallback(() => {
     const viewport = graphViewportRef.current;
@@ -553,7 +597,7 @@ export const AgenticLab: React.FC = () => {
         ),
       );
     } catch (error) {
-      setMessage(toErrorMessage(error));
+      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
     } finally {
       setBusyAction('none');
     }
@@ -563,8 +607,10 @@ export const AgenticLab: React.FC = () => {
     setBusyAction('create');
     setMessage('');
     try {
+      const idea = buildIdeaPayload(ideaDraft);
+      await api.validateAgenticSpec(idea);
       const result = await api.createAgenticRun({
-        idea: buildIdeaPayload(ideaDraft),
+        idea,
         autoExecute: false,
       });
       await refreshRuns();
@@ -572,7 +618,7 @@ export const AgenticLab: React.FC = () => {
       setDetail(result.detail);
       setMessage(tx(`已创建 Run ${result.runId}`, `Run ${result.runId} created.`));
     } catch (error) {
-      setMessage(toErrorMessage(error));
+      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
     } finally {
       setBusyAction('none');
     }
@@ -590,7 +636,7 @@ export const AgenticLab: React.FC = () => {
       await refreshRuns();
       setMessage(result.message || tx('执行成功。', 'Execution succeeded.'));
     } catch (error) {
-      setMessage(toErrorMessage(error));
+      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
     } finally {
       setBusyAction('none');
     }
@@ -699,7 +745,7 @@ export const AgenticLab: React.FC = () => {
         </div>
 
         {selectedRunSummary && (
-          <div className="grid gap-2 sm:grid-cols-6">
+          <div className="grid gap-2 sm:grid-cols-8">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
               <div className="font-semibold text-slate-800">{tx('总节点', 'Total Nodes')}</div>
               <div className="mt-1 text-lg font-semibold text-slate-900">{runStats.total}</div>
@@ -723,6 +769,14 @@ export const AgenticLab: React.FC = () => {
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
               <div className="font-semibold text-slate-800">{tx('前沿候选', 'Frontier')}</div>
               <div className="mt-1 text-lg font-semibold text-blue-700">{frontierRanking.length}</div>
+            </div>
+            <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-700">
+              <div className="font-semibold">{tx('LLM 调用', 'LLM Calls')}</div>
+              <div className="mt-1 text-lg font-semibold">{llmTraceSummary.total}</div>
+            </div>
+            <div className={`rounded-lg border px-3 py-2 text-xs ${llmTraceSummary.failed > 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+              <div className="font-semibold">{tx('LLM 失败/延迟', 'LLM Failed/Latency')}</div>
+              <div className="mt-1 text-lg font-semibold">{llmTraceSummary.failed} / {llmTraceSummary.avgLatencyMs}ms</div>
             </div>
           </div>
         )}

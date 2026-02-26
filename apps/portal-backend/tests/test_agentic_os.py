@@ -2,7 +2,139 @@ import json
 import os
 from pathlib import Path
 import zipfile
-import copy
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _force_llm_core(monkeypatch):
+    monkeypatch.setenv("AGENTIC_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("AGENTIC_LLM_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("AGENTIC_LLM_API_KEY", "unit-test-key")
+
+    import app.api.routes as routes_module
+
+    service = routes_module.agentic_os_service
+
+    def _fake_llm_complete_json(
+        *,
+        task,
+        system_prompt,
+        user_prompt,
+        schema,
+        temperature=0.2,
+        run_id=None,
+        node_id=None,
+        role=None,
+    ):
+        del system_prompt, schema, temperature
+        payload = {}
+        try:
+            payload = json.loads(str(user_prompt or ""))
+        except Exception:
+            payload = {}
+
+        trace_run_id = str(run_id or payload.get("runId") or "").strip()
+        trace_node_id = str(node_id or payload.get("nodeId") or "").strip() or None
+        trace_role = str(role or payload.get("role") or "").strip() or None
+        if trace_run_id:
+            service._append_llm_trace(
+                trace_run_id,
+                {
+                    "ts": "2026-01-01T00:00:00+00:00",
+                    "task": str(task or ""),
+                    "status": "succeeded",
+                    "model": "gpt-4.1-mini",
+                    "attempt": 1,
+                    "latency_ms": 11,
+                    "node_id": trace_node_id,
+                    "role": trace_role,
+                    "prompt_hash": f"test_prompt_{str(task or '')}",
+                    "response_hash": f"test_resp_{str(task or '')}",
+                    "schema_valid": True,
+                    "error": None,
+                },
+            )
+
+        task_text = str(task or "")
+        if task_text.startswith("mutation_templates_"):
+            lane = task_text.replace("mutation_templates_", "", 1) or "research"
+            if lane == "integration":
+                target_files = ["apps/portal-backend/app/services/agentic_os.py"]
+                mutation_kind = "integration"
+            elif lane == "evaluation":
+                target_files = ["apps/portal-backend/app/services/eval_matrix.py"]
+                mutation_kind = "evaluation"
+            elif lane == "execution":
+                target_files = ["apps/portal-backend/app/services/agentic_os.py"]
+                mutation_kind = "ops"
+            else:
+                target_files = ["apps/portal-backend/runner/algorithms/simple_train.py"]
+                mutation_kind = "architecture"
+            node_id = str(payload.get("nodeId") or "nX")
+            metric = str(payload.get("primaryMetric") or "winRate")
+            return {
+                "items": [
+                    {
+                        "strategy": f"llm_{lane}_mutation",
+                        "mutationKind": mutation_kind,
+                        "title": f"{node_id} {lane.title()} Branch",
+                        "hypothesis": f"LLM mutation for {lane} can improve {metric}.",
+                        "executionPlan": "Apply code patch, run branch, and compare metrics.",
+                        "targetFiles": target_files,
+                        "changeSummary": f"LLM-generated {lane} mutation proposal.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k agentic -q",
+                        "risk": "medium",
+                    }
+                ]
+            }
+
+        if task_text.startswith("lane_plans_"):
+            lane = task_text.replace("lane_plans_", "", 1)
+            mapping = {
+                "research": [
+                    {"role": "DataScoutSubAgent", "objective": "Mine related runs and failure motifs."},
+                    {"role": "HypothesisCriticSubAgent", "objective": "Challenge assumptions and define controls."},
+                ],
+                "integration_base": [
+                    {"role": "ContractProbeSubAgent", "objective": "Check runner contract compatibility."},
+                ],
+                "integration_fresh_only": [
+                    {"role": "DependencyProbeSubAgent", "objective": "Analyze dependency risks for adapters."},
+                ],
+                "ops_budget_guard": [
+                    {"role": "BudgetGuardSubAgent", "objective": "Audit cost and runtime stability envelope."},
+                ],
+                "eval": [
+                    {"role": "ConfidenceCheckSubAgent", "objective": "Validate confidence and ranking reliability."},
+                ],
+                "repair": [
+                    {"role": "RootCauseSubAgent", "objective": "Validate failure root cause and repair path."},
+                ],
+            }
+            return {"plans": mapping.get(lane) or [{"role": "GeneralSubAgent", "objective": "Analyze current node."}]}
+
+        if task_text == "sub_agent_execution":
+            context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+            role = str(payload.get("role") or context.get("role") or "GeneralSubAgent")
+            depth = int(context.get("depth") or 1)
+            max_depth = int(context.get("maxDepth") or 2)
+            data_count = int(context.get("dataSourceCount") or 0)
+            spawn_plans = []
+            if role == "DataScoutSubAgent" and data_count > 1 and depth < max_depth:
+                spawn_plans = [
+                    {"role": "SchemaProbeSubAgent", "objective": "Probe schema compatibility across sources."}
+                ]
+            return {
+                "analysis": f"LLM analysis completed for role={role}.",
+                "actions": [f"action::{role}::collect", f"action::{role}::validate"],
+                "confidence": 0.78,
+                "estimatedLatencyMs": 220,
+                "spawnPlans": spawn_plans,
+            }
+
+        raise AssertionError(f"unexpected llm task: {task_text}")
+
+    monkeypatch.setattr(service, "_llm_complete_json", _fake_llm_complete_json)
 
 
 def _idea_payload(**overrides):
@@ -56,6 +188,13 @@ def _max_depth(nodes):
             cursor = parent
         best = max(best, depth)
     return best
+
+
+def test_nfr_llm_required_without_api_key_fails_fast(client, monkeypatch):
+    monkeypatch.delenv("AGENTIC_LLM_API_KEY", raising=False)
+    payload = {"idea": _idea_payload(), "induceFailure": False, "autoExecute": False}
+    with pytest.raises(RuntimeError, match="llm_required_missing_api_key"):
+        client.post("/api/v1/agentic/runs", json=payload)
 
 
 def test_f1_spec_validation_and_drafts(client):
@@ -245,6 +384,93 @@ def test_f2_search_expansion_generates_multilevel_tot(client):
     assert float(search_stats.get("explorationCoverage") or 0.0) > 0
 
 
+def test_f2_search_expansion_contains_code_mutation_plan(client):
+    run_id, _ = _create_run(client)
+    for _ in range(12):
+        exec_res = client.post(f"/api/v1/agentic/runs/{run_id}/execute", json={"mode": "next"})
+        assert exec_res.status_code == 200, exec_res.text
+
+    detail = client.get(f"/api/v1/agentic/runs/{run_id}").json()
+    expansion_nodes = [
+        node
+        for node in detail["totTree"]
+        if isinstance(node.get("evidence"), dict)
+        and isinstance((node.get("evidence") or {}).get("expansion"), dict)
+        and isinstance(((node.get("evidence") or {}).get("expansion") or {}).get("mutationPlan"), dict)
+    ]
+    mutation = {}
+    if expansion_nodes:
+        mutation = ((expansion_nodes[0].get("evidence") or {}).get("expansion") or {}).get("mutationPlan") or {}
+    else:
+        node_runs = detail.get("nodeRuns") or []
+        with_patch_plan = [
+            row for row in node_runs if isinstance(row.get("patchPlan"), list) and (row.get("patchPlan") or [])
+        ]
+        assert with_patch_plan
+        mutation = (with_patch_plan[0].get("patchPlan") or [{}])[0] or {}
+
+    assert any(evt["event"] == "tot_node_expanded" for evt in detail["events"])
+    assert str(mutation.get("mutationKind") or "")
+    targets = mutation.get("targetFiles") or []
+    assert isinstance(targets, list) and targets
+    assert any(str(path).endswith(".py") for path in targets)
+    assert str(mutation.get("changeSummary") or "")
+    assert "validationCommand" in mutation
+
+
+def test_f2_each_node_has_independent_node_run_record(client):
+    run_id, _ = _create_run(client)
+    exec_res = client.post(f"/api/v1/agentic/runs/{run_id}/execute", json={"mode": "all"})
+    assert exec_res.status_code == 200, exec_res.text
+
+    detail = client.get(f"/api/v1/agentic/runs/{run_id}").json()
+    node_runs = detail.get("nodeRuns") or []
+    assert node_runs
+    assert all(str(item.get("nodeId") or "") for item in node_runs)
+    assert all(str(item.get("nodeRunId") or "").startswith("nr-") for item in node_runs)
+    assert all(isinstance(item.get("artifactPaths"), list) and item.get("artifactPaths") for item in node_runs)
+    assert all(
+        any(str(path).startswith("artifacts/node_runs/") for path in (item.get("artifactPaths") or []))
+        for item in node_runs
+    )
+
+    bundle_res = client.post(f"/api/v1/agentic/runs/{run_id}/repro-bundle")
+    assert bundle_res.status_code == 200, bundle_res.text
+    bundle_path = Path(bundle_res.json()["bundlePath"])
+    run_dir = bundle_path.parent.parent
+    node_runs_path = run_dir / "artifacts" / "node_runs.json"
+    assert node_runs_path.exists()
+    stored = json.loads(node_runs_path.read_text(encoding="utf-8"))
+    assert isinstance(stored, list) and stored
+
+    with_diff = next(
+        (
+            item
+            for item in stored
+            if any(str(path).endswith(".diff") for path in (item.get("artifactPaths") or []))
+            and any(str(path).endswith("workspace_manifest.json") for path in (item.get("artifactPaths") or []))
+        ),
+        None,
+    )
+    assert with_diff is not None
+
+    diff_rel = next(path for path in (with_diff.get("artifactPaths") or []) if str(path).endswith(".diff"))
+    diff_path = run_dir / diff_rel
+    assert diff_path.exists()
+    diff_text = diff_path.read_text(encoding="utf-8")
+    assert "--- a/" in diff_text and "+++ b/" in diff_text
+
+    manifest_rel = next(path for path in (with_diff.get("artifactPaths") or []) if str(path).endswith("workspace_manifest.json"))
+    manifest_path = run_dir / manifest_rel
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    summary = manifest.get("summary") or {}
+    assert int(summary.get("diffFiles") or 0) >= 1
+    assert int(summary.get("resolvedTargets") or 0) >= 1
+    files = manifest.get("files") or []
+    assert any(str(row.get("mutationMode") or "").startswith("python_") for row in files)
+
+
 def test_f2_sub_agent_spawn_and_nested_chain(client):
     run_id, _ = _create_run(
         client,
@@ -363,15 +589,41 @@ def test_f2_sub_agent_runtime_strategy_override(client, monkeypatch):
     import app.api.routes as routes_module
 
     service = routes_module.agentic_os_service
-    custom_rules = copy.deepcopy(service._default_runtime_rules())
-    custom_rules["roleStrategies"]["HypothesisCriticSubAgent"] = {
-        "template": {
-            "strategyTag": "custom_rule_strategy",
-            "metricCoverage": "$metricKeys",
-            "estimatedLatencyMs": 95,
-        }
-    }
-    monkeypatch.setattr(service, "_load_runtime_rules", lambda: custom_rules)
+    original = service._llm_complete_json
+
+    def _override_llm(
+        *,
+        task,
+        system_prompt,
+        user_prompt,
+        schema,
+        temperature=0.2,
+        run_id=None,
+        node_id=None,
+        role=None,
+    ):
+        del system_prompt
+        payload = json.loads(str(user_prompt or "{}"))
+        if str(task) == "sub_agent_execution" and str(payload.get("role") or "") == "HypothesisCriticSubAgent":
+            return {
+                "analysis": "custom_llm_strategy_for_critic",
+                "actions": ["stress_assumption::reward_shaping", "add_control::baseline_branch"],
+                "confidence": 0.83,
+                "estimatedLatencyMs": 90,
+                "spawnPlans": [],
+            }
+        return original(
+            task=task,
+            system_prompt="",
+            user_prompt=user_prompt,
+            schema=schema,
+            temperature=temperature,
+            run_id=run_id,
+            node_id=node_id,
+            role=role,
+        )
+
+    monkeypatch.setattr(service, "_llm_complete_json", _override_llm)
 
     run_id, _ = _create_run(
         client,
@@ -391,9 +643,9 @@ def test_f2_sub_agent_runtime_strategy_override(client, monkeypatch):
     critic = next((item for item in sub_agents if str(item.get("role")) == "HypothesisCriticSubAgent"), None)
     assert critic is not None
     evidence = critic.get("evidence") or {}
-    assert evidence.get("strategyTag") == "custom_rule_strategy"
-    assert evidence.get("strategySource") == "runtime_rules"
-    assert isinstance(evidence.get("metricCoverage"), list)
+    assert str(evidence.get("analysis") or "") == "custom_llm_strategy_for_critic"
+    assert evidence.get("strategySource") == "llm"
+    assert isinstance(evidence.get("actions"), list) and evidence.get("actions")
 
 
 def test_f3_failure_recovery_loop(client):
@@ -436,6 +688,28 @@ def test_f4_registry_contract_and_repro_bundle(client):
     assert detail["contract"]["passRate"] >= 95
     assert detail["registryRecord"].get("specHash")
     assert detail["registryRecord"].get("configHash")
+
+
+def test_f4_llm_traces_persisted_and_exposed(client):
+    run_id, _ = _create_run(client, auto_execute=True)
+
+    detail_res = client.get(f"/api/v1/agentic/runs/{run_id}")
+    assert detail_res.status_code == 200, detail_res.text
+    detail = detail_res.json()
+    traces = detail.get("llmTraces") or []
+    assert len(traces) > 0
+    first = traces[0]
+    assert first.get("task")
+    assert first.get("status") in {"succeeded", "failed"}
+    assert first.get("model")
+    assert isinstance(first.get("attempt"), int)
+
+    bundle_res = client.post(f"/api/v1/agentic/runs/{run_id}/repro-bundle")
+    assert bundle_res.status_code == 200, bundle_res.text
+    bundle_path = Path(bundle_res.json()["bundlePath"])
+    with zipfile.ZipFile(bundle_path, "r") as zf:
+        names = set(zf.namelist())
+    assert "artifacts/llm_traces.jsonl" in names
 
 
 def test_f4_run_report_endpoint_and_bundle_artifacts(client):

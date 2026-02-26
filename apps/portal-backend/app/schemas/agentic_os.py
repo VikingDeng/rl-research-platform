@@ -79,6 +79,39 @@ class AgenticNode(APIModel):
     children: List[str] = Field(default_factory=list)
 
 
+class AgenticNodeRunRecord(APIModel):
+    node_run_id: str
+    run_id: str
+    node_id: str
+    parent_node_id: Optional[str] = None
+    parent_node_run_id: Optional[str] = None
+    agent: str
+    title: str
+    status: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    patch_plan: List[Dict[str, Any]] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    artifact_paths: List[str] = Field(default_factory=list)
+    replay_ref: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+
+
+class AgenticLlmTraceRecord(APIModel):
+    ts: datetime
+    task: str
+    status: str
+    model: str
+    attempt: int
+    latency_ms: int = 0
+    node_id: Optional[str] = None
+    role: Optional[str] = None
+    prompt_hash: str = ""
+    response_hash: Optional[str] = None
+    schema_valid: bool = False
+    error: Optional[str] = None
+
+
 class AgenticContractReport(APIModel):
     total_required: int
     present: int
@@ -186,6 +219,8 @@ class AgenticRunDetail(APIModel):
     timeline: List[Dict[str, Any]] = Field(default_factory=list)
     events: List[Dict[str, Any]] = Field(default_factory=list)
     pending_approvals: List[Dict[str, Any]] = Field(default_factory=list)
+    node_runs: List[AgenticNodeRunRecord] = Field(default_factory=list)
+    llm_traces: List[AgenticLlmTraceRecord] = Field(default_factory=list)
     contract: AgenticContractReport
     search_stats: AgenticSearchStats = Field(default_factory=AgenticSearchStats)
     matrix: Optional[Dict[str, Any]] = None

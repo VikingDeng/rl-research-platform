@@ -214,6 +214,21 @@ export type AgenticRunSummary = {
   failureReason?: string | null;
 };
 
+export type AgenticLlmTraceRecord = {
+  ts: string;
+  task: string;
+  status: string;
+  model: string;
+  attempt: number;
+  latencyMs: number;
+  nodeId?: string | null;
+  role?: string | null;
+  promptHash: string;
+  responseHash?: string | null;
+  schemaValid: boolean;
+  error?: string | null;
+};
+
 export type AgenticRunDetail = {
   runId: string;
   status: string;
@@ -228,6 +243,8 @@ export type AgenticRunDetail = {
   timeline: Array<Record<string, unknown>>;
   events: Array<Record<string, unknown>>;
   pendingApprovals: Array<Record<string, unknown>>;
+  nodeRuns: AgenticNodeRunRecord[];
+  llmTraces: AgenticLlmTraceRecord[];
   contract: AgenticContractReport;
   searchStats: AgenticSearchStats;
   matrix?: AgenticMatrix | null;
@@ -262,6 +279,24 @@ export type AgenticSubAgentListResponse = {
   pageSize: number;
   total: number;
   items: AgenticSubAgentRecord[];
+};
+
+export type AgenticNodeRunRecord = {
+  nodeRunId: string;
+  runId: string;
+  nodeId: string;
+  parentNodeId?: string | null;
+  parentNodeRunId?: string | null;
+  agent: string;
+  title: string;
+  status: string;
+  startedAt: string;
+  finishedAt?: string | null;
+  patchPlan: Array<Record<string, unknown>>;
+  metrics: Record<string, unknown>;
+  artifactPaths: string[];
+  replayRef: Record<string, unknown>;
+  error?: string | null;
 };
 
 export type AgenticListResponse = {
@@ -349,6 +384,12 @@ export type AgenticRunReportModel = {
     succeeded: number;
     failed: number;
     topRoles: Array<{ role: string; count: number }>;
+  };
+  nodeRuns?: {
+    total: number;
+    running: number;
+    succeeded: number;
+    failed: number;
   };
   matrix: {
     labels: number;

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Bot, ChevronDown, ChevronUp, Pause, Play, RefreshCcw, ShieldAlert, SlidersHorizontal, Sparkles, WandSparkles } from 'lucide-react';
 import { api, isDemoMode } from '../services/api';
 import { useI18n } from '../services/i18n';
-import type { AgenticIdeaInput, AgenticNode, AgenticRunDetail, AgenticRunSummary } from '../types';
+import type { AgenticIdeaInput, AgenticLlmTraceRecord, AgenticNode, AgenticRunDetail, AgenticRunSummary } from '../types';
 
 type GraphLayoutPoint = {
   nodeId: string;
@@ -18,6 +18,7 @@ type SearchReplayEvent = {
   ts: string;
   nodeId: string;
   summary: string;
+  childIds: string[];
 };
 
 const statusBadgeClass = (status: string) => {
@@ -108,6 +109,35 @@ const getSearchMeta = (node: AgenticNode) => {
   };
 };
 
+const normalizeLlmIssue = (raw: string, tx: (zh: string, en: string) => string): string => {
+  const detail = String(raw || '');
+  if (detail.includes('llm_required_missing_api_key')) {
+    return tx(
+      '未配置 LLM API Key（AGENTIC_LLM_API_KEY）。请先在后端环境变量中配置，再重试。',
+      'LLM API key is missing (AGENTIC_LLM_API_KEY). Configure backend env and retry.',
+    );
+  }
+  if (detail.includes('llm_required_missing_model')) {
+    return tx(
+      '未配置 LLM 模型（AGENTIC_LLM_MODEL）。请先配置模型名，再重试。',
+      'LLM model is missing (AGENTIC_LLM_MODEL). Configure model and retry.',
+    );
+  }
+  if (detail.includes('llm_required_missing_provider')) {
+    return tx(
+      '未配置 LLM Provider（AGENTIC_LLM_PROVIDER）。请先配置 provider，再重试。',
+      'LLM provider is missing (AGENTIC_LLM_PROVIDER). Configure provider and retry.',
+    );
+  }
+  if (detail.includes('llm_required_')) {
+    return tx(
+      `LLM 核心链路校验失败：${detail}`,
+      `LLM core-chain check failed: ${detail}`,
+    );
+  }
+  return detail;
+};
+
 const mctsLikeScore = (node: AgenticNode, parentBranching: number, childCount: number): number => {
   const expected = extractExpectedWinRate(node);
   const risk = String(node.risk || 'low').toLowerCase();
@@ -172,6 +202,7 @@ export const AgenticTotCanvas: React.FC = () => {
   const [showAdvancedControls, setShowAdvancedControls] = useState(false);
   const [replayStep, setReplayStep] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
+  const [replayRevealMode, setReplayRevealMode] = useState(true);
   const graphViewportRef = useRef<HTMLDivElement | null>(null);
 
   const selectedRunSummary = useMemo(() => runs.find(item => item.runId === selectedRunId) || null, [runs, selectedRunId]);
@@ -397,16 +428,72 @@ export const AgenticTotCanvas: React.FC = () => {
       const payload = ((row as any)?.payload || {}) as Record<string, unknown>;
       const nodeId = String(payload.nodeId || payload.node_id || '');
       if (!nodeId) return;
+      const childIds = Array.isArray(payload.childIds)
+        ? (payload.childIds as unknown[]).map(item => String(item || '').trim()).filter(Boolean)
+        : [];
       replayRows.push({
         idx,
         event,
         ts: String((row as any)?.ts || ''),
         nodeId,
         summary: String((row as any)?.message || event),
+        childIds,
       });
     });
     return replayRows;
   }, [detail?.events]);
+
+  const firstSeenStepByNode = useMemo(() => {
+    const map = new Map<string, number>();
+    nodes.forEach(node => {
+      if (!node.parentId && !map.has(node.nodeId)) map.set(node.nodeId, 0);
+    });
+    searchReplayEvents.forEach((item, idx) => {
+      const step = idx + 1;
+      if (!map.has(item.nodeId)) map.set(item.nodeId, step);
+      item.childIds.forEach(childId => {
+        if (!map.has(childId)) map.set(childId, step);
+      });
+    });
+
+    // Infer remaining nodes from parent appearance order, so replay can reveal branches progressively.
+    let changed = true;
+    let rounds = 0;
+    while (changed && rounds < nodes.length + 2) {
+      changed = false;
+      rounds += 1;
+      nodes.forEach(node => {
+        if (map.has(node.nodeId)) return;
+        if (!node.parentId) {
+          map.set(node.nodeId, 0);
+          changed = true;
+          return;
+        }
+        const parentStep = map.get(node.parentId);
+        if (typeof parentStep === 'number') {
+          map.set(node.nodeId, parentStep + 1);
+          changed = true;
+        }
+      });
+    }
+
+    const fallbackStep = Math.max(1, searchReplayEvents.length);
+    nodes.forEach(node => {
+      if (!map.has(node.nodeId)) map.set(node.nodeId, fallbackStep);
+    });
+    return map;
+  }, [nodes, searchReplayEvents, searchReplayEvents.length]);
+
+  const replayRevealedNodeIds = useMemo(() => {
+    if (!replayRevealMode || replayStep <= 0) {
+      return new Set(nodes.map(node => node.nodeId));
+    }
+    const revealed = new Set<string>();
+    firstSeenStepByNode.forEach((step, nodeId) => {
+      if (step <= replayStep) revealed.add(nodeId);
+    });
+    return revealed;
+  }, [nodes, firstSeenStepByNode, replayRevealMode, replayStep]);
 
   const replayActiveEvent = useMemo(() => {
     if (searchReplayEvents.length === 0 || replayStep <= 0) return null;
@@ -415,13 +502,19 @@ export const AgenticTotCanvas: React.FC = () => {
   }, [searchReplayEvents, replayStep]);
 
   const replayNodeId = replayActiveEvent?.nodeId || '';
+  const replayProgressPct = useMemo(
+    () => (searchReplayEvents.length > 0 ? Math.round((replayStep / searchReplayEvents.length) * 100) : 0),
+    [replayStep, searchReplayEvents.length],
+  );
 
   const focusedNodeId = useMemo(() => {
-    if (selectedNodeId && visibleNodeMap.has(selectedNodeId)) return selectedNodeId;
-    if (hoveredNodeId && visibleNodeMap.has(hoveredNodeId)) return hoveredNodeId;
-    if (replayNodeId && visibleNodeMap.has(replayNodeId)) return replayNodeId;
-    return visibleNodes[0]?.nodeId || '';
-  }, [selectedNodeId, hoveredNodeId, replayNodeId, visibleNodes, visibleNodeMap]);
+    const visibleAndRevealed = (nodeId: string) => visibleNodeMap.has(nodeId) && replayRevealedNodeIds.has(nodeId);
+    if (selectedNodeId && visibleAndRevealed(selectedNodeId)) return selectedNodeId;
+    if (hoveredNodeId && visibleAndRevealed(hoveredNodeId)) return hoveredNodeId;
+    if (replayNodeId && visibleAndRevealed(replayNodeId)) return replayNodeId;
+    const fallback = visibleNodes.find(node => replayRevealedNodeIds.has(node.nodeId));
+    return fallback?.nodeId || '';
+  }, [selectedNodeId, hoveredNodeId, replayNodeId, visibleNodes, visibleNodeMap, replayRevealedNodeIds]);
 
   const focusedNode = useMemo(() => (focusedNodeId ? nodeById.get(focusedNodeId) || null : null), [focusedNodeId, nodeById]);
 
@@ -438,6 +531,78 @@ export const AgenticTotCanvas: React.FC = () => {
     return stats;
   }, [nodes]);
   const searchStats = detail?.searchStats || null;
+  const llmTraces = useMemo(
+    () => (Array.isArray(detail?.llmTraces) ? (detail?.llmTraces as AgenticLlmTraceRecord[]) : []),
+    [detail?.llmTraces],
+  );
+  const llmTraceSummary = useMemo(() => {
+    const total = llmTraces.length;
+    let succeeded = 0;
+    let failed = 0;
+    let latencyTotal = 0;
+    let retryCalls = 0;
+    const nodeSet = new Set<string>();
+    llmTraces.forEach(trace => {
+      const ok = String(trace.status || '').toLowerCase() === 'succeeded';
+      if (ok) succeeded += 1;
+      else failed += 1;
+      const latency = Number(trace.latencyMs || 0);
+      if (Number.isFinite(latency) && latency > 0) latencyTotal += latency;
+      const attempt = Number(trace.attempt || 1);
+      if (Number.isFinite(attempt) && attempt > 1) retryCalls += 1;
+      const nodeId = String(trace.nodeId || '').trim();
+      if (nodeId) nodeSet.add(nodeId);
+    });
+    return {
+      total,
+      succeeded,
+      failed,
+      avgLatencyMs: total > 0 ? Math.round(latencyTotal / total) : 0,
+      retryCalls,
+      coveredNodes: nodeSet.size,
+    };
+  }, [llmTraces]);
+  const llmTraceByNode = useMemo(() => {
+    const map = new Map<string, { total: number; failed: number; avgLatencyMs: number; lastTask: string }>();
+    const accum = new Map<string, { total: number; failed: number; latencyTotal: number; lastTask: string }>();
+    llmTraces.forEach(trace => {
+      const nodeId = String(trace.nodeId || '').trim();
+      if (!nodeId) return;
+      const prev = accum.get(nodeId) || { total: 0, failed: 0, latencyTotal: 0, lastTask: '' };
+      const latency = Number(trace.latencyMs || 0);
+      const failed = String(trace.status || '').toLowerCase() !== 'succeeded';
+      accum.set(nodeId, {
+        total: prev.total + 1,
+        failed: prev.failed + (failed ? 1 : 0),
+        latencyTotal: prev.latencyTotal + (Number.isFinite(latency) ? Math.max(0, latency) : 0),
+        lastTask: String(trace.task || prev.lastTask || ''),
+      });
+    });
+    accum.forEach((row, nodeId) => {
+      map.set(nodeId, {
+        total: row.total,
+        failed: row.failed,
+        avgLatencyMs: row.total > 0 ? Math.round(row.latencyTotal / row.total) : 0,
+        lastTask: row.lastTask,
+      });
+    });
+    return map;
+  }, [llmTraces]);
+  const maxLlmCallsPerNode = useMemo(() => {
+    let best = 0;
+    llmTraceByNode.forEach(row => {
+      if (row.total > best) best = row.total;
+    });
+    return best;
+  }, [llmTraceByNode]);
+  const llmHotNodes = useMemo(() => {
+    const rows = Array.from(llmTraceByNode.entries()).map(([nodeId, row]) => ({ nodeId, ...row }));
+    return rows.sort((a, b) => b.total - a.total || b.failed - a.failed).slice(0, 5);
+  }, [llmTraceByNode]);
+  const focusedNodeLlm = useMemo(
+    () => (focusedNodeId ? llmTraceByNode.get(focusedNodeId) || null : null),
+    [focusedNodeId, llmTraceByNode],
+  );
   const storyStages = useMemo(() => {
     const hasRun = !!selectedRunId;
     const depth = Number(searchStats?.maxDepth || 0);
@@ -551,22 +716,23 @@ export const AgenticTotCanvas: React.FC = () => {
   }, [replayPlaying, searchReplayEvents.length]);
 
   useEffect(() => {
-    if (visibleNodes.length === 0) {
+    const replayVisibleNodes = visibleNodes.filter(node => replayRevealedNodeIds.has(node.nodeId));
+    if (replayVisibleNodes.length === 0) {
       setSelectedNodeId('');
       return;
     }
-    if (!selectedNodeId || !visibleNodes.some(node => node.nodeId === selectedNodeId)) {
-      setSelectedNodeId(visibleNodes[0].nodeId);
+    if (!selectedNodeId || !replayVisibleNodes.some(node => node.nodeId === selectedNodeId)) {
+      setSelectedNodeId(replayVisibleNodes[0].nodeId);
     }
-  }, [visibleNodes, selectedNodeId]);
+  }, [visibleNodes, replayRevealedNodeIds, selectedNodeId]);
 
   useEffect(() => {
     if (!replayActiveEvent?.nodeId) return;
-    if (!visibleNodeMap.has(replayActiveEvent.nodeId)) return;
+    if (!visibleNodeMap.has(replayActiveEvent.nodeId) || !replayRevealedNodeIds.has(replayActiveEvent.nodeId)) return;
     if (!replayPlaying) return;
     setSelectedNodeId(replayActiveEvent.nodeId);
     centerNodeInViewport(replayActiveEvent.nodeId, 'smooth');
-  }, [replayActiveEvent?.idx, replayActiveEvent?.nodeId, replayPlaying, visibleNodeMap, centerNodeInViewport]);
+  }, [replayActiveEvent?.idx, replayActiveEvent?.nodeId, replayPlaying, visibleNodeMap, replayRevealedNodeIds, centerNodeInViewport]);
 
   const runExecutionAction = async (mode: 'next' | 'all' | 'recover') => {
     if (!selectedRunId) return;
@@ -580,7 +746,7 @@ export const AgenticTotCanvas: React.FC = () => {
       await refreshRuns();
       setMessage(result.message || tx('执行成功。', 'Execution succeeded.'));
     } catch (error) {
-      setMessage(toErrorMessage(error));
+      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
     } finally {
       setBusyAction('none');
     }
@@ -595,8 +761,10 @@ export const AgenticTotCanvas: React.FC = () => {
       let current = detail;
 
       if (!runId) {
+        const idea = buildAutoScienceIdea();
+        await api.validateAgenticSpec(idea);
         const created = await api.createAgenticRun({
-          idea: buildAutoScienceIdea(),
+          idea,
           autoExecute: false,
         });
         runId = created.runId;
@@ -625,7 +793,7 @@ export const AgenticTotCanvas: React.FC = () => {
         setMessage(tx('自动探索已完成一轮：你可以继续点击 Auto Explore 让树继续生长。', 'Auto exploration round complete. Click Auto Explore again to keep growing the tree.'));
       }
     } catch (error) {
-      setMessage(toErrorMessage(error));
+      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
     } finally {
       setAutoExploring(false);
     }
@@ -705,6 +873,51 @@ export const AgenticTotCanvas: React.FC = () => {
           ))}
         </div>
       </section>
+
+      {llmTraceSummary.total > 0 && (
+        <section className="rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 via-white to-blue-50 p-4 shadow-sm">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-violet-900">{tx('LLM 搜索信号', 'LLM Search Signals')}</div>
+            <div className="text-xs text-violet-700">
+              {tx('核心链路全部来自 LLM 结构化输出，无规则兜底。', 'Core chain is produced by structured LLM outputs, with no rule fallback.')}
+            </div>
+          </div>
+          <div className="grid gap-2 md:grid-cols-4">
+            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
+              {tx('总调用', 'Total calls')}: <span className="font-semibold">{llmTraceSummary.total}</span>
+            </div>
+            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
+              {tx('重试调用', 'Retry calls')}: <span className="font-semibold">{llmTraceSummary.retryCalls}</span>
+            </div>
+            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
+              {tx('平均延迟', 'Avg latency')}: <span className="font-semibold">{llmTraceSummary.avgLatencyMs}ms</span>
+            </div>
+            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
+              {tx('失败率', 'Failure rate')}:{' '}
+              <span className="font-semibold">
+                {llmTraceSummary.total > 0 ? Math.round((llmTraceSummary.failed / llmTraceSummary.total) * 100) : 0}%
+              </span>
+            </div>
+          </div>
+          {llmHotNodes.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {llmHotNodes.map(item => (
+                <button
+                  key={`llm-hot-${item.nodeId}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedNodeId(item.nodeId);
+                    centerNodeInViewport(item.nodeId, 'smooth');
+                  }}
+                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] text-violet-800 hover:bg-violet-50"
+                >
+                  {item.nodeId} · {tx('调用', 'calls')} {item.total} · {tx('失败', 'failed')} {item.failed}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
@@ -807,51 +1020,60 @@ export const AgenticTotCanvas: React.FC = () => {
               {showAdvancedControls ? tx('收起高级入口', 'Hide Advanced') : tx('展开高级入口', 'Show Advanced')}
             </button>
           )}
-          {presentationMode && showAdvancedControls && (
-            <>
-              <button
-                type="button"
-                onClick={() => runExecutionAction('all')}
-                disabled={!selectedRunId || isActionBusy}
-                className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {tx('Auto Search', 'Auto Search')}
-              </button>
-              <button
-                type="button"
-                onClick={() => runExecutionAction('recover')}
-                disabled={!selectedRunId || isActionBusy}
-                className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-              >
-                <ShieldAlert className="mr-1.5 h-4 w-4" />
-                {tx('恢复', 'Recover')}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/agentic/new')}
-                className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
-              >
-                {tx('Idea 输入', 'Idea Input')}
-              </button>
-              <button
-                type="button"
-                onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
-                disabled={!selectedRunId}
-                className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-              >
-                <Bot className="mr-1.5 h-4 w-4" />
-                {tx('Agent 面板', 'Agent Panel')}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/agentic/workbench')}
-                className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
-              >
-                {tx('探索洞察', 'Exploration Insights')}
-              </button>
-            </>
-          )}
         </div>
+
+        {presentationMode && showAdvancedControls && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+            <button
+              type="button"
+              onClick={() => runExecutionAction('all')}
+              disabled={!selectedRunId || isActionBusy}
+              className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {tx('Auto Search', 'Auto Search')}
+            </button>
+            <button
+              type="button"
+              onClick={() => runExecutionAction('recover')}
+              disabled={!selectedRunId || isActionBusy}
+              className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+            >
+              <ShieldAlert className="mr-1.5 h-4 w-4" />
+              {tx('恢复', 'Recover')}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/agentic/new')}
+              className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
+            >
+              {tx('Idea 输入', 'Idea Input')}
+            </button>
+            <button
+              type="button"
+              onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
+              disabled={!selectedRunId}
+              className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+            >
+              <Bot className="mr-1.5 h-4 w-4" />
+              {tx('Agent 面板', 'Agent Panel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/agentic/workbench')}
+              className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
+            >
+              {tx('探索洞察', 'Exploration Insights')}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/agentic/classic')}
+              className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <WandSparkles className="mr-1.5 h-4 w-4" />
+              {tx('经典控制台', 'Classic Console')}
+            </button>
+          </div>
+        )}
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
           <span className="rounded bg-slate-100 px-2 py-1">{tx('总节点', 'Nodes')} {runStats.total}</span>
@@ -878,6 +1100,18 @@ export const AgenticTotCanvas: React.FC = () => {
           {selectedRunSummary && (
             <span className="rounded bg-slate-100 px-2 py-1">{tx('合同', 'Contract')} {Math.round((selectedRunSummary.contractPassRate || 0) * 100)}%</span>
           )}
+          <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">
+            {tx('LLM 调用', 'LLM calls')} {llmTraceSummary.total}
+          </span>
+          <span className={`rounded px-2 py-1 ${llmTraceSummary.failed > 0 ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+            {tx('LLM 失败', 'LLM failed')} {llmTraceSummary.failed}
+          </span>
+          <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">
+            {tx('LLM 平均延迟', 'LLM avg latency')} {llmTraceSummary.avgLatencyMs}ms
+          </span>
+          <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">
+            {tx('LLM 覆盖节点', 'LLM covered nodes')} {llmTraceSummary.coveredNodes}
+          </span>
         </div>
       </section>
 
@@ -932,6 +1166,21 @@ export const AgenticTotCanvas: React.FC = () => {
             <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
               {replayStep}/{searchReplayEvents.length}
             </span>
+            <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={replayRevealMode}
+                onChange={e => setReplayRevealMode(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300"
+              />
+              {tx('逐步显影', 'Progressive Reveal')}
+            </label>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded bg-slate-100">
+            <div
+              className="h-full rounded bg-indigo-500 transition-all duration-300"
+              style={{ width: `${Math.max(0, Math.min(100, replayProgressPct))}%` }}
+            />
           </div>
           {replayActiveEvent && (
             <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
@@ -939,6 +1188,41 @@ export const AgenticTotCanvas: React.FC = () => {
               <div className="mt-0.5 text-indigo-800">{replayActiveEvent.summary}</div>
             </div>
           )}
+          <div className="mt-2 max-h-40 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-1.5">
+            <div className="space-y-1">
+              {searchReplayEvents.map((row, idx) => {
+                const step = idx + 1;
+                const active = step === replayStep;
+                const done = step < replayStep;
+                const tone = active
+                  ? 'border-indigo-300 bg-indigo-100 text-indigo-800'
+                  : done
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-slate-200 bg-white text-slate-700';
+                const label = row.event === 'tot_node_expanded'
+                  ? tx('扩展', 'Expand')
+                  : tx('选择', 'Select');
+                return (
+                  <button
+                    key={`replay-event-${row.idx}-${row.nodeId}`}
+                    type="button"
+                    onClick={() => {
+                      setReplayPlaying(false);
+                      setReplayStepAndFocus(step, 'smooth');
+                    }}
+                    className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left text-[11px] ${tone}`}
+                  >
+                    <span className="min-w-0 truncate">
+                      #{step} · {label} · {row.nodeId}
+                    </span>
+                    <span className="ml-2 text-[10px] opacity-75">
+                      {row.ts ? new Date(row.ts).toLocaleTimeString() : '-'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </section>
       )}
 
@@ -970,6 +1254,24 @@ export const AgenticTotCanvas: React.FC = () => {
           <div className="text-[11px] text-slate-500">
             {tx('单击节点聚焦，双击进入证据页。', 'Single-click to focus, double-click to open evidence.')}
           </div>
+        </div>
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
+            <span className="mr-1.5 h-2 w-2 rounded-full bg-blue-600" />
+            {tx('蓝色高亮 = 当前聚焦路径', 'Blue highlight = focused path')}
+          </span>
+          <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-violet-700">
+            <span className="mr-1.5 h-2 w-2 rounded-full bg-violet-600" />
+            {tx('紫色强度 = LLM 探索密度', 'Purple intensity = LLM exploration density')}
+          </span>
+          <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-rose-700">
+            {tx('红色 LLM 标签 = 该节点有失败调用', 'Red LLM tag = failed LLM calls on node')}
+          </span>
+          {replayRevealMode && (
+            <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">
+              {tx('回放显影开启：仅展示已探索到的节点', 'Replay reveal on: showing explored nodes only')}
+            </span>
+          )}
         </div>
 
         <div ref={graphViewportRef} className="max-h-[72vh] overflow-auto rounded-xl border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(219,234,254,.34),transparent_42%),radial-gradient(circle_at_100%_0%,rgba(209,250,229,.24),transparent_38%),linear-gradient(180deg,rgba(248,250,252,.72),rgba(255,255,255,.95))]">
@@ -1025,27 +1327,46 @@ export const AgenticTotCanvas: React.FC = () => {
                 const from = graph.layout.get(edge.from);
                 const to = graph.layout.get(edge.to);
                 if (!from || !to) return null;
+                if (!replayRevealedNodeIds.has(edge.from) || !replayRevealedNodeIds.has(edge.to)) return null;
                 const highlighted = edge.from === focusedNodeId || edge.to === focusedNodeId;
                 const runningEdge = String(visibleNodeMap.get(edge.from)?.status || '').toUpperCase() === 'RUNNING'
                   || String(visibleNodeMap.get(edge.to)?.status || '').toUpperCase() === 'RUNNING';
+                const fromLlm = llmTraceByNode.get(edge.from)?.total || 0;
+                const toLlm = llmTraceByNode.get(edge.to)?.total || 0;
+                const llmCalls = Math.max(fromLlm, toLlm);
+                const llmIntensity = maxLlmCallsPerNode > 0 ? Math.min(1, llmCalls / maxLlmCallsPerNode) : 0;
                 const path = `M ${from.x + graph.cardWidth} ${from.y} C ${from.x + graph.cardWidth + 56} ${from.y}, ${to.x - 56} ${to.y}, ${to.x} ${to.y}`;
                 return (
-                  <path
-                    key={`${edge.from}-${edge.to}`}
-                    d={path}
-                    fill="none"
-                    stroke={highlighted ? '#2563eb' : 'url(#tree-edge-canvas)'}
-                    strokeWidth={highlighted ? 2.3 : 1.7}
-                    strokeOpacity={highlighted ? 0.9 : 0.7}
-                    strokeDasharray={runningEdge ? '6 4' : undefined}
-                    style={{ transition: 'stroke 180ms ease, stroke-width 180ms ease, stroke-opacity 180ms ease' }}
-                  />
+                  <g key={`${edge.from}-${edge.to}`}>
+                    <path
+                      d={path}
+                      fill="none"
+                      stroke={highlighted ? '#2563eb' : llmIntensity > 0 ? `rgba(124,58,237,${0.2 + llmIntensity * 0.55})` : 'url(#tree-edge-canvas)'}
+                      strokeWidth={highlighted ? 2.4 : 1.6 + llmIntensity * 1.1}
+                      strokeOpacity={highlighted ? 0.92 : 0.62 + llmIntensity * 0.3}
+                      strokeDasharray={runningEdge ? '6 4' : undefined}
+                      style={{ transition: 'stroke 180ms ease, stroke-width 180ms ease, stroke-opacity 180ms ease' }}
+                    />
+                    {llmIntensity >= 0.75 && !highlighted && (
+                      <path
+                        d={path}
+                        fill="none"
+                        stroke="rgba(139,92,246,.85)"
+                        strokeWidth={2.2}
+                        strokeOpacity={0.35}
+                        strokeDasharray="3 7"
+                      >
+                        <animate attributeName="stroke-opacity" values="0.15;0.52;0.15" dur="1.3s" repeatCount="indefinite" />
+                      </path>
+                    )}
+                  </g>
                 );
               })}
 
               {visibleNodes.map(node => {
                 const point = graph.layout.get(node.nodeId);
                 if (!point) return null;
+                if (!replayRevealedNodeIds.has(node.nodeId)) return null;
                 const childCount = childCountByParent.get(node.nodeId) || 0;
                 const visibleChildCount = visibleChildCountByParent.get(node.nodeId) || 0;
                 const parentCount = node.parentId ? childCountByParent.get(node.parentId) || 1 : 1;
@@ -1061,6 +1382,11 @@ export const AgenticTotCanvas: React.FC = () => {
                 const isCollapsed = !!collapsedNodeIds[node.nodeId];
                 const hiddenDescendantCount = isCollapsed ? descendantCountByNode.get(node.nodeId) || 0 : 0;
                 const searchMeta = getSearchMeta(node);
+                const llmStat = llmTraceByNode.get(node.nodeId);
+                const llmCalls = llmStat?.total || 0;
+                const llmFailed = llmStat?.failed || 0;
+                const revealStep = firstSeenStepByNode.get(node.nodeId) ?? 0;
+                const isJustRevealed = replayStep > 0 && revealStep === replayStep;
                 const cardBg = normStatus === 'FAILED'
                   ? 'rgba(255,241,242,0.95)'
                   : normStatus === 'BLOCKED'
@@ -1077,13 +1403,31 @@ export const AgenticTotCanvas: React.FC = () => {
                     onClick={() => setSelectedNodeId(node.nodeId)}
                     onDoubleClick={() => openNodeEvidence(node.nodeId)}
                   >
-                    <title>{`${node.nodeId} · ${node.title} · score ${scorePct}`}</title>
+                    <title>
+                      {`${node.nodeId} · ${node.title} · score ${scorePct} · llm ${llmCalls} · failed ${llmFailed} · latency ${llmStat?.avgLatencyMs || 0}ms${llmStat?.lastTask ? ` · ${llmStat.lastTask}` : ''}`}
+                    </title>
+                    {isJustRevealed && (
+                      <rect
+                        x={-3}
+                        y={-3}
+                        width={graph.cardWidth + 6}
+                        height={graph.cardHeight + 6}
+                        rx={16}
+                        fill="none"
+                        stroke="rgba(99,102,241,.95)"
+                        strokeWidth={1.4}
+                        strokeOpacity={0.2}
+                      >
+                        <animate attributeName="stroke-opacity" values="0.85;0.12;0" dur="1.2s" repeatCount="1" />
+                        <animate attributeName="stroke-width" values="2.8;1.4;0.8" dur="1.2s" repeatCount="1" />
+                      </rect>
+                    )}
                     <rect
                       width={graph.cardWidth}
                       height={graph.cardHeight}
                       rx={14}
                       fill={cardBg}
-                      stroke={isReplayActive ? 'rgba(99,102,241,.92)' : (isFocused ? 'rgba(37,99,235,.9)' : 'rgba(148,163,184,.7)')}
+                      stroke={isReplayActive ? 'rgba(99,102,241,.92)' : (isFocused ? 'rgba(37,99,235,.9)' : llmCalls > 0 ? 'rgba(124,58,237,.55)' : 'rgba(148,163,184,.7)')}
                       strokeWidth={isReplayActive ? 2.2 : (isFocused ? 1.9 : 1.2)}
                       filter={isFocused ? 'url(#tree-node-focus-canvas)' : 'url(#tree-node-shadow-canvas)'}
                     />
@@ -1096,6 +1440,41 @@ export const AgenticTotCanvas: React.FC = () => {
                         <tspan key={`${node.nodeId}-${idx}`} x={20} dy={idx === 0 ? 0 : 12}>{line}</tspan>
                       ))}
                     </text>
+                    {llmCalls > 0 && (
+                      <>
+                        {llmCalls >= 3 && (
+                          <circle
+                            cx={graph.cardWidth - 45}
+                            cy={41}
+                            r={8}
+                            fill="rgba(139,92,246,.12)"
+                            stroke="rgba(139,92,246,.45)"
+                            strokeWidth={0.8}
+                          >
+                            <animate attributeName="r" values="6;9;6" dur="1.4s" repeatCount="indefinite" />
+                            <animate attributeName="stroke-opacity" values="0.2;0.58;0.2" dur="1.4s" repeatCount="indefinite" />
+                          </circle>
+                        )}
+                        <rect
+                          x={graph.cardWidth - 72}
+                          y={34}
+                          width={54}
+                          height={14}
+                          rx={7}
+                          fill={llmFailed > 0 ? 'rgba(251,113,133,.18)' : 'rgba(139,92,246,.18)'}
+                        />
+                        <text
+                          x={graph.cardWidth - 45}
+                          y={44}
+                          textAnchor="middle"
+                          fontSize={8}
+                          fontWeight={700}
+                          fill={llmFailed > 0 ? '#be123c' : '#6d28d9'}
+                        >
+                          LLM {llmCalls}
+                        </text>
+                      </>
+                    )}
                     {hasChildren && (
                       <g
                         transform={`translate(${graph.cardWidth - 17}, 14)`}
@@ -1148,9 +1527,22 @@ export const AgenticTotCanvas: React.FC = () => {
                   <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">{focusedNode.nodeId}</span>
                   <span className={`rounded px-1.5 py-0.5 font-semibold ${statusBadgeClass(focusedNode.status)}`}>{focusedNode.status}</span>
                   <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">UCT {Math.round((getSearchMeta(focusedNode).frontierScore || 0) * 100) || '-'}</span>
+                  <span className={`rounded px-1.5 py-0.5 font-semibold ${(focusedNodeLlm?.total || 0) > 0 ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>
+                    LLM {focusedNodeLlm?.total || 0}
+                  </span>
+                  {(focusedNodeLlm?.total || 0) > 0 && (
+                    <span className={`rounded px-1.5 py-0.5 font-semibold ${(focusedNodeLlm?.failed || 0) > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {tx('失败', 'failed')} {focusedNodeLlm?.failed || 0}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1 text-sm font-semibold text-slate-800">{focusedNode.title || focusedNode.nodeId}</div>
                 <p className="mt-1 line-clamp-2 text-xs text-slate-600">{focusedNode.hypothesis || '-'}</p>
+                {(focusedNodeLlm?.total || 0) > 0 && (
+                  <div className="mt-1 text-[11px] text-violet-700">
+                    {tx('最近 LLM 任务', 'Latest LLM task')}: {focusedNodeLlm?.lastTask || '-'} · {tx('均延迟', 'avg latency')} {focusedNodeLlm?.avgLatencyMs || 0}ms
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button

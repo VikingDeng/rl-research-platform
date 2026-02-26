@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import hashlib
 import json
 import math
@@ -14,6 +15,8 @@ import subprocess
 import traceback
 import uuid
 import zipfile
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +38,8 @@ from app.schemas.agentic_os import (
     AgenticIdeaInput,
     AgenticMatrixRequest,
     AgenticNode,
+    AgenticNodeRunRecord,
+    AgenticLlmTraceRecord,
     AgenticRunCreateRequest,
     AgenticRunDetail,
     AgenticRunSummary,
@@ -113,6 +118,8 @@ class AgenticOSService:
         "artifacts/diagnostics.json",
         "artifacts/runtime_execution.json",
         "artifacts/sub_agents.json",
+        "artifacts/node_runs.json",
+        "artifacts/llm_traces.jsonl",
         "artifacts/run_report.json",
         "artifacts/run_report.md",
         "artifacts/error_report.json",
@@ -360,6 +367,7 @@ class AgenticOSService:
         return self.workspace_root / "docs" / "schemas" / "approver_registry.yaml"
 
     def validate_spec_input(self, idea: AgenticIdeaInput) -> AgenticSpecValidationResponse:
+        self._assert_llm_ready()
         normalized_spec = self._build_research_spec(idea)
         root_config = self._build_root_config_draft(normalized_spec)
         eval_protocol = self._build_eval_protocol_draft(normalized_spec)
@@ -378,6 +386,7 @@ class AgenticOSService:
         )
 
     def create_run(self, payload: AgenticRunCreateRequest) -> AgenticRunDetail:
+        self._assert_llm_ready()
         validation = self.validate_spec_input(payload.idea)
         run_id = f"agentic-{_now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         run_dir = self.runs_root / run_id
@@ -397,6 +406,7 @@ class AgenticOSService:
             "risk_statement": validation.risk_statement,
             "tot_tree": nodes,
             "sub_agents": [],
+            "node_runs": [],
             "timeline": [],
             "events": [],
             "pending_approvals": [],
@@ -1121,6 +1131,8 @@ class AgenticOSService:
             "objective": report_payload.get("objective") or (state.get("research_spec") or {}).get("taskGoal"),
             "timelineCount": len(state.get("timeline") or []),
             "eventCount": len(state.get("events") or []),
+            "nodeRunCount": len(state.get("node_runs") or []),
+            "llmTraceCount": len(self._load_llm_traces(run_id, limit=100000)),
             "contractPassRate": report_payload.get("contractPassRate"),
             "failureEvents": report_payload.get("failureEvents"),
             "recoveryEvents": report_payload.get("recoveryEvents"),
@@ -1175,6 +1187,8 @@ class AgenticOSService:
             "reportSummary": "artifacts/report_summary.json",
             "runReport": "artifacts/run_report.json",
             "runReportMarkdown": "artifacts/run_report.md",
+            "nodeRunsLedger": "artifacts/node_runs.json",
+            "llmTraces": "artifacts/llm_traces.jsonl",
             "policyRules": copied_rules,
             "runtimeExecution": {
                 "path": "artifacts/runtime_execution.json",
@@ -1224,6 +1238,8 @@ PY
                 "artifacts/run_report.json",
                 "artifacts/run_report.md",
                 "artifacts/runtime_execution.json",
+                "artifacts/node_runs.json",
+                "artifacts/llm_traces.jsonl",
                 "manifest/policy_rules/approval_policy_rules.yaml",
                 "manifest/policy_rules/execution_policy_rules.yaml",
                 "manifest/policy_rules/agentic_runtime_rules.yaml",
@@ -1234,6 +1250,11 @@ PY
                 src = run_dir / rel
                 if src.exists():
                     zf.write(src, arcname=rel)
+            node_runs_root = run_dir / "artifacts" / "node_runs"
+            if node_runs_root.exists():
+                for src in sorted(node_runs_root.rglob("*")):
+                    if src.is_file():
+                        zf.write(src, arcname=str(src.relative_to(run_dir)))
 
         state["repro_bundle"] = {
             "bundlePath": str(bundle_zip),
@@ -1525,6 +1546,7 @@ PY
         contract = self._validate_contract(run_id)
         record = self._registry_record(run_id)
         search_stats = self._collect_search_stats(state)
+        llm_traces = self._load_llm_traces(run_id, limit=1000)
 
         return AgenticRunDetail(
             run_id=run_id,
@@ -1540,6 +1562,8 @@ PY
             timeline=state.get("timeline") or [],
             events=state.get("events") or [],
             pending_approvals=state.get("pending_approvals") or [],
+            node_runs=[AgenticNodeRunRecord.model_validate(item) for item in state.get("node_runs", [])],
+            llm_traces=[AgenticLlmTraceRecord.model_validate(item) for item in llm_traces],
             contract=contract,
             search_stats=AgenticSearchStats.model_validate(search_stats),
             matrix=state.get("matrix"),
@@ -2009,14 +2033,14 @@ PY
                 "node_id": "n1",
                 "parent_id": "n0",
                 "agent": "ResearchAgent",
-                "title": "Hypothesis Proposal",
-                "hypothesis": "MAPPO + tuned rollout length can improve target metric with bounded cost.",
-                "execution_plan": "Generate baseline and challenger hypotheses with expected lift.",
+                "title": "Model/Loss Mutation Proposal",
+                "hypothesis": "Architecture and objective-level code mutations can improve target metric with bounded cost.",
+                "execution_plan": "Generate code-level mutation candidates (architecture/loss/objective) and expected uplift.",
                 "expected_metrics": {metric: "improve"},
                 "budget": {"gpuHours": 0.7, "wallclockMinutes": 25},
                 "risk": "medium",
                 "status": "PENDING",
-                "rationale": "Research lane creates candidate algorithm family and controls.",
+                "rationale": "Research lane generates code-level hypotheses rather than only hyper-parameter sweeps.",
                 "evidence": {},
                 "sub_agents": [],
                 "next_suggestions": ["Run integration check", "Prepare fallback baseline"],
@@ -2095,8 +2119,8 @@ PY
                 "parent_id": "n0",
                 "agent": "OpsAgent",
                 "title": "Execute Candidate Run",
-                "hypothesis": "Selected configuration can produce reproducible baseline metrics.",
-                "execution_plan": f"Run execution adapter ({execution_mode}) and generate checkpoints/metrics artifacts.",
+                "hypothesis": "Selected code mutation branch can produce reproducible metrics and evidence.",
+                "execution_plan": f"Run execution adapter ({execution_mode}) and generate per-node run artifacts/checkpoints/metrics.",
                 "expected_metrics": {metric: spec.get("successMetrics", {}).get(metric)},
                 "budget": {"gpuHours": 1.8, "wallclockMinutes": 50},
                 "risk": "medium",
@@ -2131,6 +2155,32 @@ PY
     def _run_dir(self, run_id: str) -> Path:
         return self.runs_root / run_id
 
+    def _llm_traces_path(self, run_id: str) -> Path:
+        return self._run_dir(run_id) / "artifacts" / "llm_traces.jsonl"
+
+    def _append_llm_trace(
+        self,
+        run_id: str,
+        row: Dict[str, Any],
+    ) -> None:
+        run_id = str(run_id or "").strip()
+        if not run_id:
+            return
+        path = self._llm_traces_path(run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            return
+
+    def _load_llm_traces(self, run_id: str, *, limit: int = 500) -> List[Dict[str, Any]]:
+        path = self._llm_traces_path(run_id)
+        rows = _read_jsonl(path)
+        if limit > 0 and len(rows) > limit:
+            rows = rows[-limit:]
+        return rows
+
     def _state_path(self, run_id: str) -> Path:
         return self._run_dir(run_id) / "state.json"
 
@@ -2138,7 +2188,16 @@ PY
         state_path = self._state_path(run_id)
         if not state_path.exists():
             raise FileNotFoundError("agentic_run_not_found")
-        return json.loads(state_path.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            raise ValueError("agentic_state_invalid")
+        state.setdefault("tot_tree", [])
+        state.setdefault("sub_agents", [])
+        state.setdefault("node_runs", [])
+        state.setdefault("timeline", [])
+        state.setdefault("events", [])
+        state.setdefault("pending_approvals", [])
+        return state
 
     def _persist_state(self, run_id: str, state: Dict[str, Any]) -> None:
         run_dir = self._run_dir(run_id)
@@ -2226,6 +2285,8 @@ PY
             "failure_history": state.get("failure_history", []),
             "approvals": state.get("pending_approvals", []),
             "sub_agents": state.get("sub_agents", []),
+            "node_runs": state.get("node_runs", []),
+            "llm_traces": self._load_llm_traces(run_id, limit=800),
         }
         _atomic_write_text(
             run_dir / "artifacts" / "diagnostics.json",
@@ -2235,6 +2296,11 @@ PY
         _atomic_write_text(
             run_dir / "artifacts" / "sub_agents.json",
             json.dumps(state.get("sub_agents", []), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        _atomic_write_text(
+            run_dir / "artifacts" / "node_runs.json",
+            json.dumps(state.get("node_runs", []), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         self._write_run_report(state)
@@ -2291,6 +2357,8 @@ PY
             encoding="utf-8",
         )
         (run_dir / "artifacts" / "sub_agents.json").write_text("[]\n", encoding="utf-8")
+        (run_dir / "artifacts" / "node_runs.json").write_text("[]\n", encoding="utf-8")
+        (run_dir / "artifacts" / "llm_traces.jsonl").write_text("", encoding="utf-8")
         (run_dir / "artifacts" / "run_report.json").write_text(json.dumps({"status": "PENDING"}, indent=2), encoding="utf-8")
         (run_dir / "artifacts" / "run_report.md").write_text("# Agentic Run Report\n\nstatus: PENDING\n", encoding="utf-8")
         (run_dir / "artifacts" / "error_report.json").write_text(json.dumps({}, indent=2), encoding="utf-8")
@@ -2343,7 +2411,7 @@ PY
         dependency_summary = [
             f"python=={platform.python_version()}",
             f"mode={self._execution_adapter_mode(state)}",
-            "llm_provider=stub",
+            f"llm_provider={self._llm_provider()}",
         ]
         (run_dir / "manifest" / "dependency_summary.txt").write_text("\n".join(dependency_summary) + "\n", encoding="utf-8")
 
@@ -2354,6 +2422,1036 @@ PY
         except OSError:
             pass
 
+    def _primary_metric_key(self, state: Dict[str, Any]) -> str:
+        metrics = ((state.get("research_spec") or {}).get("successMetrics") or {})
+        if isinstance(metrics, dict):
+            for key in metrics.keys():
+                text = str(key).strip()
+                if text:
+                    return text
+        return "winRate"
+
+    def _llm_provider(self) -> str:
+        return str(os.getenv("AGENTIC_LLM_PROVIDER") or "openai").strip().lower()
+
+    def _llm_model(self) -> str:
+        return str(os.getenv("AGENTIC_LLM_MODEL") or "gpt-4.1-mini").strip()
+
+    def _llm_api_key(self) -> str:
+        return str(os.getenv("AGENTIC_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
+
+    def _llm_base_url(self) -> str:
+        return str(os.getenv("AGENTIC_LLM_BASE_URL") or "https://api.openai.com/v1").strip().rstrip("/")
+
+    def _llm_timeout_seconds(self) -> int:
+        try:
+            return max(5, min(300, int(os.getenv("AGENTIC_LLM_TIMEOUT_SECONDS") or 45)))
+        except Exception:
+            return 45
+
+    def _llm_max_retries(self) -> int:
+        try:
+            return max(1, min(5, int(os.getenv("AGENTIC_LLM_MAX_RETRIES") or 2)))
+        except Exception:
+            return 2
+
+    def _assert_llm_ready(self) -> None:
+        provider = self._llm_provider()
+        if provider != "openai":
+            raise RuntimeError(f"llm_required_provider_not_supported:{provider}")
+        if not self._llm_model():
+            raise RuntimeError("llm_required_missing_model")
+        if not self._llm_api_key():
+            raise RuntimeError("llm_required_missing_api_key")
+
+    def _extract_first_json_object(self, text: str) -> Dict[str, Any]:
+        raw = str(text or "").strip()
+        if not raw:
+            raise ValueError("llm_empty_content")
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(raw[start : end + 1])
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        raise ValueError("llm_invalid_json_object")
+
+    def _validate_json_schema(self, value: Any, schema: Dict[str, Any], path: str = "$") -> None:
+        expected_type = str(schema.get("type") or "").strip().lower()
+        if expected_type == "object":
+            if not isinstance(value, dict):
+                raise ValueError(f"{path}: expected object")
+            required = schema.get("required") or []
+            for key in required:
+                if key not in value:
+                    raise ValueError(f"{path}: missing required key '{key}'")
+            props = schema.get("properties") or {}
+            if isinstance(props, dict):
+                for key, child_schema in props.items():
+                    if key in value and isinstance(child_schema, dict):
+                        self._validate_json_schema(value[key], child_schema, path=f"{path}.{key}")
+            return
+
+        if expected_type == "array":
+            if not isinstance(value, list):
+                raise ValueError(f"{path}: expected array")
+            min_items = schema.get("minItems")
+            max_items = schema.get("maxItems")
+            if min_items is not None and len(value) < int(min_items):
+                raise ValueError(f"{path}: expected at least {int(min_items)} items")
+            if max_items is not None and len(value) > int(max_items):
+                raise ValueError(f"{path}: expected at most {int(max_items)} items")
+            child_schema = schema.get("items")
+            if isinstance(child_schema, dict):
+                for idx, item in enumerate(value):
+                    self._validate_json_schema(item, child_schema, path=f"{path}[{idx}]")
+            return
+
+        if expected_type == "string":
+            if not isinstance(value, str):
+                raise ValueError(f"{path}: expected string")
+            enum = schema.get("enum")
+            if isinstance(enum, list) and enum and value not in enum:
+                raise ValueError(f"{path}: value '{value}' not in enum")
+            return
+
+        if expected_type == "number":
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"{path}: expected number")
+            return
+
+        if expected_type == "integer":
+            if not isinstance(value, int):
+                raise ValueError(f"{path}: expected integer")
+            return
+
+        if expected_type == "boolean":
+            if not isinstance(value, bool):
+                raise ValueError(f"{path}: expected boolean")
+            return
+
+    def _llm_complete_json(
+        self,
+        *,
+        task: str,
+        system_prompt: str,
+        user_prompt: str,
+        schema: Dict[str, Any],
+        temperature: float = 0.2,
+        run_id: Optional[str] = None,
+        node_id: Optional[str] = None,
+        role: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._assert_llm_ready()
+        max_retries = self._llm_max_retries()
+        provider = self._llm_provider()
+        model = self._llm_model()
+        if provider != "openai":
+            raise RuntimeError(f"llm_required_provider_not_supported:{provider}")
+
+        prompt_user = str(user_prompt or "")
+        last_error = "unknown"
+        for attempt in range(1, max_retries + 1):
+            payload = {
+                "model": model,
+                "temperature": float(max(0.0, min(1.0, temperature))),
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": str(system_prompt or "").strip()},
+                    {"role": "user", "content": prompt_user},
+                ],
+            }
+            req = urllib.request.Request(
+                f"{self._llm_base_url()}/chat/completions",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self._llm_api_key()}",
+                },
+                method="POST",
+            )
+            try:
+                started_at = _now()
+                with urllib.request.urlopen(req, timeout=self._llm_timeout_seconds()) as resp:
+                    raw = resp.read().decode("utf-8")
+                body = json.loads(raw)
+                choices = body.get("choices") or []
+                if not choices:
+                    raise ValueError("llm_no_choices")
+                message = (choices[0] or {}).get("message") or {}
+                content = message.get("content")
+                if isinstance(content, list):
+                    text = ""
+                    for row in content:
+                        if isinstance(row, dict) and str(row.get("type") or "") == "text":
+                            text += str(row.get("text") or "")
+                else:
+                    text = str(content or "")
+                result = self._extract_first_json_object(text)
+                self._validate_json_schema(result, schema)
+                latency_ms = max(0, int((_now() - started_at).total_seconds() * 1000))
+                self._append_llm_trace(
+                    str(run_id or ""),
+                    {
+                        "ts": _now_iso(),
+                        "task": str(task or ""),
+                        "status": "succeeded",
+                        "model": model,
+                        "attempt": int(attempt),
+                        "latency_ms": latency_ms,
+                        "node_id": str(node_id or "") or None,
+                        "role": str(role or "") or None,
+                        "prompt_hash": _stable_hash(
+                            {
+                                "task": str(task or ""),
+                                "system": str(system_prompt or ""),
+                                "user": prompt_user,
+                                "schema": schema,
+                                "attempt": int(attempt),
+                            }
+                        ),
+                        "response_hash": _stable_hash(result),
+                        "schema_valid": True,
+                        "error": None,
+                    },
+                )
+                return result
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+                latency_ms = 0
+                try:
+                    latency_ms = max(0, int((_now() - started_at).total_seconds() * 1000))
+                except Exception:
+                    latency_ms = 0
+                last_error = str(exc)
+                self._append_llm_trace(
+                    str(run_id or ""),
+                    {
+                        "ts": _now_iso(),
+                        "task": str(task or ""),
+                        "status": "failed",
+                        "model": model,
+                        "attempt": int(attempt),
+                        "latency_ms": latency_ms,
+                        "node_id": str(node_id or "") or None,
+                        "role": str(role or "") or None,
+                        "prompt_hash": _stable_hash(
+                            {
+                                "task": str(task or ""),
+                                "system": str(system_prompt or ""),
+                                "user": prompt_user,
+                                "schema": schema,
+                                "attempt": int(attempt),
+                            }
+                        ),
+                        "response_hash": None,
+                        "schema_valid": False,
+                        "error": last_error,
+                    },
+                )
+                if attempt >= max_retries:
+                    break
+                prompt_user = (
+                    f"{user_prompt}\n\n"
+                    f"Your previous output was invalid for task '{task}': {last_error}\n"
+                    "Return JSON only, no markdown, and strictly satisfy the schema."
+                )
+        raise RuntimeError(f"llm_required_output_invalid task={task} reason={last_error}")
+
+    def _render_mutation_template_text(self, value: str, context: Dict[str, Any]) -> str:
+        text = str(value or "")
+        for key, raw in context.items():
+            text = text.replace(f"{{{key}}}", str(raw))
+        return text
+
+    def _llm_mutation_template_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "required": ["items"],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "strategy",
+                            "mutationKind",
+                            "title",
+                            "hypothesis",
+                            "executionPlan",
+                            "targetFiles",
+                            "changeSummary",
+                            "validationCommand",
+                            "risk",
+                        ],
+                        "properties": {
+                            "strategy": {"type": "string"},
+                            "mutationKind": {"type": "string"},
+                            "title": {"type": "string"},
+                            "hypothesis": {"type": "string"},
+                            "executionPlan": {"type": "string"},
+                            "targetFiles": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string"}},
+                            "changeSummary": {"type": "string"},
+                            "validationCommand": {"type": "string"},
+                            "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+                        },
+                    },
+                }
+            },
+        }
+
+    def _llm_generate_code_mutation_templates(self, state: Dict[str, Any], node: Dict[str, Any], lane: str) -> List[Dict[str, Any]]:
+        run_id = str(state.get("run_id") or "")
+        node_id = str(node.get("node_id") or "")
+        metric_key = self._primary_metric_key(state)
+        agent = str(node.get("agent") or "ResearchAgent")
+        spec = state.get("research_spec") or {}
+        env_name = str(((spec.get("environment") or {}).get("name") or "env"))
+        budget = spec.get("budget") or {}
+        constraints = spec.get("constraints") or {}
+        retrieval = self.retrieve_context(
+            query=f"code mutation plan lane={lane} node={node_id} metric={metric_key} env={env_name}",
+            k=3,
+        )
+
+        system_prompt = (
+            "You are the core planner for Agentic MARL Research OS. "
+            "Return strictly valid JSON only. "
+            "Propose concrete code-edit mutation candidates for this ToT node."
+        )
+        user_prompt = json.dumps(
+            {
+                "task": "code_mutation_templates",
+                "lane": lane,
+                "runId": run_id,
+                "nodeId": node_id,
+                "agent": agent,
+                "primaryMetric": metric_key,
+                "environment": env_name,
+                "budget": budget,
+                "constraints": constraints,
+                "nodeTitle": str(node.get("title") or ""),
+                "nodeHypothesis": str(node.get("hypothesis") or ""),
+                "nodeExecutionPlan": str(node.get("execution_plan") or ""),
+                "retrieval": retrieval,
+                "requirements": {
+                    "mustBeCodeLevel": True,
+                    "mustIncludeTargetFiles": True,
+                    "preferFilesInsideWorkspace": True,
+                    "maxCandidates": 4,
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        result = self._llm_complete_json(
+            task=f"mutation_templates_{lane}",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema=self._llm_mutation_template_schema(),
+            temperature=0.2,
+            run_id=run_id,
+            node_id=node_id,
+            role=agent,
+        )
+
+        rows = result.get("items") or []
+        if not isinstance(rows, list) or not rows:
+            raise RuntimeError(f"llm_required_empty_mutation_templates lane={lane}")
+
+        normalized: List[Dict[str, Any]] = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            target_files = self._normalize_target_files(item.get("targetFiles") or [])
+            if not target_files:
+                continue
+            risk = str(item.get("risk") or "medium").strip().lower()
+            if risk not in {"low", "medium", "high"}:
+                risk = "medium"
+            normalized.append(
+                {
+                    "strategy": str(item.get("strategy") or "llm_mutation").strip(),
+                    "mutationKind": str(item.get("mutationKind") or "code").strip(),
+                    "title": str(item.get("title") or f"{node_id} LLM Branch").strip(),
+                    "hypothesis": str(item.get("hypothesis") or f"Mutation can improve {metric_key}.").strip(),
+                    "executionPlan": str(item.get("executionPlan") or "Apply patch and validate.").strip(),
+                    "targetFiles": target_files,
+                    "changeSummary": str(item.get("changeSummary") or "LLM-proposed code mutation.").strip(),
+                    "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q").strip(),
+                    "risk": risk,
+                    "source": "llm",
+                }
+            )
+        if not normalized:
+            raise RuntimeError(f"llm_required_invalid_mutation_templates lane={lane}")
+        return normalized
+
+    def _runtime_code_mutation_templates(self, state: Dict[str, Any], node: Dict[str, Any]) -> List[Dict[str, Any]]:
+        agent = str(node.get("agent") or "ResearchAgent")
+        lane = (
+            "research"
+            if agent == "ResearchAgent"
+            else "integration"
+            if agent == "IntegrationAgent"
+            else "evaluation"
+            if agent == "EvalAgent"
+            else "execution"
+        )
+        return self._llm_generate_code_mutation_templates(state, node, lane=lane)
+
+    def _node_run_dir(self, run_id: str, node_run_id: str) -> Path:
+        return self._run_dir(run_id) / "artifacts" / "node_runs" / node_run_id
+
+    def _latest_node_run_id(self, state: Dict[str, Any], node_id: Optional[str]) -> Optional[str]:
+        target = str(node_id or "").strip()
+        if not target:
+            return None
+        for row in reversed(list(state.get("node_runs") or [])):
+            if str(row.get("nodeId") or "") != target:
+                continue
+            node_run_id = str(row.get("nodeRunId") or "").strip()
+            if node_run_id:
+                return node_run_id
+        return None
+
+    def _normalize_target_files(self, values: Iterable[Any]) -> List[str]:
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            raw = str(value or "").strip()
+            if not raw:
+                continue
+            resolved_rel, _ = self._resolve_target_path(raw)
+            candidate = (resolved_rel or raw).replace("\\", "/").lstrip("./").strip()
+            if not candidate or candidate in seen:
+                continue
+            normalized.append(candidate)
+            seen.add(candidate)
+        return normalized
+
+    def _is_within_workspace(self, path: Path) -> bool:
+        try:
+            path.resolve().relative_to(self.workspace_root.resolve())
+            return True
+        except Exception:
+            return False
+
+    def _resolve_target_path(self, raw_path: str) -> Tuple[str, Optional[Path]]:
+        text = str(raw_path or "").strip().replace("\\", "/")
+        if not text:
+            return "", None
+
+        if text.startswith("./"):
+            text = text[2:]
+        if text.startswith("~/"):
+            text = text[2:]
+
+        if os.path.isabs(text):
+            abs_path = Path(text).resolve()
+            if not self._is_within_workspace(abs_path):
+                return "", None
+            rel = str(abs_path.relative_to(self.workspace_root)).replace("\\", "/")
+            if abs_path.exists() and abs_path.is_file():
+                return rel, abs_path
+            return rel, None
+
+        rel_parts = [part for part in Path(text).parts if part not in ("", ".")]
+        if not rel_parts or any(part == ".." for part in rel_parts):
+            return "", None
+        normalized = "/".join(rel_parts)
+
+        roots: List[Path] = [self.workspace_root]
+        if not normalized.startswith("rl-research-platform/"):
+            roots.append(self.workspace_root / "rl-research-platform")
+        if not normalized.startswith("MLE/"):
+            roots.append(self.workspace_root / "MLE")
+
+        candidates: List[Path] = []
+        seen: set[str] = set()
+        for root in roots:
+            try:
+                candidate = (root / normalized).resolve()
+            except Exception:
+                continue
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            if self._is_within_workspace(candidate):
+                candidates.append(candidate)
+
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                rel = str(candidate.relative_to(self.workspace_root)).replace("\\", "/")
+                return rel, candidate
+
+        if candidates:
+            rel = str(candidates[0].relative_to(self.workspace_root)).replace("\\", "/")
+            return rel, None
+        return "", None
+
+    def _derive_node_patch_plan(self, state: Dict[str, Any], node: Dict[str, Any]) -> List[Dict[str, Any]]:
+        evidence = node.get("evidence") if isinstance(node.get("evidence"), dict) else {}
+        expansion = evidence.get("expansion") if isinstance(evidence, dict) else {}
+        raw = expansion.get("mutationPlan") if isinstance(expansion, dict) else None
+        plans: List[Dict[str, Any]] = []
+        if isinstance(raw, dict):
+            plans.append(copy.deepcopy(raw))
+        elif isinstance(raw, list):
+            plans.extend([copy.deepcopy(item) for item in raw if isinstance(item, dict)])
+        if plans:
+            return plans
+
+        templates = self._runtime_code_mutation_templates(state, node)
+        first = templates[:2]
+        rendered: List[Dict[str, Any]] = []
+        for item in first:
+            rendered.append(
+                {
+                    "strategy": str(item.get("strategy") or "mutation"),
+                    "mutationKind": str(item.get("mutationKind") or "code"),
+                    "changeSummary": str(item.get("changeSummary") or ""),
+                    "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
+                    "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q"),
+                }
+            )
+        return rendered
+
+    def _extract_node_run_metrics(self, node: Dict[str, Any]) -> Dict[str, Any]:
+        evidence = node.get("evidence") if isinstance(node.get("evidence"), dict) else {}
+        execution = evidence.get("execution") if isinstance(evidence, dict) else {}
+        runtime = execution.get("runtime") if isinstance(execution, dict) else {}
+        runtime_metrics = runtime.get("metrics") if isinstance(runtime, dict) else None
+        if isinstance(runtime_metrics, dict) and runtime_metrics:
+            return copy.deepcopy(runtime_metrics)
+
+        expected = node.get("expected_metrics") if isinstance(node.get("expected_metrics"), dict) else {}
+        normalized: Dict[str, Any] = {}
+        for key, value in expected.items():
+            raw = str(value)
+            match = re.search(r"[-+]?\d*\.?\d+", raw)
+            if match:
+                try:
+                    parsed = float(match.group(0))
+                    if parsed > 1.0:
+                        parsed = parsed / 100.0
+                    normalized[str(key)] = round(max(0.0, min(1.0, parsed)), 4)
+                    continue
+                except Exception:
+                    pass
+            normalized[str(key)] = value
+        if normalized:
+            return normalized
+        return {"status": str(node.get("status") or "UNKNOWN")}
+
+    def _mutate_python_content(
+        self,
+        *,
+        target_path: str,
+        original: str,
+        mutation_kind: str,
+        strategy: str,
+        summary: str,
+        node_run_id: str,
+        node_id: str,
+        patch_index: int,
+        target_index: int,
+    ) -> Tuple[str, str, bool]:
+        text = original
+        changed = False
+        mode_bits: List[str] = []
+
+        if target_path.endswith("runner/algorithms/simple_train.py"):
+            replacement_rules: List[Tuple[str, str, str]] = []
+            if mutation_kind == "loss":
+                replacement_rules = [
+                    (r"1\.0\s*-\s*0\.02\s*\*\s*idx", "1.0 - 0.0175 * idx", "entropy_decay"),
+                    (r"0\.1\s*\*\s*idx", "0.105 * idx", "return_scale"),
+                ]
+            elif mutation_kind == "objective":
+                replacement_rules = [
+                    (r"0\.05\s*\*\s*idx", "0.055 * idx", "winrate_curve"),
+                ]
+            elif mutation_kind == "architecture":
+                replacement_rules = [
+                    (r'train_cfg\.get\("rolloutLen",\s*10\)', 'train_cfg.get("rolloutLen", 8)', "rollout_len"),
+                ]
+
+            for pattern, replacement, label in replacement_rules:
+                updated = re.sub(pattern, replacement, text, count=1)
+                if updated != text:
+                    text = updated
+                    changed = True
+                    mode_bits.append(label)
+
+            if "agenticMutationScore" not in text:
+                lines = text.splitlines()
+                for idx, line in enumerate(lines):
+                    if '"entropy"' in line and "round(" in line:
+                        indent = re.match(r"\s*", line).group(0) if re.match(r"\s*", line) else " " * 12
+                        lines.insert(idx + 1, f'{indent}"agenticMutationScore": round(min(1.0, 0.03 * idx + 0.1), 4),')
+                        text = "\n".join(lines) + ("\n" if original.endswith("\n") else "")
+                        changed = True
+                        mode_bits.append("metric_probe")
+                        break
+
+        if target_path.endswith("runner/runner_main.py") and mutation_kind == "integration":
+            marker = "AGENTIC_INTEGRATION_TRACE_ENABLED = True"
+            if marker not in text:
+                insert_at = 0
+                lines = text.splitlines()
+                for idx, line in enumerate(lines):
+                    stripped = line.strip()
+                    if stripped.startswith("import ") or stripped.startswith("from "):
+                        insert_at = idx + 1
+                lines.insert(insert_at, marker)
+                text = "\n".join(lines) + ("\n" if original.endswith("\n") else "")
+                changed = True
+                mode_bits.append("integration_trace")
+
+        if target_path.endswith("app/services/eval_matrix.py") and mutation_kind == "evaluation":
+            helper_name = "_agentic_confidence_floor"
+            if helper_name not in text:
+                helper = [
+                    "",
+                    "",
+                    f"def {helper_name}(value: float) -> float:",
+                    "    return max(0.0, min(1.0, float(value)))",
+                    "",
+                ]
+                text = text.rstrip("\n") + "\n" + "\n".join(helper)
+                changed = True
+                mode_bits.append("confidence_floor")
+
+        if not changed and "def train(" in text:
+            helper_name = f"_agentic_mutation_payload_{patch_index}_{target_index}"
+            if helper_name not in text:
+                helper = [
+                    "",
+                    "",
+                    f"def {helper_name}(step_index: int) -> dict:",
+                    "    return {",
+                    f'        "node_run_id": {json.dumps(node_run_id, ensure_ascii=False)},',
+                    f'        "node_id": {json.dumps(node_id, ensure_ascii=False)},',
+                    f'        "strategy": {json.dumps(strategy, ensure_ascii=False)},',
+                    f'        "mutation_kind": {json.dumps(mutation_kind, ensure_ascii=False)},',
+                    f'        "summary": {json.dumps(summary, ensure_ascii=False)},',
+                    '        "score": round(min(1.0, 0.2 + 0.01 * float(step_index)), 4),',
+                    "    }",
+                    "",
+                ]
+                insert_at = text.find("def train(")
+                if insert_at > 0:
+                    text = text[:insert_at] + "\n".join(helper) + text[insert_at:]
+                else:
+                    text = text.rstrip("\n") + "\n" + "\n".join(helper)
+                changed = True
+                mode_bits.append("payload_helper")
+
+        mode = "python_semantic:" + "+".join(mode_bits) if mode_bits else "python_noop"
+        return text, mode, changed
+
+    def _mutate_target_content(
+        self,
+        *,
+        target_path: str,
+        original: str,
+        patch: Dict[str, Any],
+        node_run_id: str,
+        node_id: str,
+        patch_index: int,
+        target_index: int,
+    ) -> Tuple[str, str]:
+        strategy = str(patch.get("strategy") or "mutation")
+        mutation_kind = str(patch.get("mutationKind") or "code")
+        summary = _short(str(patch.get("changeSummary") or "Agentic mutation proposal"), limit=220)
+        suffix = Path(target_path).suffix.lower()
+        generated_at = _now_iso()
+        mutation_meta = {
+            "node_run_id": node_run_id,
+            "node_id": node_id,
+            "strategy": strategy,
+            "mutation_kind": mutation_kind,
+            "summary": summary,
+            "generated_at": generated_at,
+        }
+
+        if suffix == ".json":
+            try:
+                payload = json.loads(original)
+                if isinstance(payload, dict):
+                    payload["_agenticMutation"] = mutation_meta
+                    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n", "json_metadata"
+            except Exception:
+                pass
+
+        if suffix == ".py":
+            semantic_mutated, semantic_mode, semantic_changed = self._mutate_python_content(
+                target_path=target_path,
+                original=original,
+                mutation_kind=mutation_kind,
+                strategy=strategy,
+                summary=summary,
+                node_run_id=node_run_id,
+                node_id=node_id,
+                patch_index=patch_index,
+                target_index=target_index,
+            )
+            if semantic_changed and semantic_mutated != original:
+                return semantic_mutated, semantic_mode
+            marker = re.sub(r"[^a-zA-Z0-9_]+", "_", f"{node_run_id}_{patch_index}_{target_index}").strip("_")
+            marker = marker or "mutation"
+            tail = [
+                "",
+                "",
+                f"def _agentic_mutation_marker_{marker}():",
+                '    """Generated by Agentic OS node-run for replay evidence."""',
+                "    return {",
+                f'        "node_run_id": {json.dumps(node_run_id, ensure_ascii=False)},',
+                f'        "node_id": {json.dumps(node_id, ensure_ascii=False)},',
+                f'        "strategy": {json.dumps(strategy, ensure_ascii=False)},',
+                f'        "mutation_kind": {json.dumps(mutation_kind, ensure_ascii=False)},',
+                f'        "summary": {json.dumps(summary, ensure_ascii=False)},',
+                f'        "generated_at": {json.dumps(generated_at, ensure_ascii=False)},',
+                "    }",
+                "",
+            ]
+            base = original.rstrip("\n")
+            return base + "\n" + "\n".join(tail), "python_marker"
+
+        if suffix in {".ts", ".tsx", ".js", ".jsx", ".c", ".cc", ".cpp", ".java", ".go", ".rs"}:
+            marker = f"// agentic-mutation node_run={node_run_id} strategy={strategy} kind={mutation_kind} summary={summary}"
+        elif suffix == ".md":
+            marker = f"<!-- agentic-mutation node_run={node_run_id} strategy={strategy} kind={mutation_kind} summary={summary} -->"
+        else:
+            marker = f"# agentic-mutation node_run={node_run_id} strategy={strategy} kind={mutation_kind} summary={summary}"
+        base = original if original.endswith("\n") else original + "\n"
+        return base + marker + "\n", "text_marker"
+
+    def _materialize_node_run_patch_artifacts(
+        self,
+        *,
+        state: Dict[str, Any],
+        node: Dict[str, Any],
+        node_run: Dict[str, Any],
+        node_run_dir: Path,
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        run_id = str(state.get("run_id") or "")
+        run_dir = self._run_dir(run_id)
+        node_run_id = str(node_run.get("nodeRunId") or "")
+        node_id = str(node.get("node_id") or "")
+        workspace_dir = node_run_dir / "workspace"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        patch_paths: List[str] = []
+        patch_plan = [item for item in (node_run.get("patchPlan") or []) if isinstance(item, dict)]
+        manifest: Dict[str, Any] = {
+            "generatedAt": _now_iso(),
+            "workspaceRoot": str(self.workspace_root),
+            "nodeRunId": node_run_id,
+            "nodeId": node_id,
+            "patches": [],
+            "files": [],
+            "unresolvedTargets": [],
+            "pythonSyntaxErrors": [],
+            "summary": {},
+        }
+
+        total_targets = 0
+        resolved_targets = 0
+
+        for idx, patch in enumerate(patch_plan, start=1):
+            target_files = self._normalize_target_files(patch.get("targetFiles") or [])
+            patch_meta = {
+                "index": idx,
+                "strategy": str(patch.get("strategy") or "mutation"),
+                "mutationKind": str(patch.get("mutationKind") or "code"),
+                "changeSummary": str(patch.get("changeSummary") or ""),
+                "resolvedTargets": [],
+                "unresolvedTargets": [],
+            }
+            total_targets += len(target_files)
+            diff_chunks: List[str] = []
+
+            for target_index, raw_target in enumerate(target_files, start=1):
+                rel_target, source_path = self._resolve_target_path(raw_target)
+                target_label = rel_target or raw_target
+                if not rel_target or source_path is None:
+                    patch_meta["unresolvedTargets"].append(target_label)
+                    manifest["unresolvedTargets"].append(target_label)
+                    continue
+                if not source_path.exists() or not source_path.is_file():
+                    patch_meta["unresolvedTargets"].append(target_label)
+                    manifest["unresolvedTargets"].append(target_label)
+                    continue
+
+                try:
+                    original = source_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    patch_meta["unresolvedTargets"].append(target_label)
+                    manifest["unresolvedTargets"].append(target_label)
+                    continue
+                except Exception:
+                    patch_meta["unresolvedTargets"].append(target_label)
+                    manifest["unresolvedTargets"].append(target_label)
+                    continue
+
+                mutated, mutation_mode = self._mutate_target_content(
+                    target_path=rel_target,
+                    original=original,
+                    patch=patch,
+                    node_run_id=node_run_id,
+                    node_id=node_id,
+                    patch_index=idx,
+                    target_index=target_index,
+                )
+
+                workspace_target = workspace_dir / rel_target
+                _atomic_write_text(workspace_target, mutated, encoding="utf-8")
+
+                diff_text = "".join(
+                    difflib.unified_diff(
+                        original.splitlines(keepends=True),
+                        mutated.splitlines(keepends=True),
+                        fromfile=f"a/{rel_target}",
+                        tofile=f"b/{rel_target}",
+                    )
+                )
+                if diff_text:
+                    if not diff_text.endswith("\n"):
+                        diff_text += "\n"
+                    diff_chunks.append(diff_text)
+
+                syntax_valid: Optional[bool] = None
+                syntax_error: Optional[str] = None
+                if rel_target.endswith(".py"):
+                    try:
+                        compile(mutated, rel_target, "exec")
+                        syntax_valid = True
+                    except Exception as exc:
+                        syntax_valid = False
+                        syntax_error = _short(str(exc), limit=240)
+                        manifest["pythonSyntaxErrors"].append({"target": rel_target, "error": syntax_error})
+
+                file_record: Dict[str, Any] = {
+                    "target": rel_target,
+                    "sourcePath": str(source_path),
+                    "workspacePath": str(workspace_target),
+                    "mutationMode": mutation_mode,
+                    "sourceSha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+                    "mutatedSha256": hashlib.sha256(mutated.encode("utf-8")).hexdigest(),
+                }
+                if syntax_valid is not None:
+                    file_record["syntaxValid"] = syntax_valid
+                if syntax_error:
+                    file_record["syntaxError"] = syntax_error
+                manifest["files"].append(file_record)
+                patch_meta["resolvedTargets"].append(rel_target)
+                resolved_targets += 1
+
+            if diff_chunks:
+                patch_file = node_run_dir / f"patch_{idx:02d}.diff"
+                _atomic_write_text(patch_file, "".join(diff_chunks), encoding="utf-8")
+                rel_patch = str(patch_file.relative_to(run_dir))
+                patch_paths.append(rel_patch)
+                patch_meta["patchFile"] = rel_patch
+                patch_meta["diffChunks"] = len(diff_chunks)
+            manifest["patches"].append(patch_meta)
+
+        manifest["summary"] = {
+            "totalTargets": total_targets,
+            "resolvedTargets": resolved_targets,
+            "unresolvedTargets": len(manifest.get("unresolvedTargets") or []),
+            "diffFiles": len([path for path in patch_paths if path.endswith(".diff")]),
+            "pythonSyntaxChecked": len([row for row in (manifest.get("files") or []) if str(row.get("target") or "").endswith(".py")]),
+            "pythonSyntaxFailed": len(manifest.get("pythonSyntaxErrors") or []),
+        }
+        manifest_path = node_run_dir / "workspace_manifest.json"
+        _atomic_write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        patch_paths.append(str(manifest_path.relative_to(run_dir)))
+
+        if any(path.endswith(".diff") for path in patch_paths):
+            apply_script = node_run_dir / "apply_patch.sh"
+            script_lines = [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'ROOT_DIR="${1:-$(pwd)}"',
+                'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+                'for patch in "${SCRIPT_DIR}"/patch_*.diff; do',
+                '  if [ -f "${patch}" ]; then',
+                '    git -C "${ROOT_DIR}" apply "${patch}"',
+                "  fi",
+                "done",
+            ]
+            _atomic_write_text(apply_script, "\n".join(script_lines) + "\n", encoding="utf-8")
+            try:
+                os.chmod(apply_script, 0o755)
+            except OSError:
+                pass
+            patch_paths.append(str(apply_script.relative_to(run_dir)))
+
+        # Record workspace directory for replay tooling.
+        patch_paths.append(str(workspace_dir.relative_to(run_dir)))
+        return list(dict.fromkeys(patch_paths)), manifest
+
+    def _start_node_run(self, state: Dict[str, Any], node: Dict[str, Any]) -> Dict[str, Any]:
+        run_id = str(state.get("run_id") or "")
+        node_id = str(node.get("node_id") or "")
+        node_runs = state.setdefault("node_runs", [])
+        node_run_id = f"nr-{len(node_runs) + 1:04d}"
+        parent_node_id = str(node.get("parent_id") or "").strip() or None
+        parent_node_run_id = self._latest_node_run_id(state, parent_node_id)
+        started_at = _now_iso()
+        patch_plan = self._derive_node_patch_plan(state, node)
+        replay_start_seq = int((state.get("audit_chain") or {}).get("seq") or 0)
+        artifact_paths = [
+            f"artifacts/node_runs/{node_run_id}/run.json",
+            f"artifacts/node_runs/{node_run_id}/patch_plan.json",
+        ]
+        node_run = {
+            "nodeRunId": node_run_id,
+            "runId": run_id,
+            "nodeId": node_id,
+            "parentNodeId": parent_node_id,
+            "parentNodeRunId": parent_node_run_id,
+            "agent": str(node.get("agent") or "Agent"),
+            "title": str(node.get("title") or node_id),
+            "status": "RUNNING",
+            "startedAt": started_at,
+            "finishedAt": None,
+            "patchPlan": patch_plan,
+            "metrics": {},
+            "artifactPaths": artifact_paths,
+            "replayRef": {"startSeq": replay_start_seq, "endSeq": replay_start_seq},
+            "error": None,
+        }
+        node_runs.append(node_run)
+
+        run_dir = self._run_dir(run_id)
+        node_run_dir = self._node_run_dir(run_id, node_run_id)
+        node_run_dir.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(node_run_dir / "run.json", json.dumps(node_run, indent=2, ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(
+            node_run_dir / "patch_plan.json",
+            json.dumps(patch_plan, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+            node["evidence"] = evidence
+        refs = evidence.get("nodeRunIds")
+        if not isinstance(refs, list):
+            refs = []
+            evidence["nodeRunIds"] = refs
+        if node_run_id not in refs:
+            refs.append(node_run_id)
+        evidence["latestNodeRunId"] = node_run_id
+        evidence["nodeRunDir"] = str(node_run_dir.relative_to(run_dir))
+        return node_run
+
+    def _finalize_node_run(
+        self,
+        state: Dict[str, Any],
+        node: Dict[str, Any],
+        node_run: Optional[Dict[str, Any]],
+        *,
+        status: str,
+        error: Optional[str] = None,
+    ) -> None:
+        if not isinstance(node_run, dict):
+            return
+        run_id = str(state.get("run_id") or "")
+        node_run_id = str(node_run.get("nodeRunId") or "")
+        if not run_id or not node_run_id:
+            return
+        run_dir = self._run_dir(run_id)
+        node_run_dir = self._node_run_dir(run_id, node_run_id)
+        node_run_dir.mkdir(parents=True, exist_ok=True)
+        finished_at = _now_iso()
+        replay_end_seq = int((state.get("audit_chain") or {}).get("seq") or 0)
+        metrics = self._extract_node_run_metrics(node)
+        node_run["status"] = str(status).upper()
+        node_run["finishedAt"] = finished_at
+        node_run["metrics"] = metrics
+        node_run["replayRef"] = {
+            "startSeq": int((node_run.get("replayRef") or {}).get("startSeq") or 0),
+            "endSeq": replay_end_seq,
+            "eventCount": max(
+                0,
+                replay_end_seq - int((node_run.get("replayRef") or {}).get("startSeq") or 0) + 1,
+            ),
+        }
+        node_run["error"] = str(error) if error else None
+
+        patch_paths, workspace_manifest = self._materialize_node_run_patch_artifacts(
+            state=state,
+            node=node,
+            node_run=node_run,
+            node_run_dir=node_run_dir,
+        )
+        mutation_summary = workspace_manifest.get("summary") if isinstance(workspace_manifest, dict) else {}
+        metrics["nodeRunArtifacts"] = {
+            "diffFiles": int(mutation_summary.get("diffFiles") or 0),
+            "resolvedTargets": int(mutation_summary.get("resolvedTargets") or 0),
+            "unresolvedTargets": int(mutation_summary.get("unresolvedTargets") or 0),
+            "pythonSyntaxFailed": int(mutation_summary.get("pythonSyntaxFailed") or 0),
+        }
+        node_run["metrics"] = metrics
+
+        result_payload = {
+            "nodeRunId": node_run_id,
+            "runId": run_id,
+            "nodeId": str(node.get("node_id") or ""),
+            "status": node_run["status"],
+            "finishedAt": finished_at,
+            "metrics": metrics,
+            "error": node_run.get("error"),
+            "replayRef": node_run.get("replayRef") or {},
+        }
+        _atomic_write_text(node_run_dir / "result.json", json.dumps(result_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(
+            node_run_dir / "node_evidence.json",
+            json.dumps(node.get("evidence") or {}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        artifact_paths = list(node_run.get("artifactPaths") or [])
+        artifact_paths.extend(
+            [
+                str((node_run_dir / "result.json").relative_to(run_dir)),
+                str((node_run_dir / "node_evidence.json").relative_to(run_dir)),
+            ]
+        )
+        artifact_paths.extend(patch_paths)
+        node_run["artifactPaths"] = list(dict.fromkeys(str(path) for path in artifact_paths if str(path).strip()))
+        _atomic_write_text(node_run_dir / "run.json", json.dumps(node_run, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+            node["evidence"] = evidence
+        evidence["latestNodeRunId"] = node_run_id
+        evidence["latestNodeRunStatus"] = node_run.get("status")
+        evidence["latestNodeRunArtifacts"] = list(node_run.get("artifactPaths") or [])
+        evidence["latestNodeRunWorkspaceSummary"] = workspace_manifest.get("summary") if isinstance(workspace_manifest, dict) else {}
+
     def _execute_node(self, state: Dict[str, Any], node: Dict[str, Any]) -> None:
         run_id = str(state.get("run_id"))
         node_id = str(node.get("node_id"))
@@ -2361,6 +3459,7 @@ PY
         title = str(node.get("title") or node_id)
         self._ensure_search_node_state(state, node)
         node["status"] = "RUNNING"
+        node_run: Optional[Dict[str, Any]] = None
 
         self._append_event(
             state,
@@ -2368,6 +3467,7 @@ PY
             message=f"{node_id} started",
             payload={"node_id": node_id, "agent": agent, "title": title},
         )
+        node_run = self._start_node_run(state, node)
 
         try:
             if agent == "SafetyAgent":
@@ -2399,6 +3499,7 @@ PY
                 message=f"{node_id} failed: {failure['reason']}",
                 payload={"node_id": node_id, "reason": failure["reason"]},
             )
+            self._finalize_node_run(state, node, node_run, status="FAILED", error=str(failure["reason"]))
             self._append_log(state, f"[{node_id}] FAILED {failure['reason']}")
             self._record_search_result(state, node, succeeded=False, failure=failure)
 
@@ -2433,18 +3534,32 @@ PY
             message=f"{node_id} succeeded",
             payload={"node_id": node_id, "agent": agent},
         )
+        self._finalize_node_run(state, node, node_run, status="SUCCEEDED")
 
     def _run_research_lane(self, state: Dict[str, Any], node: Dict[str, Any]) -> None:
         plans = self._runtime_lane_plans(state, lane="research")
         sub_agents = self._spawn_sub_agents(state, node, plans=plans, depth=1)
         metric_key = next(iter((state.get("research_spec", {}).get("successMetrics") or {"winRate": ">=0.55"}).keys()))
+        mutation_templates = self._runtime_code_mutation_templates(state, node)[:3]
+        mutation_candidates = [
+            {
+                "strategy": str(item.get("strategy") or "mutation"),
+                "mutationKind": str(item.get("mutationKind") or "code"),
+                "changeSummary": str(item.get("changeSummary") or ""),
+                "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
+                "validationCommand": str(item.get("validationCommand") or ""),
+            }
+            for item in mutation_templates
+        ]
         node["status"] = "SUCCEEDED"
         node["sub_agents"] = sub_agents
         node["evidence"] = {
             "candidateAlgorithms": ["mappo", "qmix"],
             "selected": "mappo",
             "expectedLift": {metric_key: 0.05},
+            "mutationFocus": ["architecture", "loss", "objective"],
             "retrieval": self.retrieve_context(f"research hypothesis {state.get('research_spec', {}).get('taskGoal')}", k=3),
+            "codeMutationCandidates": mutation_candidates,
             "subAgents": sub_agents,
         }
         node["next_suggestions"] = [
@@ -2464,6 +3579,7 @@ PY
             plans.extend(self._runtime_lane_plans(state, lane="integration_fresh_only"))
         sub_agents = self._spawn_sub_agents(state, node, plans=plans, depth=1)
         adapter_mode = self._execution_adapter_mode(state)
+        mutation_templates = self._runtime_code_mutation_templates(state, node)[:2]
         node["status"] = "SUCCEEDED"
         node["sub_agents"] = sub_agents
         node["evidence"] = {
@@ -2471,6 +3587,15 @@ PY
             "runnerContract": "train(config, metrics_path, checkpoint_dir, run_id)",
             "retrieval": self.retrieve_context("adapter generation runner contract", k=3),
             "retry": retry,
+            "adapterPatchCandidates": [
+                {
+                    "strategy": str(item.get("strategy") or "adapter_patch"),
+                    "changeSummary": str(item.get("changeSummary") or ""),
+                    "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
+                    "validationCommand": str(item.get("validationCommand") or ""),
+                }
+                for item in mutation_templates
+            ],
             "subAgents": sub_agents,
         }
         node["next_suggestions"] = ["Proceed to execution node", "Record adapter provenance"]
@@ -2478,7 +3603,8 @@ PY
         self._append_log(state, f"[{node['node_id']}] Integration lane completed (retry={retry})")
 
     def _run_ops_lane(self, state: Dict[str, Any], node: Dict[str, Any]) -> None:
-        if str(node.get("title") or "").strip().lower().startswith("execute candidate run"):
+        title_lower = str(node.get("title") or "").strip().lower()
+        if "execute candidate" in title_lower and "run" in title_lower:
             self._run_execution_lane(state, node)
             return
 
@@ -2625,11 +3751,28 @@ PY
                 "newCheckpoint": self._emit_runtime_checkpoint(run_dir, state, source="offline_stub"),
             }
 
+        expansion = ((node.get("evidence") or {}).get("expansion") or {}) if isinstance(node.get("evidence"), dict) else {}
+        mutation_plan = expansion.get("mutationPlan") if isinstance(expansion, dict) else None
+        if not isinstance(mutation_plan, dict) or not mutation_plan:
+            patch_candidates = self._runtime_code_mutation_templates(state, node)
+            if patch_candidates:
+                first = patch_candidates[0]
+                mutation_plan = {
+                    "strategy": str(first.get("strategy") or "execution_mutation"),
+                    "mutationKind": str(first.get("mutationKind") or "code"),
+                    "changeSummary": str(first.get("changeSummary") or ""),
+                    "targetFiles": [str(v) for v in (first.get("targetFiles") or []) if str(v).strip()],
+                    "validationCommand": str(first.get("validationCommand") or ""),
+                }
+            else:
+                mutation_plan = {}
+
         node["status"] = "SUCCEEDED"
         node["evidence"] = {
             "execution": outcome,
             "adapterMode": adapter_mode,
             "approvedActions": sorted(approved),
+            "appliedMutationPlan": mutation_plan,
             "runtimeArtifact": "artifacts/runtime_execution.json",
         }
         node["next_suggestions"] = ["Generate matrix league", "Export reproducibility bundle"]
@@ -2640,12 +3783,22 @@ PY
         protocol = state.get("eval_protocol_draft") or {}
         plans = self._runtime_lane_plans(state, lane="eval")
         sub_agents = self._spawn_sub_agents(state, node, plans=plans, depth=1)
+        mutation_templates = self._runtime_code_mutation_templates(state, node)[:2]
         node["status"] = "SUCCEEDED"
         node["sub_agents"] = sub_agents
         node["evidence"] = {
             "protocol": protocol,
             "matrixPlan": protocol.get("matrixPlan", {}),
             "retrieval": self.retrieve_context("evaluation protocol matrix confidence", k=3),
+            "evalMutationCandidates": [
+                {
+                    "strategy": str(item.get("strategy") or "eval_mutation"),
+                    "changeSummary": str(item.get("changeSummary") or ""),
+                    "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
+                    "validationCommand": str(item.get("validationCommand") or ""),
+                }
+                for item in mutation_templates
+            ],
             "subAgents": sub_agents,
         }
         self._append_timeline(state, node, "eval_protocol_ready", cost=0.2)
@@ -3238,6 +4391,135 @@ PY
                     "rationale": "Unknown failure type; reduce run scope and retry with verbose diagnostics.",
                 },
             },
+            "codeMutationTemplates": {
+                "research": [
+                    {
+                        "strategy": "architecture_residual_encoder",
+                        "mutationKind": "architecture",
+                        "title": "{nodeId} Architecture Branch",
+                        "hypothesis": "Residual shared encoder improves representation quality for {metric}.",
+                        "executionPlan": "Patch policy encoder and rerun ablation to compare uplift and stability.",
+                        "targetFiles": [
+                            "apps/portal-backend/runner/algorithms/simple_train.py",
+                            "MLE/src/toto/engine/runner.py",
+                        ],
+                        "changeSummary": "Introduce residual encoder block and gated layer norm before policy/value heads.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k agentic -q",
+                        "risk": "medium",
+                    },
+                    {
+                        "strategy": "loss_advantage_clip_balance",
+                        "mutationKind": "loss",
+                        "title": "{nodeId} Loss Branch",
+                        "hypothesis": "Balanced policy/value loss with adaptive entropy schedule improves {metric}.",
+                        "executionPlan": "Patch objective weighting and entropy schedule; run controlled comparison against parent.",
+                        "targetFiles": [
+                            "apps/portal-backend/runner/algorithms/simple_train.py",
+                        ],
+                        "changeSummary": "Add adaptive entropy decay and clipped value loss coefficient schedule.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k agentic -q",
+                        "risk": "medium",
+                    },
+                    {
+                        "strategy": "credit_assignment_temporal",
+                        "mutationKind": "objective",
+                        "title": "{nodeId} Credit Assignment Branch",
+                        "hypothesis": "Temporal credit assignment regularizer reduces variance and improves {metric}.",
+                        "executionPlan": "Patch advantage estimator and add regularizer term to stabilize policy updates.",
+                        "targetFiles": [
+                            "apps/portal-backend/runner/algorithms/simple_train.py",
+                        ],
+                        "changeSummary": "Enable temporal-difference regularizer on advantage targets.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k agentic -q",
+                        "risk": "high",
+                    },
+                ],
+                "integration": [
+                    {
+                        "strategy": "adapter_contract_guard",
+                        "mutationKind": "integration",
+                        "title": "{nodeId} Contract Guard Branch",
+                        "hypothesis": "Tighter adapter contract guards reduce runtime breakages before training.",
+                        "executionPlan": "Patch adapter validation layer and fail-fast checks for required runner outputs.",
+                        "targetFiles": [
+                            "apps/portal-backend/app/services/agentic_os.py",
+                            "apps/portal-backend/runner/runner_main.py",
+                        ],
+                        "changeSummary": "Add strict schema validation for checkpoint/metrics artifact contract.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k contract -q",
+                        "risk": "medium",
+                    },
+                    {
+                        "strategy": "adapter_dependency_fallback",
+                        "mutationKind": "integration",
+                        "title": "{nodeId} Dependency Fallback Branch",
+                        "hypothesis": "Dependency-aware adapter fallback keeps pipeline alive under missing packages.",
+                        "executionPlan": "Patch adapter resolver with graceful fallback to offline execution path.",
+                        "targetFiles": [
+                            "apps/portal-backend/app/services/agentic_os.py",
+                        ],
+                        "changeSummary": "Add deterministic fallback path and explicit reason codes in runtime report.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k failure -q",
+                        "risk": "low",
+                    },
+                    {
+                        "strategy": "minimal_patch_adapter",
+                        "mutationKind": "integration",
+                        "title": "{nodeId} Minimal Adapter Patch Branch",
+                        "hypothesis": "Minimal patch surface can preserve compatibility while reducing churn.",
+                        "executionPlan": "Patch only adapter interface boundaries and replay smoke checks.",
+                        "targetFiles": [
+                            "apps/portal-backend/runner/runner_main.py",
+                        ],
+                        "changeSummary": "Constrain changes to adapter interface and config translation layer.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k smoke -q",
+                        "risk": "low",
+                    },
+                ],
+                "evaluation": [
+                    {
+                        "strategy": "league_confidence_calibration",
+                        "mutationKind": "evaluation",
+                        "title": "{nodeId} Confidence Calibration Branch",
+                        "hypothesis": "Bootstrap confidence calibration improves trust in {metric} ranking.",
+                        "executionPlan": "Patch evaluation protocol to compute calibrated confidence intervals per matrix cell.",
+                        "targetFiles": [
+                            "apps/portal-backend/app/services/eval_matrix.py",
+                        ],
+                        "changeSummary": "Add bootstrap CI computation and low-confidence highlighting.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k matrix -q",
+                        "risk": "low",
+                    },
+                    {
+                        "strategy": "adversarial_eval_slice",
+                        "mutationKind": "evaluation",
+                        "title": "{nodeId} Adversarial Slice Branch",
+                        "hypothesis": "Adversarial slice reveals hidden weaknesses missed by average win-rate.",
+                        "executionPlan": "Patch eval protocol with adversarial opponent subset and stratified reporting.",
+                        "targetFiles": [
+                            "apps/portal-backend/app/services/eval_matrix.py",
+                        ],
+                        "changeSummary": "Add stratified adversarial group metrics and verdict rationale fields.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k matrix -q",
+                        "risk": "medium",
+                    },
+                ],
+                "execution": [
+                    {
+                        "strategy": "runtime_observability_patch",
+                        "mutationKind": "ops",
+                        "title": "{nodeId} Runtime Observability Branch",
+                        "hypothesis": "Richer runtime observability improves root-cause speed under failures.",
+                        "executionPlan": "Patch runtime execution report with phase timings and error taxonomy.",
+                        "targetFiles": [
+                            "apps/portal-backend/app/services/agentic_os.py",
+                        ],
+                        "changeSummary": "Emit per-phase timing and normalized failure classification.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -k audit -q",
+                        "risk": "low",
+                    }
+                ],
+            },
             "roleStrategies": {
                 "HypothesisCriticSubAgent": {
                     "template": {
@@ -3498,6 +4780,15 @@ PY
                 base.update({k: v for k, v in value.items() if v is not None})
                 merged_fix[str(key)] = base
         merged["fixStrategies"] = merged_fix
+
+        mutation_templates = payload.get("codeMutationTemplates")
+        merged_templates = copy.deepcopy(fallback.get("codeMutationTemplates") or {})
+        if isinstance(mutation_templates, dict):
+            for lane, rows in mutation_templates.items():
+                if not isinstance(rows, list):
+                    continue
+                merged_templates[str(lane)] = [copy.deepcopy(item) for item in rows if isinstance(item, dict)]
+        merged["codeMutationTemplates"] = merged_templates
 
         strategies = payload.get("roleStrategies")
         merged_strategies = dict(fallback.get("roleStrategies") or {})
@@ -4132,23 +5423,71 @@ PY
             raw = {}
         return self._normalize_approval_policy(raw)
 
+    def _llm_lane_plan_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "required": ["plans"],
+            "properties": {
+                "plans": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "items": {
+                        "type": "object",
+                        "required": ["role", "objective"],
+                        "properties": {
+                            "role": {"type": "string"},
+                            "objective": {"type": "string"},
+                        },
+                    },
+                }
+            },
+        }
+
     def _runtime_lane_plans(self, state: Dict[str, Any], lane: str) -> List[Dict[str, str]]:
-        rules = self._load_runtime_rules()
-        lane_rows = ((rules.get("lanes") or {}).get(lane) or [])
-        if not isinstance(lane_rows, list):
-            return []
+        spec = state.get("research_spec") or {}
+        retrieval = self.retrieve_context(query=f"sub-agent planning lane={lane} {spec.get('taskGoal')}", k=3)
+        payload = self._llm_complete_json(
+            task=f"lane_plans_{lane}",
+            system_prompt=(
+                "You are the sub-agent planner for Agentic MARL Research OS. "
+                "Return strict JSON with specialized sub-agent roles and objectives only."
+            ),
+            user_prompt=json.dumps(
+                {
+                    "task": "lane_sub_agent_plans",
+                    "lane": lane,
+                    "runId": str(state.get("run_id") or ""),
+                    "executionMode": self._execution_adapter_mode(state),
+                    "taskGoal": spec.get("taskGoal"),
+                    "environment": (spec.get("environment") or {}).get("name"),
+                    "successMetrics": list((spec.get("successMetrics") or {}).keys()),
+                    "budget": spec.get("budget") or {},
+                    "constraints": spec.get("constraints") or {},
+                    "retrieval": retrieval,
+                },
+                ensure_ascii=False,
+            ),
+            schema=self._llm_lane_plan_schema(),
+            temperature=0.25,
+            run_id=str(state.get("run_id") or ""),
+            node_id=None,
+            role=f"lane_planner:{lane}",
+        )
+        rows = payload.get("plans") or []
+        if not isinstance(rows, list):
+            raise RuntimeError(f"llm_required_invalid_lane_plans lane={lane}")
         plans: List[Dict[str, str]] = []
-        for row in lane_rows:
+        for row in rows:
             if not isinstance(row, dict):
-                continue
-            condition = str(row.get("when") or "always")
-            if not self._lane_condition_matches(state, condition):
                 continue
             role = str(row.get("role") or "").strip()
             objective = str(row.get("objective") or "").strip()
             if not role or not objective:
                 continue
             plans.append({"role": role, "objective": objective})
+        if not plans:
+            raise RuntimeError(f"llm_required_empty_lane_plans lane={lane}")
         return plans
 
     def _lane_condition_matches(self, state: Dict[str, Any], condition: str) -> bool:
@@ -4276,6 +5615,30 @@ PY
                 return False
         return True
 
+    def _llm_sub_agent_execution_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "required": ["analysis", "actions", "confidence", "estimatedLatencyMs", "spawnPlans"],
+            "properties": {
+                "analysis": {"type": "string"},
+                "actions": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string"}},
+                "confidence": {"type": "number"},
+                "estimatedLatencyMs": {"type": "integer"},
+                "spawnPlans": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "required": ["role", "objective"],
+                        "properties": {
+                            "role": {"type": "string"},
+                            "objective": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        }
+
     def _execute_sub_agent_logic(
         self,
         state: Dict[str, Any],
@@ -4285,115 +5648,64 @@ PY
     ) -> Dict[str, Any]:
         role = str(plan.get("role") or "GenericSubAgent")
         context = self._sub_agent_strategy_context(state, node, sub_agent, plan)
-        strategy = self._sub_agent_strategy(role)
-        if isinstance(strategy, dict) and strategy:
-            template = strategy.get("template")
-            if isinstance(template, dict):
-                rendered = self._render_sub_agent_template(template, context)
-                evidence = rendered if isinstance(rendered, dict) else {"result": rendered}
-            else:
-                evidence = {}
-            if "estimatedLatencyMs" not in evidence:
-                evidence["estimatedLatencyMs"] = self._resolve_strategy_int(
-                    strategy.get("estimatedLatencyMs"),
-                    context,
-                    fallback=120,
-                )
-            spawn_rows = strategy.get("spawnPlans")
-            if isinstance(spawn_rows, list) and self._sub_agent_strategy_allows_spawn(strategy, context):
-                evidence["__spawn_plans__"] = [row for row in spawn_rows if isinstance(row, dict)]
-            evidence.setdefault("strategySource", "runtime_rules")
-            evidence.setdefault("strategyRole", role)
-            return evidence
+        retrieval = self.retrieve_context(
+            query=f"sub-agent execution role={role} objective={plan.get('objective')} node={node.get('node_id')}",
+            k=3,
+        )
+        payload = self._llm_complete_json(
+            task="sub_agent_execution",
+            system_prompt=(
+                "You are a specialized sub-agent executor in Agentic MARL Research OS. "
+                "Return strict JSON with analysis, actions, confidence, latency estimate, and optional child spawn plans."
+            ),
+            user_prompt=json.dumps(
+                {
+                    "task": "sub_agent_execution",
+                    "runId": str(state.get("run_id") or ""),
+                    "nodeId": str(node.get("node_id") or ""),
+                    "role": role,
+                    "objective": str(plan.get("objective") or ""),
+                    "context": context,
+                    "retrieval": retrieval,
+                },
+                ensure_ascii=False,
+            ),
+            schema=self._llm_sub_agent_execution_schema(),
+            temperature=0.25,
+            run_id=str(state.get("run_id") or ""),
+            node_id=str(node.get("node_id") or ""),
+            role=role,
+        )
+        confidence = float(payload.get("confidence") or 0.0)
+        confidence = max(0.0, min(1.0, confidence))
+        estimated_latency_ms = int(payload.get("estimatedLatencyMs") or 120)
+        estimated_latency_ms = max(1, min(10000, estimated_latency_ms))
+        actions = [str(item).strip() for item in (payload.get("actions") or []) if str(item).strip()]
+        if not actions:
+            raise RuntimeError(f"llm_required_invalid_sub_agent_actions role={role}")
 
-        spec = state.get("research_spec") or {}
-        env = spec.get("environment") or {}
-        data_sources = list(env.get("dataSources") or [])
-        metrics = list((spec.get("successMetrics") or {}).keys())
+        spawn_rows = payload.get("spawnPlans") or []
+        normalized_spawns: List[Dict[str, str]] = []
+        for row in spawn_rows:
+            if not isinstance(row, dict):
+                continue
+            spawn_role = str(row.get("role") or "").strip()
+            spawn_objective = str(row.get("objective") or "").strip()
+            if not spawn_role or not spawn_objective:
+                continue
+            normalized_spawns.append({"role": spawn_role, "objective": spawn_objective})
 
-        if role == "DataScoutSubAgent":
-            evidence: Dict[str, Any] = {
-                "sourceCount": len(data_sources),
-                "sources": data_sources,
-                "riskFlag": "multi_source" if len(data_sources) > 1 else "single_source",
-                "estimatedLatencyMs": 240,
-            }
-            max_depth = int(self._sub_agent_policy(state).get("maxDepth") or self.MAX_SUB_AGENT_DEPTH)
-            if len(data_sources) > 1 and int(sub_agent.get("depth") or 1) < max_depth:
-                evidence["__spawn_plans__"] = [
-                    {
-                        "role": "SchemaProbeSubAgent",
-                        "objective": "Probe schema compatibility across multiple data sources.",
-                    }
-                ]
-            return evidence
-
-        if role == "SchemaProbeSubAgent":
-            return {
-                "compatibility": "compatible",
-                "checkedFields": ["obs", "action", "reward", "done"],
-                "estimatedLatencyMs": 180,
-            }
-
-        if role == "HypothesisCriticSubAgent":
-            return {
-                "weakAssumptions": ["reward shaping sensitivity"],
-                "recommendedControl": "preserve baseline branch",
-                "metricCoverage": metrics,
-                "estimatedLatencyMs": 210,
-            }
-
-        if role == "ContractProbeSubAgent":
-            return {
-                "runnerContract": "train(config, metrics_path, checkpoint_dir, run_id)",
-                "contractCompatible": True,
-                "estimatedLatencyMs": 220,
-            }
-
-        if role == "DependencyProbeSubAgent":
-            allow_install = bool((spec.get("constraints") or {}).get("allowDependencyInstall"))
-            return {
-                "dependencyInstallAllowed": allow_install,
-                "recommendedFallback": "offline_stub" if not allow_install else "runtime_install",
-                "estimatedLatencyMs": 260,
-            }
-
-        if role == "BudgetGuardSubAgent":
-            budget = spec.get("budget") or {}
-            gpu_hours = float(budget.get("gpuHours") or 0)
-            wallclock = int(budget.get("wallclockMinutes") or 0)
-            return {
-                "gpuHours": gpu_hours,
-                "wallclockMinutes": wallclock,
-                "budgetRisk": "high" if gpu_hours > 4 or wallclock > 240 else "moderate",
-                "estimatedLatencyMs": 180,
-            }
-
-        if role == "ConfidenceCheckSubAgent":
-            protocol = state.get("eval_protocol_draft") or {}
-            return {
-                "confidenceLevel": protocol.get("confidenceLevel"),
-                "gamesPerPair": protocol.get("gamesPerPair"),
-                "matrixMode": (protocol.get("matrixPlan") or {}).get("mode"),
-                "estimatedLatencyMs": 170,
-            }
-
-        if role == "RootCauseSubAgent":
-            failure_history = list(state.get("failure_history") or [])
-            latest_reason = ""
-            if failure_history:
-                latest_reason = str((failure_history[-1] or {}).get("reason") or "")
-            return {
-                "latestFailureReason": latest_reason,
-                "repairValidated": True,
-                "estimatedLatencyMs": 200,
-            }
-
-        return {
-            "note": f"{role} executed with default stub logic.",
-            "objective": str(plan.get("objective") or ""),
-            "estimatedLatencyMs": 120,
+        evidence: Dict[str, Any] = {
+            "analysis": str(payload.get("analysis") or "").strip(),
+            "actions": actions,
+            "confidence": round(confidence, 4),
+            "estimatedLatencyMs": estimated_latency_ms,
+            "strategySource": "llm",
+            "strategyRole": role,
         }
+        if normalized_spawns:
+            evidence["__spawn_plans__"] = normalized_spawns
+        return evidence
 
     def _build_failure_report(
         self,
@@ -4553,6 +5865,8 @@ PY
         events = list(state.get("events") or [])
         approvals = list(state.get("pending_approvals") or [])
         sub_agents = list(state.get("sub_agents") or [])
+        node_runs = list(state.get("node_runs") or [])
+        llm_traces = self._load_llm_traces(run_id, limit=100000)
         matrix = state.get("matrix") or {}
 
         node_counts = {
@@ -4615,6 +5929,33 @@ PY
         top_roles = [{"role": role, "count": count} for role, count in role_counts.items()]
         top_roles.sort(key=lambda row: (-int(row.get("count") or 0), str(row.get("role") or "")))
         top_roles = top_roles[:6]
+
+        node_run_counts = {
+            "total": len(node_runs),
+            "running": 0,
+            "succeeded": 0,
+            "failed": 0,
+        }
+        for item in node_runs:
+            status = str(item.get("status") or "").upper()
+            if status == "RUNNING":
+                node_run_counts["running"] += 1
+            elif status == "SUCCEEDED":
+                node_run_counts["succeeded"] += 1
+            elif status == "FAILED":
+                node_run_counts["failed"] += 1
+
+        llm_counts = {
+            "total": len(llm_traces),
+            "succeeded": 0,
+            "failed": 0,
+        }
+        for item in llm_traces:
+            row_status = str(item.get("status") or "").upper()
+            if row_status == "SUCCEEDED":
+                llm_counts["succeeded"] += 1
+            elif row_status == "FAILED":
+                llm_counts["failed"] += 1
 
         failures = 0
         recoveries = 0
@@ -4679,6 +6020,8 @@ PY
                 **sub_agent_counts,
                 "topRoles": top_roles,
             },
+            "nodeRuns": node_run_counts,
+            "llmCalls": llm_counts,
             "matrix": {
                 "labels": len(matrix.get("labels") or []),
                 "topRanking": top_ranking,
@@ -4694,6 +6037,7 @@ PY
     def _render_run_report_markdown(self, report: Dict[str, Any]) -> str:
         approvals = report.get("approvals") or {}
         sub_agents = report.get("subAgents") or {}
+        node_runs = report.get("nodeRuns") or {}
         matrix = report.get("matrix") or {}
         top_roles = list(sub_agents.get("topRoles") or [])
         top_ranking = list(matrix.get("topRanking") or [])
@@ -4734,6 +6078,17 @@ PY
             lines.extend([f"  - {row.get('role')}: {int(row.get('count') or 0)}" for row in top_roles])
         else:
             lines.append("  - none")
+
+        lines.extend(
+            [
+                "",
+                "## Node Runs",
+                f"- total: {int(node_runs.get('total') or 0)}",
+                f"- running: {int(node_runs.get('running') or 0)}",
+                f"- succeeded: {int(node_runs.get('succeeded') or 0)}",
+                f"- failed: {int(node_runs.get('failed') or 0)}",
+            ]
+        )
 
         lines.extend(
             [
@@ -5079,6 +6434,7 @@ PY
                     },
                     "expansion": {
                         "strategy": candidate.get("strategy") or "rule_driven_branch",
+                        "mutationPlan": candidate.get("mutation_plan") or {},
                         "createdAt": _now_iso(),
                     },
                 },
@@ -5111,90 +6467,33 @@ PY
         agent = str(node.get("agent") or "")
         node_id = str(node.get("node_id") or "")
         base_metric = node.get("expected_metrics") if isinstance(node.get("expected_metrics"), dict) else {}
-        specs: List[Dict[str, Any]]
-        if agent == "ResearchAgent":
-            specs = [
-                {
-                    "title": f"{node_id} Exploit Branch",
-                    "hypothesis": "Exploit strongest known configuration with conservative updates.",
-                    "execution_plan": "Run controlled exploitation branch and compare uplift against parent baseline.",
-                    "risk": "low",
-                    "strategy": "exploit",
-                },
-                {
-                    "title": f"{node_id} Explore Branch",
-                    "hypothesis": "Explore higher-variance hypothesis for potentially larger reward.",
-                    "execution_plan": "Run exploratory branch with broader search parameters and strict budget guard.",
-                    "risk": "medium",
-                    "strategy": "explore",
-                },
-                {
-                    "title": f"{node_id} Counterfactual Branch",
-                    "hypothesis": "Counterfactual control branch isolates variance drivers in rollout policy.",
-                    "execution_plan": "Run control branch with ablated features and compare metric confidence.",
-                    "risk": "medium",
-                    "strategy": "counterfactual",
-                },
-            ]
-        elif agent == "IntegrationAgent":
-            specs = [
-                {
-                    "title": f"{node_id} Adapter Harden Branch",
-                    "hypothesis": "Adapter hardening can reduce runtime incompatibilities.",
-                    "execution_plan": "Apply compatibility hardening and replay integration checks.",
-                    "risk": "medium",
-                    "strategy": "adapter_harden",
-                },
-                {
-                    "title": f"{node_id} Fallback Branch",
-                    "hypothesis": "Fallback adapter path improves robustness under dependency gaps.",
-                    "execution_plan": "Execute fallback strategy and validate artifact contract continuity.",
-                    "risk": "low",
-                    "strategy": "fallback_path",
-                },
-                {
-                    "title": f"{node_id} Minimal Patch Branch",
-                    "hypothesis": "Minimal patch strategy minimizes integration churn while preserving metric gains.",
-                    "execution_plan": "Patch minimal surfaces and run smoke checks with audit trace.",
-                    "risk": "medium",
-                    "strategy": "minimal_patch",
-                },
-            ]
-        else:
-            specs = [
-                {
-                    "title": f"{node_id} Stress Slice Branch",
-                    "hypothesis": "Stress scenario slice improves confidence estimation of league outcomes.",
-                    "execution_plan": "Run stress slice and compare confidence interval shift in matrix cells.",
-                    "risk": "low",
-                    "strategy": "stress_slice",
-                },
-                {
-                    "title": f"{node_id} Confidence Branch",
-                    "hypothesis": "Confidence calibration branch reduces decision uncertainty for ranking.",
-                    "execution_plan": "Run calibration protocol and update confidence estimator.",
-                    "risk": "low",
-                    "strategy": "confidence_calibration",
-                },
-                {
-                    "title": f"{node_id} Adversarial Branch",
-                    "hypothesis": "Adversarial opponent subset uncovers hidden weaknesses before final league ranking.",
-                    "execution_plan": "Evaluate against adversarial pool and collect replay evidence for weak spots.",
-                    "risk": "medium",
-                    "strategy": "adversarial_slice",
-                },
-            ]
-        capped = max(1, min(len(specs), branch_factor))
+        templates = self._runtime_code_mutation_templates(state, node)
+        if not templates:
+            raise RuntimeError("llm_required_empty_mutation_templates")
+        capped = max(1, min(len(templates), branch_factor))
         rows = []
-        for idx, item in enumerate(specs[:capped], start=1):
+        primary_metric = self._primary_metric_key(state)
+        for idx, item in enumerate(templates[:capped], start=1):
             expected = dict(base_metric) if base_metric else {"winRate": ">=0.55"}
             budget = self._child_budget_from_parent(node=node, branch_index=idx)
+            mutation_plan = {
+                "strategy": str(item.get("strategy") or "code_mutation"),
+                "mutationKind": str(item.get("mutationKind") or "code"),
+                "changeSummary": str(item.get("changeSummary") or "Code-level mutation proposal."),
+                "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
+                "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q"),
+            }
             rows.append(
                 {
-                    **item,
+                    "title": str(item.get("title") or f"{node_id} Code Branch {idx}"),
+                    "hypothesis": str(item.get("hypothesis") or f"Code-level mutation can improve {primary_metric}."),
+                    "execution_plan": str(item.get("executionPlan") or "Apply patch proposal and execute branch run."),
                     "agent": agent,
                     "expected_metrics": expected,
                     "budget": budget,
+                    "risk": str(item.get("risk") or "medium"),
+                    "strategy": str(item.get("strategy") or "code_mutation"),
+                    "mutation_plan": mutation_plan,
                 }
             )
         return rows
@@ -5310,6 +6609,7 @@ PY
                 "timeline": len(state.get("timeline") or []),
                 "matrixGenerated": state.get("matrix") is not None,
                 "subAgents": len(state.get("sub_agents") or []),
+                "nodeRuns": len(state.get("node_runs") or []),
                 "auditVerified": bool(audit.get("valid")),
                 "auditCheckedEvents": int(audit.get("checked") or 0),
                 "auditSemanticValid": bool(semantic.get("valid")),

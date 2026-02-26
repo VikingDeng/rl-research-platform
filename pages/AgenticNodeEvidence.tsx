@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Bot, GitBranchPlus, Play, RefreshCcw, WandSparkles } from 'lucide-react';
 import { api } from '../services/api';
 import { useI18n } from '../services/i18n';
-import type { AgenticNode, AgenticRunDetail } from '../types';
+import type { AgenticLlmTraceRecord, AgenticNode, AgenticNodeRunRecord, AgenticRunDetail } from '../types';
 
 type TimelineCategoryId = 'planning' | 'execution' | 'safety' | 'recovery' | 'evaluation' | 'other';
 
@@ -25,7 +25,7 @@ type TimelineRow = {
   ts: number;
 };
 
-type EvidenceTab = 'overview' | 'timeline' | 'branch' | 'contract';
+type EvidenceTab = 'overview' | 'timeline' | 'llm' | 'branch' | 'contract';
 
 const statusBadgeClass = (status: string) => {
   const normalized = String(status || '').toUpperCase();
@@ -202,6 +202,41 @@ export const AgenticNodeEvidence: React.FC = () => {
       })
       .sort((a, b) => parseTimestamp(a.ts) - parseTimestamp(b.ts));
   }, [detail, nodeId]);
+  const nodeRunsForNode = useMemo(() => {
+    if (!detail) return [] as AgenticNodeRunRecord[];
+    return (detail.nodeRuns || [])
+      .filter(item => String(item.nodeId || '') === nodeId)
+      .sort((a, b) => parseTimestamp(b.startedAt) - parseTimestamp(a.startedAt));
+  }, [detail, nodeId]);
+  const llmTracesForNode = useMemo(() => {
+    if (!detail) return [] as AgenticLlmTraceRecord[];
+    return (detail.llmTraces || [])
+      .filter(trace => {
+        const traceNode = String(trace.nodeId || '');
+        if (traceNode && traceNode === nodeId) return true;
+        if (!traceNode) {
+          const roleText = String(trace.role || '').toLowerCase();
+          return roleText.includes('lane_planner');
+        }
+        return false;
+      })
+      .sort((a, b) => parseTimestamp(b.ts) - parseTimestamp(a.ts));
+  }, [detail, nodeId]);
+  const llmTraceSummary = useMemo(() => {
+    const total = llmTracesForNode.length;
+    const succeeded = llmTracesForNode.filter(item => String(item.status || '').toLowerCase() === 'succeeded').length;
+    const failed = total - succeeded;
+    const avgLatency =
+      total === 0
+        ? 0
+        : Math.round(
+            llmTracesForNode.reduce((sum, item) => {
+              const value = typeof item.latencyMs === 'number' ? item.latencyMs : Number(item.latencyMs || 0);
+              return sum + (Number.isFinite(value) ? value : 0);
+            }, 0) / total,
+          );
+    return { total, succeeded, failed, avgLatency };
+  }, [llmTracesForNode]);
   const timelineRows = useMemo(() => {
     return nodeEvents.map((item, idx) => {
       const title = String(item.event || item.phase || item.title || '-');
@@ -471,6 +506,7 @@ export const AgenticNodeEvidence: React.FC = () => {
               {([
                 ['overview', tx('概览', 'Overview')],
                 ['timeline', tx('时间线', 'Timeline')],
+                ['llm', tx('LLM 调用', 'LLM Trace')],
                 ['branch', tx('分支操作', 'Branch')],
                 ['contract', tx('合同账本', 'Contract')],
               ] as Array<[EvidenceTab, string]>).map(([tabId, label]) => (
@@ -509,6 +545,61 @@ export const AgenticNodeEvidence: React.FC = () => {
                   <pre className="mt-2 max-h-[26rem] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
                     {JSON.stringify(selectedNode.evidence || {}, null, 2)}
                   </pre>
+                </article>
+
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('节点独立 Runs', 'Node Runs')}</h2>
+                  <div className="mt-2 space-y-2">
+                    {nodeRunsForNode.length === 0 && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        {tx('当前节点还没有独立 run 记录。', 'No node-run records yet for this node.')}
+                      </div>
+                    )}
+                    {nodeRunsForNode.map(run => (
+                      <div key={`node-run-${run.nodeRunId}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        {(() => {
+                          const artifactStats = ((run.metrics || {}) as Record<string, unknown>).nodeRunArtifacts as Record<string, unknown> | undefined;
+                          const diffFiles = Number(artifactStats?.diffFiles || 0);
+                          const resolvedTargets = Number(artifactStats?.resolvedTargets || 0);
+                          const unresolvedTargets = Number(artifactStats?.unresolvedTargets || 0);
+                          const syntaxFailed = Number(artifactStats?.pythonSyntaxFailed || 0);
+                          return (
+                            <div className="mb-2 flex flex-wrap gap-1 text-[10px]">
+                              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-700">{tx('Diff 文件', 'Diff files')}: {diffFiles}</span>
+                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700">{tx('命中目标', 'Resolved targets')}: {resolvedTargets}</span>
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">{tx('未命中', 'Unresolved')}: {unresolvedTargets}</span>
+                              <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{tx('语法失败', 'Syntax failed')}: {syntaxFailed}</span>
+                            </div>
+                          );
+                        })()}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-xs font-semibold text-slate-700">{run.nodeRunId}</div>
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusBadgeClass(run.status)}`}>{run.status}</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          {tx('开始', 'Start')}: {formatTimestamp(run.startedAt)} · {tx('结束', 'End')}: {run.finishedAt ? formatTimestamp(run.finishedAt) : '-'}
+                        </div>
+                        <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                          <div className="rounded border border-slate-200 bg-white p-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('Patch 计划', 'Patch Plan')}</div>
+                            <pre className="mt-1 max-h-32 overflow-auto text-[11px] text-slate-700">{JSON.stringify(run.patchPlan || [], null, 2)}</pre>
+                          </div>
+                          <div className="rounded border border-slate-200 bg-white p-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('运行指标', 'Run Metrics')}</div>
+                            <pre className="mt-1 max-h-32 overflow-auto text-[11px] text-slate-700">{JSON.stringify(run.metrics || {}, null, 2)}</pre>
+                          </div>
+                        </div>
+                        <div className="mt-2 rounded border border-slate-200 bg-white p-2">
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('产物路径', 'Artifact Paths')}</div>
+                          <div className="mt-1 max-h-24 space-y-1 overflow-auto text-[11px] text-slate-600">
+                            {(run.artifactPaths || []).map(path => (
+                              <div key={`artifact-${run.nodeRunId}-${path}`} className="rounded bg-slate-50 px-1.5 py-0.5 font-mono">{path}</div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </article>
               </div>
               <aside className="space-y-4 xl:col-span-4">
@@ -598,6 +689,72 @@ export const AgenticNodeEvidence: React.FC = () => {
                     );
                   })}
                 </div>
+              </div>
+            </article>
+          )}
+
+          {activeTab === 'llm' && (
+            <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('LLM 调用证据', 'LLM Trace Evidence')}</h2>
+              <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {tx('调用总数', 'Total calls')}: <span className="font-semibold">{llmTraceSummary.total}</span>
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  {tx('成功', 'Succeeded')}: <span className="font-semibold">{llmTraceSummary.succeeded}</span>
+                </div>
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {tx('失败', 'Failed')}: <span className="font-semibold">{llmTraceSummary.failed}</span>
+                </div>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  {tx('平均延迟', 'Avg latency')}: <span className="font-semibold">{llmTraceSummary.avgLatency}ms</span>
+                </div>
+              </div>
+              <div className="mt-3 overflow-auto rounded-lg border border-slate-200">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">{tx('时间', 'Time')}</th>
+                      <th className="px-2 py-1.5 text-left">{tx('任务', 'Task')}</th>
+                      <th className="px-2 py-1.5 text-left">{tx('状态', 'Status')}</th>
+                      <th className="px-2 py-1.5 text-left">{tx('模型', 'Model')}</th>
+                      <th className="px-2 py-1.5 text-left">{tx('节点', 'Node')}</th>
+                      <th className="px-2 py-1.5 text-left">{tx('角色', 'Role')}</th>
+                      <th className="px-2 py-1.5 text-left">{tx('延迟', 'Latency')}</th>
+                      <th className="px-2 py-1.5 text-left">{tx('错误', 'Error')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {llmTracesForNode.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-3 py-6 text-center text-xs text-slate-500">
+                          {tx('当前节点暂无 LLM 调用记录。', 'No LLM traces for this node yet.')}
+                        </td>
+                      </tr>
+                    )}
+                    {llmTracesForNode.map((trace, idx) => {
+                      const ok = String(trace.status || '').toLowerCase() === 'succeeded';
+                      return (
+                        <tr key={`llm-trace-${idx}-${trace.task}-${trace.ts}`} className="border-t border-slate-100">
+                          <td className="px-2 py-1.5 text-slate-600">{formatTimestamp(trace.ts)}</td>
+                          <td className="px-2 py-1.5 text-slate-700">{trace.task}</td>
+                          <td className="px-2 py-1.5">
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${ok ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                              {trace.status}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5 text-slate-700">{trace.model}</td>
+                          <td className="px-2 py-1.5 font-mono text-slate-600">{trace.nodeId || '-'}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{trace.role || '-'}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{Math.max(0, Number(trace.latencyMs || 0))}ms</td>
+                          <td className="max-w-md truncate px-2 py-1.5 text-slate-600" title={String(trace.error || '')}>
+                            {trace.error || '-'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </article>
           )}

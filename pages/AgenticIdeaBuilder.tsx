@@ -42,6 +42,35 @@ const buildIdeaPayload = (input: {
 
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+const normalizeLlmIssue = (raw: string, tx: (zh: string, en: string) => string): string => {
+  const detail = String(raw || '');
+  if (detail.includes('llm_required_missing_api_key')) {
+    return tx(
+      '未配置 LLM API Key（AGENTIC_LLM_API_KEY）。请先在后端环境变量中配置，再重试。',
+      'LLM API key is missing (AGENTIC_LLM_API_KEY). Configure backend env and retry.',
+    );
+  }
+  if (detail.includes('llm_required_missing_model')) {
+    return tx(
+      '未配置 LLM 模型（AGENTIC_LLM_MODEL）。请先配置模型名，再重试。',
+      'LLM model is missing (AGENTIC_LLM_MODEL). Configure model and retry.',
+    );
+  }
+  if (detail.includes('llm_required_missing_provider')) {
+    return tx(
+      '未配置 LLM Provider（AGENTIC_LLM_PROVIDER）。请先配置 provider，再重试。',
+      'LLM provider is missing (AGENTIC_LLM_PROVIDER). Configure provider and retry.',
+    );
+  }
+  if (detail.includes('llm_required_')) {
+    return tx(
+      `LLM 核心链路校验失败：${detail}`,
+      `LLM core-chain check failed: ${detail}`,
+    );
+  }
+  return detail;
+};
+
 export const AgenticIdeaBuilder: React.FC = () => {
   const navigate = useNavigate();
   const { tx } = useI18n();
@@ -71,7 +100,7 @@ export const AgenticIdeaBuilder: React.FC = () => {
         ),
       );
     } catch (error) {
-      setMessage(toErrorMessage(error));
+      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
     } finally {
       setBusy('none');
     }
@@ -81,11 +110,13 @@ export const AgenticIdeaBuilder: React.FC = () => {
     setBusy('create');
     setMessage('');
     try {
-      const result = await api.createAgenticRun({ idea: buildIdeaPayload(form), autoExecute: false });
+      const idea = buildIdeaPayload(form);
+      await api.validateAgenticSpec(idea);
+      const result = await api.createAgenticRun({ idea, autoExecute: false });
       setMessage(tx(`已创建 Run ${result.runId}`, `Run ${result.runId} created.`));
       navigate('/agentic');
     } catch (error) {
-      setMessage(toErrorMessage(error));
+      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
     } finally {
       setBusy('none');
     }
