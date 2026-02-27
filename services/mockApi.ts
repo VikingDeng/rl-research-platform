@@ -2834,10 +2834,10 @@ const seedAgenticShowcaseRun = () => {
     return id;
   };
 
-  for (let round = 0; round < 8; round += 1) {
+  for (let round = 0; round < 14; round += 1) {
     const node = choosePending();
     if (!node) break;
-    const ts = new Date(Date.now() - (8 - round) * 60000).toISOString();
+    const ts = new Date(Date.now() - (14 - round) * 60000).toISOString();
     const search = (((node.evidence || {}) as Record<string, unknown>).search || {}) as Record<string, unknown>;
     const depth = Number(search.depth || 0);
     node.status = 'SUCCEEDED';
@@ -2862,6 +2862,20 @@ const seedAgenticShowcaseRun = () => {
       message: `${node.nodeId} selected from frontier`,
       payload: { nodeId: node.nodeId, depth },
     });
+    detail.llmTraces.push({
+      ts,
+      task: `search_select_${node.nodeId}`,
+      status: 'succeeded',
+      model: 'gpt-4.1-mini',
+      attempt: 1,
+      latencyMs: Math.max(82, 110 + Math.round(Math.random() * 110) - depth * 16),
+      nodeId: node.nodeId,
+      role: `${node.agent}:search_selector`,
+      promptHash: randomToken('prompt'),
+      responseHash: randomToken('resp'),
+      schemaValid: true,
+      error: null,
+    });
     detail.events.push({
       ts,
       event: 'node_succeeded',
@@ -2869,9 +2883,10 @@ const seedAgenticShowcaseRun = () => {
       payload: { nodeId: node.nodeId },
     });
 
-    if ((node.children || []).length === 0 && depth < 2 && detail.totTree.length < 24) {
-      const childCount = depth === 0 ? 2 : 1;
+    if ((node.children || []).length === 0 && depth < 3 && detail.totTree.length < 28) {
+      const childCount = depth === 0 ? 3 : depth === 1 ? 2 : 1;
       const childIds: string[] = [];
+      const createdMutations: Array<Record<string, unknown>> = [];
       for (let i = 0; i < childCount; i += 1) {
         const childId = nextNodeId();
         const child = createAgenticNode(
@@ -2884,17 +2899,38 @@ const seedAgenticShowcaseRun = () => {
         );
         const mutationPlan = buildMockMutationPlanForNode(child, depth + i + round + 1);
         applyMockMutationPlan(child, mutationPlan, { rewriteNarrative: true, createdAt: ts });
+        const mutationKind = String((mutationPlan as Record<string, unknown>).mutationKind || 'code').toLowerCase();
         child.expectedMetrics = { ...(node.expectedMetrics || {}) };
         ensureNodeSearchMeta(child, depth + 1);
         detail.totTree.push(child);
         childIds.push(child.nodeId);
+        createdMutations.push({
+          nodeId: child.nodeId,
+          mutationKind,
+          strategy: String((mutationPlan as Record<string, unknown>).strategy || ''),
+          targetFiles: ((mutationPlan as Record<string, unknown>).targetFiles || []) as unknown[],
+        });
       }
       node.children = [...(node.children || []), ...childIds];
       detail.events.push({
         ts,
         event: 'tot_node_expanded',
         message: `${node.nodeId} expanded`,
-        payload: { nodeId: node.nodeId, childIds, createdNodeIds: childIds },
+        payload: { nodeId: node.nodeId, childIds, createdNodeIds: childIds, mutations: createdMutations },
+      });
+      detail.llmTraces.push({
+        ts,
+        task: `mutation_templates_${node.nodeId}`,
+        status: 'succeeded',
+        model: 'gpt-4.1-mini',
+        attempt: 1,
+        latencyMs: 140 + Math.round(Math.random() * 120),
+        nodeId: node.nodeId,
+        role: `${node.agent}:mutation_planner`,
+        promptHash: randomToken('prompt'),
+        responseHash: randomToken('resp'),
+        schemaValid: true,
+        error: null,
       });
     }
   }

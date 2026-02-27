@@ -418,6 +418,60 @@ def test_f2_search_expansion_contains_code_mutation_plan(client):
     assert "validationCommand" in mutation
 
 
+def test_f2_rejects_hyperparam_only_mutation_templates(client, monkeypatch):
+    import app.api.routes as routes_module
+
+    service = routes_module.agentic_os_service
+    original = service._llm_complete_json
+
+    def _override_llm(
+        *,
+        task,
+        system_prompt,
+        user_prompt,
+        schema,
+        temperature=0.2,
+        run_id=None,
+        node_id=None,
+        role=None,
+    ):
+        del system_prompt, schema, temperature, run_id, node_id, role
+        payload = json.loads(str(user_prompt or "{}"))
+        if str(task).startswith("mutation_templates_"):
+            node_name = str(payload.get("nodeId") or "nX")
+            return {
+                "items": [
+                    {
+                        "strategy": "hparam_sweep_only",
+                        "mutationKind": "hyperparameter",
+                        "title": f"{node_name} Hyper Sweep Branch",
+                        "hypothesis": "Tune lr and batch size only.",
+                        "executionPlan": "Change lr=3e-4 and batch_size=4096.",
+                        "targetFiles": ["docs/ARCHITECTURE.md"],
+                        "changeSummary": "Increase learning rate and batch size.",
+                        "validationCommand": "python -m pytest apps/portal-backend/tests -q",
+                        "risk": "low",
+                    }
+                ]
+            }
+        return original(
+            task=task,
+            system_prompt="",
+            user_prompt=user_prompt,
+            schema=schema,
+            temperature=temperature,
+            run_id=run_id,
+            node_id=node_id,
+            role=role,
+        )
+
+    monkeypatch.setattr(service, "_llm_complete_json", _override_llm)
+
+    run_id, _ = _create_run(client)
+    with pytest.raises(RuntimeError, match="llm_required_invalid_mutation_templates"):
+        client.post(f"/api/v1/agentic/runs/{run_id}/execute", json={"mode": "next"})
+
+
 def test_f2_each_node_has_independent_node_run_record(client):
     run_id, _ = _create_run(client)
     exec_res = client.post(f"/api/v1/agentic/runs/{run_id}/execute", json={"mode": "all"})
@@ -469,6 +523,14 @@ def test_f2_each_node_has_independent_node_run_record(client):
     assert int(summary.get("resolvedTargets") or 0) >= 1
     files = manifest.get("files") or []
     assert any(str(row.get("mutationMode") or "").startswith("python_") for row in files)
+
+    artifact_metrics = (with_diff.get("metrics") or {}).get("nodeRunArtifacts") or {}
+    diff_previews = artifact_metrics.get("diffPreviews") or []
+    assert isinstance(diff_previews, list) and diff_previews
+    assert any(str(item.get("preview") or "").strip() for item in diff_previews if isinstance(item, dict))
+    file_mutations = artifact_metrics.get("fileMutations") or []
+    assert isinstance(file_mutations, list) and file_mutations
+    assert any(str(item.get("target") or "").strip() for item in file_mutations if isinstance(item, dict))
 
 
 def test_f2_sub_agent_spawn_and_nested_chain(client):

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Bot, ChevronDown, ChevronUp, Pause, Play, RefreshCcw, ShieldAlert, SlidersHorizontal, Sparkles, WandSparkles } from 'lucide-react';
 import { api, isDemoMode } from '../services/api';
 import { useI18n } from '../services/i18n';
-import type { AgenticIdeaInput, AgenticLlmTraceRecord, AgenticNode, AgenticRunDetail, AgenticRunSummary } from '../types';
+import type { AgenticIdeaInput, AgenticLlmTraceRecord, AgenticNode, AgenticNodeRunRecord, AgenticRunDetail, AgenticRunSummary } from '../types';
 
 type GraphLayoutPoint = {
   nodeId: string;
@@ -19,6 +19,12 @@ type SearchReplayEvent = {
   nodeId: string;
   summary: string;
   childIds: string[];
+  mutations: Array<{
+    nodeId: string;
+    mutationKind: string;
+    targetFiles: string[];
+    strategy: string;
+  }>;
 };
 
 type NodeMutationPlan = {
@@ -29,6 +35,19 @@ type NodeMutationPlan = {
   validationCommand: string;
   risk: string;
   source: string;
+};
+
+type NodeRunArtifactSummary = {
+  nodeRunId: string;
+  status: string;
+  finishedAtMs: number;
+  diffFiles: number;
+  resolvedTargets: number;
+  unresolvedTargets: number;
+  pythonSyntaxFailed: number;
+  mutationKind: string;
+  changeSummary: string;
+  targetFiles: string[];
 };
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -58,6 +77,39 @@ const extractNodeMutationPlans = (node: AgenticNode): NodeMutationPlan[] => {
       risk: String(item.risk || ''),
       source: String(item.source || expansion.strategy || 'node_expansion'),
     }));
+};
+
+const extractNodeRunArtifactSummary = (run: AgenticNodeRunRecord): NodeRunArtifactSummary => {
+  const metrics = asRecord(run.metrics);
+  const artifacts = asRecord(metrics.nodeRunArtifacts);
+  const patchPlan = Array.isArray(run.patchPlan) ? run.patchPlan : [];
+  const firstPlan = asRecord(patchPlan[0]);
+  const diffPreviews = Array.isArray(artifacts.diffPreviews) ? artifacts.diffPreviews : [];
+  const firstPreview = asRecord(diffPreviews[0]);
+  const targetFiles = asStringArray(firstPlan.targetFiles).length > 0
+    ? asStringArray(firstPlan.targetFiles)
+    : asStringArray(firstPreview.targets);
+  const mutationKind = String(firstPlan.mutationKind || firstPreview.mutationKind || 'code').toLowerCase();
+  const changeSummary = String(firstPlan.changeSummary || firstPreview.changeSummary || '');
+
+  const toCount = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+  };
+
+  const finishedAtMs = Date.parse(String(run.finishedAt || run.startedAt || ''));
+  return {
+    nodeRunId: String(run.nodeRunId || ''),
+    status: String(run.status || ''),
+    finishedAtMs: Number.isFinite(finishedAtMs) ? finishedAtMs : 0,
+    diffFiles: toCount(artifacts.diffFiles),
+    resolvedTargets: toCount(artifacts.resolvedTargets),
+    unresolvedTargets: toCount(artifacts.unresolvedTargets),
+    pythonSyntaxFailed: toCount(artifacts.pythonSyntaxFailed),
+    mutationKind,
+    changeSummary,
+    targetFiles,
+  };
 };
 
 const mutationBadgeColors = (kind: string) => {
@@ -166,6 +218,21 @@ const getSearchMeta = (node: AgenticNode) => {
   };
 };
 
+const collectAncestorPath = (nodeById: Map<string, AgenticNode>, nodeId: string): Set<string> => {
+  const path = new Set<string>();
+  let cursor = String(nodeId || '').trim();
+  let guard = 0;
+  while (cursor && guard < 256) {
+    if (path.has(cursor)) break;
+    path.add(cursor);
+    const parentId = String(nodeById.get(cursor)?.parentId || '').trim();
+    if (!parentId) break;
+    cursor = parentId;
+    guard += 1;
+  }
+  return path;
+};
+
 const normalizeLlmIssue = (raw: string, tx: (zh: string, en: string) => string): string => {
   const detail = String(raw || '');
   if (detail.includes('llm_required_missing_api_key')) {
@@ -259,7 +326,12 @@ export const AgenticTotCanvas: React.FC = () => {
   const [showAdvancedControls, setShowAdvancedControls] = useState(false);
   const [replayStep, setReplayStep] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
-  const [replayRevealMode, setReplayRevealMode] = useState(true);
+  const [replayRevealMode, setReplayRevealMode] = useState(false);
+  const [autoFollowLatest, setAutoFollowLatest] = useState(true);
+  const [mutationFilter, setMutationFilter] = useState('all');
+  const [branchViewMode, setBranchViewMode] = useState<'default' | 'evidence'>('default');
+  const [spotlightMode, setSpotlightMode] = useState(true);
+  const [treeOnlyMode, setTreeOnlyMode] = useState(true);
   const graphViewportRef = useRef<HTMLDivElement | null>(null);
 
   const selectedRunSummary = useMemo(() => runs.find(item => item.runId === selectedRunId) || null, [runs, selectedRunId]);
@@ -345,6 +417,11 @@ export const AgenticTotCanvas: React.FC = () => {
       setCollapsedNodeIds({});
       setReplayStep(0);
       setReplayPlaying(false);
+      setAutoFollowLatest(true);
+      setMutationFilter('all');
+      setBranchViewMode('default');
+      setSpotlightMode(true);
+      setTreeOnlyMode(true);
     }
   }, [selectedRunId]);
 
@@ -360,7 +437,89 @@ export const AgenticTotCanvas: React.FC = () => {
     return map;
   }, [nodes]);
 
-  const filteredNodes = useMemo(() => nodes, [nodes]);
+  const latestNodeRunByNode = useMemo(() => {
+    const map = new Map<string, NodeRunArtifactSummary>();
+    const rows = Array.isArray(detail?.nodeRuns) ? detail.nodeRuns : [];
+    rows.forEach(run => {
+      const nodeId = String(run.nodeId || '').trim();
+      if (!nodeId) return;
+      const summary = extractNodeRunArtifactSummary(run);
+      const existing = map.get(nodeId);
+      if (!existing || summary.finishedAtMs >= existing.finishedAtMs) {
+        map.set(nodeId, summary);
+      }
+    });
+    return map;
+  }, [detail?.nodeRuns]);
+
+  const resolveNodeMutationKind = useCallback((node: AgenticNode) => {
+    const fromPlan = String(extractNodeMutationPlans(node)[0]?.mutationKind || '').trim().toLowerCase();
+    if (fromPlan) return fromPlan;
+    const fromNodeRun = String(latestNodeRunByNode.get(node.nodeId)?.mutationKind || '').trim().toLowerCase();
+    return fromNodeRun;
+  }, [latestNodeRunByNode]);
+
+  const mutationFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    nodes.forEach(node => {
+      const kind = resolveNodeMutationKind(node);
+      if (!kind) return;
+      counts.set(kind, (counts.get(kind) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .map(([kind, count]) => ({ kind, count }))
+      .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind));
+  }, [nodes, resolveNodeMutationKind]);
+
+  useEffect(() => {
+    if (mutationFilter === 'all') return;
+    if (mutationFilterOptions.some(item => item.kind === mutationFilter)) return;
+    setMutationFilter('all');
+  }, [mutationFilter, mutationFilterOptions]);
+
+  const filteredNodes = useMemo(() => {
+    if (mutationFilter === 'all') return nodes;
+    const target = String(mutationFilter || '').trim().toLowerCase();
+    if (!target) return nodes;
+    const included = new Set<string>();
+    nodes.forEach(node => {
+      const kind = resolveNodeMutationKind(node);
+      if (kind !== target) return;
+      included.add(node.nodeId);
+      let parentId = node.parentId || null;
+      while (parentId) {
+        included.add(parentId);
+        parentId = nodeById.get(parentId)?.parentId || null;
+      }
+    });
+    return nodes.filter(node => included.has(node.nodeId));
+  }, [nodes, nodeById, mutationFilter, resolveNodeMutationKind]);
+  const evidenceScoreByNode = useMemo(() => {
+    const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+    const map = new Map<string, number>();
+    nodes.forEach(node => {
+      const runSummary = latestNodeRunByNode.get(node.nodeId);
+      const diffFiles = Number(runSummary?.diffFiles || 0);
+      const resolvedTargets = Number(runSummary?.resolvedTargets || 0);
+      const unresolvedTargets = Number(runSummary?.unresolvedTargets || 0);
+      const syntaxFailed = Number(runSummary?.pythonSyntaxFailed || 0);
+      const runRaw = diffFiles * 0.28 + resolvedTargets * 0.35 - unresolvedTargets * 0.18 - syntaxFailed * 0.22;
+      const runSignal = clamp01(runRaw / 3.2);
+
+      const mutationPlans = extractNodeMutationPlans(node);
+      const planSignal = mutationPlans.length > 0 ? clamp01(0.45 + mutationPlans[0].targetFiles.length * 0.08) : 0;
+
+      const status = String(node.status || '').toUpperCase();
+      const statusSignal = status === 'SUCCEEDED' ? 1 : status === 'RUNNING' ? 0.72 : status === 'PENDING' ? 0.42 : status === 'FAILED' ? 0.2 : 0.3;
+
+      const search = getSearchMeta(node);
+      const searchSignal = clamp01((Number(search.frontierScore || 0) + Number(search.value || 0)) * 0.5);
+
+      const score = clamp01(runSignal * 0.45 + planSignal * 0.2 + statusSignal * 0.2 + searchSignal * 0.15);
+      map.set(node.nodeId, score);
+    });
+    return map;
+  }, [nodes, latestNodeRunByNode]);
 
   const filteredNodeMap = useMemo(() => new Map(filteredNodes.map(node => [node.nodeId, node])), [filteredNodes]);
   const filteredChildCountByParent = useMemo(() => {
@@ -430,7 +589,14 @@ export const AgenticTotCanvas: React.FC = () => {
     });
 
     childrenByParent.forEach(group => {
-      group.sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+      group.sort((a, b) => {
+        if (branchViewMode === 'evidence') {
+          const scoreA = evidenceScoreByNode.get(a.nodeId) || 0;
+          const scoreB = evidenceScoreByNode.get(b.nodeId) || 0;
+          if (scoreA !== scoreB) return scoreB - scoreA;
+        }
+        return a.nodeId.localeCompare(b.nodeId);
+      });
     });
 
     const layout = new Map<string, GraphLayoutPoint>();
@@ -474,7 +640,7 @@ export const AgenticTotCanvas: React.FC = () => {
       width: Math.max(640, (maxDepth + 1) * laneWidth + 300),
       height: Math.max(320, cursor * leafHeight + 120),
     };
-  }, [visibleNodes, visibleNodeMap]);
+  }, [visibleNodes, visibleNodeMap, branchViewMode, evidenceScoreByNode]);
 
   const searchReplayEvents = useMemo(() => {
     const replayRows: SearchReplayEvent[] = [];
@@ -488,6 +654,17 @@ export const AgenticTotCanvas: React.FC = () => {
       const childIds = Array.isArray(payload.childIds)
         ? (payload.childIds as unknown[]).map(item => String(item || '').trim()).filter(Boolean)
         : [];
+      const rawMutations = Array.isArray(payload.mutations) ? (payload.mutations as unknown[]) : [];
+      const mutations = rawMutations
+        .map(item => asRecord(item))
+        .filter(item => Object.keys(item).length > 0)
+        .map(item => ({
+          nodeId: String(item.nodeId || '').trim(),
+          mutationKind: String(item.mutationKind || '').trim().toLowerCase(),
+          targetFiles: asStringArray(item.targetFiles),
+          strategy: String(item.strategy || '').trim(),
+        }))
+        .filter(item => item.nodeId || item.mutationKind || item.targetFiles.length > 0 || item.strategy);
       replayRows.push({
         idx,
         event,
@@ -495,6 +672,7 @@ export const AgenticTotCanvas: React.FC = () => {
         nodeId,
         summary: String((row as any)?.message || event),
         childIds,
+        mutations,
       });
     });
     return replayRows;
@@ -557,6 +735,10 @@ export const AgenticTotCanvas: React.FC = () => {
     const idx = Math.min(searchReplayEvents.length - 1, replayStep - 1);
     return searchReplayEvents[idx] || null;
   }, [searchReplayEvents, replayStep]);
+  const latestReplayEvent = useMemo(
+    () => (searchReplayEvents.length > 0 ? searchReplayEvents[searchReplayEvents.length - 1] : null),
+    [searchReplayEvents],
+  );
 
   const replayNodeId = replayActiveEvent?.nodeId || '';
   const replayProgressPct = useMemo(
@@ -663,59 +845,111 @@ export const AgenticTotCanvas: React.FC = () => {
     });
     return best;
   }, [llmTraceByNode]);
-  const llmHotNodes = useMemo(() => {
-    const rows = Array.from(llmTraceByNode.entries()).map(([nodeId, row]) => ({ nodeId, ...row }));
-    return rows.sort((a, b) => b.total - a.total || b.failed - a.failed).slice(0, 5);
-  }, [llmTraceByNode]);
   const focusedNodeLlm = useMemo(
     () => (focusedNodeId ? llmTraceByNode.get(focusedNodeId) || null : null),
     [focusedNodeId, llmTraceByNode],
   );
-  const storyStages = useMemo(() => {
-    const hasRun = !!selectedRunId;
-    const depth = Number(searchStats?.maxDepth || 0);
-    const expansions = Number(searchStats?.expandedNodes || 0);
-    const selections = Number(searchStats?.selectionEvents || 0);
-    const coverage = Math.round(Number(searchStats?.explorationCoverage || 0) * 100);
-    const succeeded = Number(runStats.succeeded || 0);
-    const contractPass = Math.round(Number(selectedRunSummary?.contractPassRate || 0) * 100);
-    const finalSucceeded = String(detail?.status || '').toUpperCase() === 'SUCCEEDED';
-
-    return [
-      {
-        key: 'idea',
-        titleZh: '1) 接收 Idea',
-        titleEn: '1) Capture Idea',
-        done: hasRun,
-        metricZh: hasRun ? `Run ${selectedRunId}` : '等待输入',
-        metricEn: hasRun ? `Run ${selectedRunId}` : 'Waiting input',
-      },
-      {
-        key: 'expand',
-        titleZh: '2) 自动展开假设',
-        titleEn: '2) Expand Hypotheses',
-        done: depth >= 2 || expansions >= 1,
-        metricZh: `深度 ${depth} · 扩展 ${expansions}`,
-        metricEn: `Depth ${depth} · Expanded ${expansions}`,
-      },
-      {
-        key: 'execute',
-        titleZh: '3) 执行与筛选',
-        titleEn: '3) Execute & Select',
-        done: selections >= 1 && succeeded >= 1,
-        metricZh: `选择 ${selections} · 成功 ${succeeded}`,
-        metricEn: `Selected ${selections} · Succeeded ${succeeded}`,
-      },
-      {
-        key: 'synthesize',
-        titleZh: '4) 形成证据结论',
-        titleEn: '4) Synthesize Evidence',
-        done: finalSucceeded || contractPass >= 95,
-        metricZh: `覆盖 ${coverage}% · 合同 ${contractPass}%`,
-        metricEn: `Coverage ${coverage}% · Contract ${contractPass}%`,
-      },
-    ];
-  }, [selectedRunId, searchStats, runStats, selectedRunSummary, detail?.status]);
+  const ideaSnapshot = useMemo(() => {
+    const spec = (detail?.researchSpec || {}) as Record<string, unknown>;
+    const idea = (detail?.idea || {}) as Record<string, unknown>;
+    const title = String(spec.title || idea.title || selectedRunSummary?.title || 'Auto-Science Idea');
+    const env = String(((spec.environment as Record<string, unknown> | undefined)?.name) || idea.environment || '-');
+    const metrics = (spec.successMetrics || idea.successMetrics || {}) as Record<string, unknown>;
+    const metricEntries = Object.entries(metrics);
+    const firstMetric = metricEntries.length > 0 ? `${metricEntries[0][0]} ${String(metricEntries[0][1] || '').replace(/\s+/g, '')}` : 'winRate';
+    return { title, env, firstMetric };
+  }, [detail?.researchSpec, detail?.idea, selectedRunSummary?.title]);
+  const nodeRunCount = detail?.nodeRuns?.length || 0;
+  const focusedNodeRun = useMemo(
+    () => (focusedNodeId ? latestNodeRunByNode.get(focusedNodeId) || null : null),
+    [focusedNodeId, latestNodeRunByNode],
+  );
+  const explorationPulseRows = useMemo(() => {
+    if (searchReplayEvents.length === 0) return [] as Array<{ key: string; nodeId: string; event: string; mutation: string; ts: string }>;
+    const rows = searchReplayEvents.slice(-16).map((row, idx) => {
+      const node = nodeById.get(row.nodeId);
+      const plans = node ? extractNodeMutationPlans(node) : [];
+      const replayMutation = row.mutations[0]?.mutationKind || '';
+      const mutation = String(replayMutation || plans[0]?.mutationKind || '').toUpperCase() || '--';
+      return {
+        key: `${row.idx}-${idx}-${row.nodeId}`,
+        nodeId: row.nodeId,
+        event: row.event === 'tot_node_expanded' ? 'EXPAND' : 'SELECT',
+        mutation,
+        ts: row.ts,
+      };
+    });
+    return rows.reverse();
+  }, [searchReplayEvents, nodeById]);
+  const frontierQueue = useMemo(() => {
+    const rows = visibleNodes
+      .filter(node => {
+        const status = String(node.status || '').toUpperCase();
+        return status === 'PENDING' || status === 'RUNNING' || status === 'RETRY_PENDING';
+      })
+      .map(node => {
+        const search = getSearchMeta(node);
+        const mutationKind = String((mutationPlansByNode.get(node.nodeId) || [])[0]?.mutationKind || '').toLowerCase();
+        const status = String(node.status || '').toUpperCase();
+        const frontier = Number.isFinite(Number(search.frontierScore)) ? Number(search.frontierScore) : 0;
+        const value = Number.isFinite(Number(search.value)) ? Number(search.value) : 0;
+        const evidence = Number(evidenceScoreByNode.get(node.nodeId) || 0);
+        const urgency = status === 'RUNNING' ? 0.12 : status === 'RETRY_PENDING' ? 0.08 : 0;
+        const scoreFrontier = frontier * 0.56;
+        const scoreValue = value * 0.18;
+        const scoreEvidence = evidence * 0.2;
+        const scoreUrgency = urgency;
+        return {
+          nodeId: node.nodeId,
+          status,
+          depth: Number(search.depth || 0),
+          visits: Number(search.visits || 0),
+          frontier,
+          value,
+          evidence,
+          mutationKind: mutationKind || 'code',
+          scoreFrontier,
+          scoreValue,
+          scoreEvidence,
+          scoreUrgency,
+          score: scoreFrontier + scoreValue + scoreEvidence + scoreUrgency,
+        };
+      })
+      .sort((a, b) => b.score - a.score || b.frontier - a.frontier || a.depth - b.depth || a.nodeId.localeCompare(b.nodeId));
+    return rows.slice(0, 8);
+  }, [visibleNodes, mutationPlansByNode, evidenceScoreByNode]);
+  const spotlightNodeId = useMemo(() => {
+    if (!spotlightMode) return '';
+    if (replayActiveEvent?.nodeId && visibleNodeMap.has(replayActiveEvent.nodeId) && replayRevealedNodeIds.has(replayActiveEvent.nodeId)) {
+      return replayActiveEvent.nodeId;
+    }
+    if (frontierQueue[0]?.nodeId) return frontierQueue[0].nodeId;
+    if (focusedNodeId && visibleNodeMap.has(focusedNodeId) && replayRevealedNodeIds.has(focusedNodeId)) return focusedNodeId;
+    return '';
+  }, [
+    spotlightMode,
+    replayActiveEvent?.nodeId,
+    frontierQueue,
+    focusedNodeId,
+    visibleNodeMap,
+    replayRevealedNodeIds,
+  ]);
+  const spotlightPathIds = useMemo(() => {
+    if (!spotlightNodeId) return new Set<string>();
+    return collectAncestorPath(nodeById, spotlightNodeId);
+  }, [nodeById, spotlightNodeId]);
+  const spotlightReason = useMemo(
+    () => frontierQueue.find(row => row.nodeId === spotlightNodeId) || frontierQueue[0] || null,
+    [frontierQueue, spotlightNodeId],
+  );
+  const maxFrontierScore = useMemo(() => {
+    let max = 0;
+    visibleNodes.forEach(node => {
+      const frontier = Number(getSearchMeta(node).frontierScore || 0);
+      if (Number.isFinite(frontier) && frontier > max) max = frontier;
+    });
+    return max;
+  }, [visibleNodes]);
 
   const fitGraphToViewport = useCallback(() => {
     const viewport = graphViewportRef.current;
@@ -762,11 +996,23 @@ export const AgenticTotCanvas: React.FC = () => {
       setReplayPlaying(false);
       return;
     }
+    if (!replayRevealMode) {
+      setReplayPlaying(false);
+      setReplayStep(searchReplayEvents.length);
+      return;
+    }
+    let shouldAutoplay = false;
     setReplayStep(prev => {
-      if (prev <= 0) return searchReplayEvents.length;
+      if (prev <= 0) {
+        shouldAutoplay = true;
+        return 1;
+      }
       return Math.min(prev, searchReplayEvents.length);
     });
-  }, [searchReplayEvents.length]);
+    if (shouldAutoplay && searchReplayEvents.length > 1) {
+      setReplayPlaying(true);
+    }
+  }, [searchReplayEvents.length, replayRevealMode]);
 
   useEffect(() => {
     if (!replayPlaying) return;
@@ -801,6 +1047,25 @@ export const AgenticTotCanvas: React.FC = () => {
     setSelectedNodeId(replayActiveEvent.nodeId);
     centerNodeInViewport(replayActiveEvent.nodeId, 'smooth');
   }, [replayActiveEvent?.idx, replayActiveEvent?.nodeId, replayPlaying, visibleNodeMap, replayRevealedNodeIds, centerNodeInViewport]);
+  useEffect(() => {
+    if (!autoFollowLatest) return;
+    if (replayPlaying) return;
+    const nodeId = latestReplayEvent?.nodeId || '';
+    if (!nodeId) return;
+    if (!visibleNodeMap.has(nodeId) || !replayRevealedNodeIds.has(nodeId)) return;
+    if (selectedNodeId === nodeId) return;
+    setSelectedNodeId(nodeId);
+    centerNodeInViewport(nodeId, 'smooth');
+  }, [
+    autoFollowLatest,
+    replayPlaying,
+    latestReplayEvent?.idx,
+    latestReplayEvent?.nodeId,
+    visibleNodeMap,
+    replayRevealedNodeIds,
+    selectedNodeId,
+    centerNodeInViewport,
+  ]);
 
   const runExecutionAction = async (mode: 'next' | 'all' | 'recover') => {
     if (!selectedRunId) return;
@@ -876,116 +1141,97 @@ export const AgenticTotCanvas: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-3xl border border-slate-200 bg-gradient-to-r from-blue-50 via-white to-cyan-50 p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-4xl">
-            <div className="mb-2 inline-flex items-center rounded-full border border-blue-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-              {tx('纯 ToT 图面', 'Pure ToT Canvas')}
-            </div>
-            <h1 className="display-title text-2xl font-semibold text-slate-900">
-              {tx('Agentic ToT 搜索画布', 'Agentic ToT Search Canvas')}
-            </h1>
-            <p className="mt-1.5 text-sm text-slate-600">
-              {tx('这里只展示决策树。Idea 输入、Agent 面板、节点证据都跳转到独立页面。', 'This page is tree-only. Idea input, agent panel, and node evidence are separate pages.')}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {tx('目标：让评委 10 秒理解“给一个 idea -> 自动展开探索 -> 产出证据结论”。', 'Goal: make it obvious in 10 seconds: one idea -> automatic exploration -> evidence-backed outcome.')}
-            </p>
+      <section className="rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(37,99,235,.14),transparent_34%),radial-gradient(circle_at_100%_0%,rgba(124,58,237,.14),transparent_36%),linear-gradient(180deg,rgba(248,250,252,.92),rgba(255,255,255,.98))] p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold tracking-wide text-slate-700">
+            <Sparkles className={`mr-1.5 h-3.5 w-3.5 ${autoExploring ? 'animate-pulse text-indigo-600' : 'text-slate-600'}`} />
+            {tx('LLM Auto-Science', 'LLM Auto-Science')}
           </div>
-          <div className="text-right text-xs text-slate-500">
-            <div>{tx('链路来源', 'Pipeline source')}: <span className="font-semibold">{isDemoMode ? 'Demo API' : 'Live API'}</span></div>
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <span className="rounded bg-white px-2 py-1">
+              {tx('来源', 'Source')}: <span className="font-semibold">{isDemoMode ? 'Demo API' : 'Live API'}</span>
+            </span>
             {selectedRunSummary && (
-              <div className={`mt-1 inline-flex rounded-full px-2 py-1 font-semibold text-[11px] ${statusBadgeClass(selectedRunSummary.status)}`}>
+              <span className={`rounded px-2 py-1 font-semibold ${statusBadgeClass(selectedRunSummary.status)}`}>
                 {selectedRunSummary.status}
-              </div>
-            )}
-            <div className="mt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !presentationMode;
-                  setPresentationMode(next);
-                  if (next) setShowAdvancedControls(false);
-                }}
-                className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                <SlidersHorizontal className="mr-1 h-3.5 w-3.5" />
-                {presentationMode ? tx('切到专家模式', 'Switch to Expert') : tx('切到评委模式', 'Switch to Judge')}
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold text-slate-800">{tx('Auto-Science 进度', 'Auto-Science Progress')}</div>
-          <div className="text-xs text-slate-500">{tx('简化叙事，先看这四步再看树。', 'Narrative first, tree second.')}</div>
-        </div>
-        <div className="grid gap-2 md:grid-cols-4">
-          {storyStages.map(stage => (
-            <div
-              key={stage.key}
-              className={`rounded-xl border px-3 py-2 ${
-                stage.done
-                  ? 'border-emerald-200 bg-emerald-50'
-                  : 'border-slate-200 bg-slate-50'
-              }`}
-            >
-              <div className={`text-xs font-semibold ${stage.done ? 'text-emerald-700' : 'text-slate-700'}`}>
-                {tx(stage.titleZh, stage.titleEn)}
-              </div>
-              <div className="mt-1 text-[11px] text-slate-600">{tx(stage.metricZh, stage.metricEn)}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {llmTraceSummary.total > 0 && (
-        <section className="rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 via-white to-blue-50 p-4 shadow-sm">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm font-semibold text-violet-900">{tx('LLM 搜索信号', 'LLM Search Signals')}</div>
-            <div className="text-xs text-violet-700">
-              {tx('核心链路全部来自 LLM 结构化输出，无规则兜底。', 'Core chain is produced by structured LLM outputs, with no rule fallback.')}
-            </div>
-          </div>
-          <div className="grid gap-2 md:grid-cols-4">
-            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
-              {tx('总调用', 'Total calls')}: <span className="font-semibold">{llmTraceSummary.total}</span>
-            </div>
-            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
-              {tx('重试调用', 'Retry calls')}: <span className="font-semibold">{llmTraceSummary.retryCalls}</span>
-            </div>
-            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
-              {tx('平均延迟', 'Avg latency')}: <span className="font-semibold">{llmTraceSummary.avgLatencyMs}ms</span>
-            </div>
-            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-violet-800">
-              {tx('失败率', 'Failure rate')}:{' '}
-              <span className="font-semibold">
-                {llmTraceSummary.total > 0 ? Math.round((llmTraceSummary.failed / llmTraceSummary.total) * 100) : 0}%
               </span>
-            </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                const next = !presentationMode;
+                setPresentationMode(next);
+                if (next) setShowAdvancedControls(false);
+              }}
+              className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <SlidersHorizontal className="mr-1 h-3.5 w-3.5" />
+              {presentationMode ? tx('专家模式', 'Expert Mode') : tx('评审模式', 'Judge Mode')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTreeOnlyMode(prev => !prev)}
+              className={`inline-flex items-center rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${treeOnlyMode ? 'border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+            >
+              {treeOnlyMode ? tx('Tree-Only', 'Tree-Only') : tx('Rich View', 'Rich View')}
+            </button>
           </div>
-          {llmHotNodes.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {llmHotNodes.map(item => (
-                <button
-                  key={`llm-hot-${item.nodeId}`}
-                  type="button"
-                  onClick={() => {
-                    setSelectedNodeId(item.nodeId);
-                    centerNodeInViewport(item.nodeId, 'smooth');
-                  }}
-                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] text-violet-800 hover:bg-violet-50"
-                >
-                  {item.nodeId} · {tx('调用', 'calls')} {item.total} · {tx('失败', 'failed')} {item.failed}
-                </button>
-              ))}
+        </div>
+        {treeOnlyMode ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="rounded bg-white px-2 py-1">{ideaSnapshot.title}</span>
+            <span className="rounded bg-blue-50 px-2 py-1 text-blue-700">{tx('树', 'Tree')} {runStats.total} · D{searchStats?.maxDepth || 0}</span>
+            <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">LLM {llmTraceSummary.total}</span>
+            <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">EV {nodeRunCount}</span>
+          </div>
+        ) : (
+          <>
+            <div className="mt-2 grid gap-2 md:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">{tx('Idea', 'Idea')}</div>
+                <div className="mt-0.5 truncate text-sm font-semibold text-slate-900" title={ideaSnapshot.title}>{ideaSnapshot.title}</div>
+                <div className="mt-1 truncate text-[11px] text-slate-600">{ideaSnapshot.env}</div>
+              </div>
+              <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2">
+                <div className="text-[11px] uppercase tracking-wide text-violet-700">{tx('LLM', 'LLM')}</div>
+                <div className="mt-0.5 text-sm font-semibold text-violet-900">{llmTraceSummary.total} {tx('calls', 'calls')}</div>
+                <div className="mt-1 text-[11px] text-violet-700">{tx('失败', 'Failed')} {llmTraceSummary.failed} · {llmTraceSummary.avgLatencyMs}ms</div>
+              </div>
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+                <div className="text-[11px] uppercase tracking-wide text-blue-700">{tx('Tree', 'Tree')}</div>
+                <div className="mt-0.5 text-sm font-semibold text-blue-900">{runStats.total} {tx('nodes', 'nodes')} · D{searchStats?.maxDepth || 0}</div>
+                <div className="mt-1 text-[11px] text-blue-700">{tx('扩展', 'Expanded')} {searchStats?.expandedNodes || 0} · {tx('覆盖', 'Coverage')} {Math.round((searchStats?.explorationCoverage || 0) * 100)}%</div>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <div className="text-[11px] uppercase tracking-wide text-emerald-700">{tx('Evidence', 'Evidence')}</div>
+                <div className="mt-0.5 text-sm font-semibold text-emerald-900">{nodeRunCount} {tx('node runs', 'node runs')}</div>
+                <div className="mt-1 text-[11px] text-emerald-700">{tx('目标指标', 'Target')} {ideaSnapshot.firstMetric}</div>
+              </div>
             </div>
-          )}
-        </section>
-      )}
+            <div className="mt-2 overflow-auto rounded-xl border border-slate-200 bg-white px-2 py-1.5">
+              <div className="flex min-w-max items-center gap-1.5">
+                {explorationPulseRows.length === 0 && (
+                  <span className="rounded bg-slate-100 px-2 py-1 text-[11px] text-slate-600">{tx('等待探索事件', 'Waiting for exploration events')}</span>
+                )}
+                {explorationPulseRows.map((row, idx) => (
+                  <button
+                    key={`pulse-${row.key}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedNodeId(row.nodeId);
+                      setAutoFollowLatest(false);
+                      centerNodeInViewport(row.nodeId, 'smooth');
+                    }}
+                    className={`rounded-lg border px-2 py-1 text-[11px] ${idx === 0 ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
+                  >
+                    <span className="font-semibold">{row.event}</span> · {row.nodeId} · {row.mutation}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
@@ -1026,6 +1272,21 @@ export const AgenticTotCanvas: React.FC = () => {
             <Play className="mr-1.5 h-4 w-4" />
             {tx('Search Step', 'Search Step')}
           </button>
+          <button
+            type="button"
+            onClick={() => navigate('/agentic/new')}
+            className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
+          >
+            {tx('Idea 输入', 'Idea Input')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAutoFollowLatest(prev => !prev)}
+            className={`inline-flex items-center rounded-lg border px-3 py-2 text-sm ${autoFollowLatest ? 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+          >
+            <Sparkles className="mr-1.5 h-4 w-4" />
+            {autoFollowLatest ? tx('跟随最新: 开', 'Auto Follow: On') : tx('跟随最新: 关', 'Auto Follow: Off')}
+          </button>
           {!presentationMode && (
             <>
               <button
@@ -1044,13 +1305,6 @@ export const AgenticTotCanvas: React.FC = () => {
               >
                 <ShieldAlert className="mr-1.5 h-4 w-4" />
                 {tx('恢复', 'Recover')}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/agentic/new')}
-                className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
-              >
-                {tx('Idea 输入', 'Idea Input')}
               </button>
               <button
                 type="button"
@@ -1111,13 +1365,6 @@ export const AgenticTotCanvas: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => navigate('/agentic/new')}
-              className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
-            >
-              {tx('Idea 输入', 'Idea Input')}
-            </button>
-            <button
-              type="button"
               onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
               disabled={!selectedRunId}
               className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
@@ -1143,52 +1390,101 @@ export const AgenticTotCanvas: React.FC = () => {
           </div>
         )}
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-          <span className="rounded bg-slate-100 px-2 py-1">{tx('总节点', 'Nodes')} {runStats.total}</span>
-          <span className="rounded bg-blue-50 px-2 py-1 text-blue-700">{tx('运行中', 'Running')} {runStats.running}</span>
-          <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">{tx('成功', 'Succeeded')} {runStats.succeeded}</span>
-          <span className="rounded bg-amber-50 px-2 py-1 text-amber-700">{tx('阻塞', 'Blocked')} {runStats.blocked}</span>
-          <span className="rounded bg-rose-50 px-2 py-1 text-rose-700">{tx('失败', 'Failed')} {runStats.failed}</span>
-          <span className="rounded bg-slate-100 px-2 py-1">{tx('待执行', 'Pending')} {runStats.pending}</span>
-          {searchStats && (
-            <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
-              {tx('搜索深度', 'Search depth')} {searchStats.maxDepth}
+        {(!treeOnlyMode || !presentationMode || showAdvancedControls) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="rounded bg-slate-100 px-2 py-1">{tx('总节点', 'Nodes')} {runStats.total}</span>
+            {searchStats && (
+              <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
+                {tx('搜索深度', 'Search depth')} {searchStats.maxDepth}
+              </span>
+            )}
+            {searchStats && (
+              <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
+                {tx('已扩展', 'Expanded')} {searchStats.expandedNodes}
+              </span>
+            )}
+            {searchStats && (
+              <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
+                {tx('探索覆盖', 'Coverage')} {Math.round((searchStats.explorationCoverage || 0) * 100)}%
+              </span>
+            )}
+            <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">{tx('成功', 'Succeeded')} {runStats.succeeded}</span>
+            <span className="rounded bg-blue-50 px-2 py-1 text-blue-700">{tx('运行中', 'Running')} {runStats.running}</span>
+            <span className="rounded bg-slate-100 px-2 py-1">{tx('证据', 'Evidence')} {nodeRunCount}</span>
+            {selectedRunSummary && (
+              <span className="rounded bg-slate-100 px-2 py-1">{tx('合同', 'Contract')} {Math.round((selectedRunSummary.contractPassRate || 0) * 100)}%</span>
+            )}
+            <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">
+              {tx('LLM', 'LLM')} {llmTraceSummary.total}
             </span>
-          )}
-          {searchStats && (
-            <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
-              {tx('已扩展', 'Expanded')} {searchStats.expandedNodes}
+            <span className={`rounded px-2 py-1 ${llmTraceSummary.failed > 0 ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+              {tx('失败', 'Failed')} {llmTraceSummary.failed}
             </span>
+          </div>
+        )}
+        {mutationFilterOptions.length > 0 && (!treeOnlyMode || !presentationMode || showAdvancedControls) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="rounded bg-slate-100 px-2 py-1 text-slate-600">{tx('变更过滤', 'Mutation filter')}</span>
+            <button
+              type="button"
+              onClick={() => setMutationFilter('all')}
+              className={`rounded border px-2 py-1 ${mutationFilter === 'all' ? 'border-indigo-300 bg-indigo-50 font-semibold text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              {tx('全部', 'All')} ({nodes.length})
+            </button>
+            {mutationFilterOptions.map(item => (
+              <button
+                key={`mutation-filter-${item.kind}`}
+                type="button"
+                onClick={() => setMutationFilter(item.kind)}
+                className={`rounded border px-2 py-1 ${mutationFilter === item.kind ? 'border-indigo-300 bg-indigo-50 font-semibold text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                {String(item.kind || 'code').toUpperCase()} ({item.count})
+              </button>
+            ))}
+            {mutationFilter !== 'all' && (
+              <span className="rounded bg-slate-100 px-2 py-1 text-slate-500">
+                {tx('当前可见', 'Visible')} {filteredNodes.length}
+              </span>
+            )}
+          </div>
+        )}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="rounded bg-slate-100 px-2 py-1 text-slate-600">{tx('树视图', 'Tree view')}</span>
+          {(!treeOnlyMode || !presentationMode || showAdvancedControls) && (
+            <>
+              <button
+                type="button"
+                onClick={() => setBranchViewMode('default')}
+                className={`rounded border px-2 py-1 ${branchViewMode === 'default' ? 'border-indigo-300 bg-indigo-50 font-semibold text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                {tx('默认排序', 'Default order')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setBranchViewMode('evidence')}
+                className={`rounded border px-2 py-1 ${branchViewMode === 'evidence' ? 'border-indigo-300 bg-indigo-50 font-semibold text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                {tx('证据优先', 'Evidence first')}
+              </button>
+            </>
           )}
-          {searchStats && (
-            <span className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">
-              {tx('探索覆盖', 'Coverage')} {Math.round((searchStats.explorationCoverage || 0) * 100)}%
-            </span>
-          )}
-          {selectedRunSummary && (
-            <span className="rounded bg-slate-100 px-2 py-1">{tx('合同', 'Contract')} {Math.round((selectedRunSummary.contractPassRate || 0) * 100)}%</span>
-          )}
-          <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">
-            {tx('LLM 调用', 'LLM calls')} {llmTraceSummary.total}
-          </span>
-          <span className={`rounded px-2 py-1 ${llmTraceSummary.failed > 0 ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
-            {tx('LLM 失败', 'LLM failed')} {llmTraceSummary.failed}
-          </span>
-          <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">
-            {tx('LLM 平均延迟', 'LLM avg latency')} {llmTraceSummary.avgLatencyMs}ms
-          </span>
-          <span className="rounded bg-violet-50 px-2 py-1 text-violet-700">
-            {tx('LLM 覆盖节点', 'LLM covered nodes')} {llmTraceSummary.coveredNodes}
-          </span>
+          <button
+            type="button"
+            onClick={() => setSpotlightMode(prev => !prev)}
+            className={`rounded border px-2 py-1 ${spotlightMode ? 'border-blue-300 bg-blue-50 font-semibold text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+          >
+            {spotlightMode ? tx('探索聚光灯: 开', 'Spotlight: On') : tx('探索聚光灯: 关', 'Spotlight: Off')}
+          </button>
         </div>
       </section>
 
-      {searchReplayEvents.length > 0 && (
+      {!presentationMode && searchReplayEvents.length > 0 && (
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold text-slate-800">{tx('探索回放', 'Exploration Replay')}</div>
             <div className="text-xs text-slate-500">
-              {tx('拖动滑杆可回看树是如何被逐步扩展的。', 'Use the slider to replay how the tree expanded step by step.')}
+              {tx('Live', 'Live')} · {searchReplayEvents.length} {tx('steps', 'steps')}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1202,6 +1498,7 @@ export const AgenticTotCanvas: React.FC = () => {
                 if (replayStep >= searchReplayEvents.length) {
                   setReplayStepAndFocus(1, 'auto');
                 }
+                setAutoFollowLatest(true);
                 setReplayPlaying(true);
               }}
               className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -1214,6 +1511,7 @@ export const AgenticTotCanvas: React.FC = () => {
               onClick={() => {
                 setReplayPlaying(false);
                 setReplayStepAndFocus(0, 'auto');
+                setAutoFollowLatest(true);
               }}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50"
             >
@@ -1228,6 +1526,7 @@ export const AgenticTotCanvas: React.FC = () => {
               onChange={e => {
                 setReplayPlaying(false);
                 setReplayStepAndFocus(Number(e.target.value || 0), 'auto');
+                setAutoFollowLatest(false);
               }}
               className="min-w-[16rem] flex-1 accent-indigo-600"
             />
@@ -1277,6 +1576,7 @@ export const AgenticTotCanvas: React.FC = () => {
                     onClick={() => {
                       setReplayPlaying(false);
                       setReplayStepAndFocus(step, 'smooth');
+                      setAutoFollowLatest(false);
                     }}
                     className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left text-[11px] ${tone}`}
                   >
@@ -1320,33 +1620,115 @@ export const AgenticTotCanvas: React.FC = () => {
             </button>
           </div>
           <div className="text-[11px] text-slate-500">
-            {tx('单击节点聚焦，双击进入证据页。', 'Single-click to focus, double-click to open evidence.')}
+            {presentationMode
+              ? tx('双击节点看证据；回放请切到专家模式。', 'Double-click for evidence; use Expert Mode for replay controls.')
+              : tx('双击节点进入证据页。', 'Double-click node to open evidence.')}
           </div>
         </div>
-        <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
-            <span className="mr-1.5 h-2 w-2 rounded-full bg-blue-600" />
-            {tx('蓝色高亮 = 当前聚焦路径', 'Blue highlight = focused path')}
-          </span>
-          <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-violet-700">
-            <span className="mr-1.5 h-2 w-2 rounded-full bg-violet-600" />
-            {tx('紫色强度 = LLM 探索密度', 'Purple intensity = LLM exploration density')}
-          </span>
-          <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-rose-700">
-            {tx('红色 LLM 标签 = 该节点有失败调用', 'Red LLM tag = failed LLM calls on node')}
-          </span>
-          {replayRevealMode && (
-            <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">
-              {tx('回放显影开启：仅展示已探索到的节点', 'Replay reveal on: showing explored nodes only')}
+        {!presentationMode && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
+              <span className="mr-1.5 h-2 w-2 rounded-full bg-blue-600" />
+              {tx('蓝色高亮 = 当前聚焦路径', 'Blue highlight = focused path')}
             </span>
-          )}
-        </div>
+            <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-violet-700">
+              <span className="mr-1.5 h-2 w-2 rounded-full bg-violet-600" />
+              {tx('紫色强度 = LLM 探索密度', 'Purple intensity = LLM exploration density')}
+            </span>
+            <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-rose-700">
+              {tx('红色 LLM 标签 = 该节点有失败调用', 'Red LLM tag = failed LLM calls on node')}
+            </span>
+            {branchViewMode === 'evidence' && (
+              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                {tx('证据优先：按代码证据强度重排并高亮', 'Evidence-first: branches sorted/highlighted by code-evidence strength')}
+              </span>
+            )}
+            {spotlightMode && (
+              <span className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">
+                {tx('聚光灯：突出当前探索主路径', 'Spotlight: highlight active exploration path')}
+              </span>
+            )}
+            {replayRevealMode && (
+              <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">
+                {tx('回放显影开启：仅展示已探索到的节点', 'Replay reveal on: showing explored nodes only')}
+              </span>
+            )}
+          </div>
+        )}
+        {frontierQueue.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="rounded bg-slate-100 px-2 py-1 text-slate-600">{tx('Frontier', 'Frontier')}</span>
+            {frontierQueue.map((row, idx) => {
+              const statusTone = row.status === 'RUNNING'
+                ? 'border-blue-200 bg-blue-50 text-blue-700'
+                : row.status === 'RETRY_PENDING'
+                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                : 'border-slate-200 bg-white text-slate-700';
+              const active = spotlightNodeId === row.nodeId;
+              return (
+                <button
+                  key={`frontier-${row.nodeId}-${idx}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedNodeId(row.nodeId);
+                    setAutoFollowLatest(false);
+                    centerNodeInViewport(row.nodeId, 'smooth');
+                  }}
+                  className={`rounded border px-2 py-1 ${statusTone} ${active ? 'ring-1 ring-blue-300' : 'hover:bg-slate-50'}`}
+                  title={`${row.nodeId} | frontier=${Math.round(row.frontier * 100)} | depth=${row.depth} | mutation=${String(row.mutationKind || '').toUpperCase()}`}
+                >
+                  <span className="font-semibold">{row.nodeId}</span>
+                  {' '}
+                  · {String(row.mutationKind || 'code').toUpperCase()}
+                  {' '}
+                  · F{Math.round(row.frontier * 100)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {spotlightReason && (
+          <div className="mb-2 rounded-xl border border-sky-200 bg-sky-50/70 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="rounded bg-sky-100 px-2 py-0.5 font-semibold text-sky-700">
+                {tx('为何选择该节点', 'Why this node next')}
+              </span>
+              <span className="font-semibold text-sky-900">
+                {spotlightReason.nodeId}
+              </span>
+              <span className="text-sky-700">
+                {tx('深度', 'Depth')} {spotlightReason.depth} · {tx('访问', 'Visits')} {spotlightReason.visits}
+              </span>
+            </div>
+            <div className="mt-1 text-[11px] text-sky-800">
+              {tx('探索分数由四部分组成：Frontier + Value + Evidence + Urgency。', 'Exploration score is composed of Frontier + Value + Evidence + Urgency.')}
+            </div>
+            <div className="mt-1.5 grid gap-1.5 sm:grid-cols-4">
+              <div className="rounded border border-sky-200 bg-white/80 px-2 py-1 text-[11px] text-sky-700">
+                F {Math.round(spotlightReason.frontier * 100)} · +{spotlightReason.scoreFrontier.toFixed(2)}
+              </div>
+              <div className="rounded border border-sky-200 bg-white/80 px-2 py-1 text-[11px] text-sky-700">
+                V {Math.round(spotlightReason.value * 100)} · +{spotlightReason.scoreValue.toFixed(2)}
+              </div>
+              <div className="rounded border border-sky-200 bg-white/80 px-2 py-1 text-[11px] text-sky-700">
+                EV {Math.round(spotlightReason.evidence * 100)} · +{spotlightReason.scoreEvidence.toFixed(2)}
+              </div>
+              <div className="rounded border border-sky-200 bg-white/80 px-2 py-1 text-[11px] text-sky-700">
+                U +{spotlightReason.scoreUrgency.toFixed(2)} · {tx('总分', 'Total')} {spotlightReason.score.toFixed(2)}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div ref={graphViewportRef} className="max-h-[72vh] overflow-auto rounded-xl border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(219,234,254,.34),transparent_42%),radial-gradient(circle_at_100%_0%,rgba(209,250,229,.24),transparent_38%),linear-gradient(180deg,rgba(248,250,252,.72),rgba(255,255,255,.95))]">
           {loadingRun ? (
             <div className="p-6 text-sm text-slate-500">{tx('加载运行详情中...', 'Loading run detail...')}</div>
           ) : visibleNodes.length === 0 ? (
-            <div className="p-6 text-sm text-slate-500">{tx('暂无节点。先从 Idea 页创建一个 Run。', 'No nodes yet. Create a run from Idea Input page.')}</div>
+            <div className="p-6 text-sm text-slate-500">
+              {mutationFilter === 'all'
+                ? tx('暂无节点。先从 Idea 页创建一个 Run。', 'No nodes yet. Create a run from Idea Input page.')
+                : tx('当前 mutation 过滤条件无匹配节点。请切换过滤器。', 'No nodes matched current mutation filter. Switch filter to continue.')}
+            </div>
           ) : (
             <svg
               width={Math.round((graph.width * graphZoomPct) / 100)}
@@ -1396,26 +1778,71 @@ export const AgenticTotCanvas: React.FC = () => {
                 const to = graph.layout.get(edge.to);
                 if (!from || !to) return null;
                 if (!replayRevealedNodeIds.has(edge.from) || !replayRevealedNodeIds.has(edge.to)) return null;
-                const highlighted = edge.from === focusedNodeId || edge.to === focusedNodeId;
+                const inSpotlightPath = spotlightMode && spotlightPathIds.has(edge.from) && spotlightPathIds.has(edge.to);
+                const highlighted = edge.from === focusedNodeId || edge.to === focusedNodeId || inSpotlightPath;
                 const runningEdge = String(visibleNodeMap.get(edge.from)?.status || '').toUpperCase() === 'RUNNING'
                   || String(visibleNodeMap.get(edge.to)?.status || '').toUpperCase() === 'RUNNING';
                 const fromLlm = llmTraceByNode.get(edge.from)?.total || 0;
                 const toLlm = llmTraceByNode.get(edge.to)?.total || 0;
                 const llmCalls = Math.max(fromLlm, toLlm);
                 const llmIntensity = maxLlmCallsPerNode > 0 ? Math.min(1, llmCalls / maxLlmCallsPerNode) : 0;
+                const evidenceFrom = evidenceScoreByNode.get(edge.from) || 0;
+                const evidenceTo = evidenceScoreByNode.get(edge.to) || 0;
+                const evidenceEdge = Math.max(0, Math.min(1, (evidenceFrom + evidenceTo) / 2));
                 const path = `M ${from.x + graph.cardWidth} ${from.y} C ${from.x + graph.cardWidth + 56} ${from.y}, ${to.x - 56} ${to.y}, ${to.x} ${to.y}`;
+                const edgeStroke = highlighted
+                  ? inSpotlightPath
+                    ? 'rgba(14,165,233,.95)'
+                    : '#2563eb'
+                  : spotlightMode
+                  ? 'rgba(148,163,184,.22)'
+                  : branchViewMode === 'evidence'
+                  ? `rgba(16,185,129,${0.22 + evidenceEdge * 0.62})`
+                  : llmIntensity > 0
+                  ? `rgba(124,58,237,${0.2 + llmIntensity * 0.55})`
+                  : 'url(#tree-edge-canvas)';
+                const edgeWidth = highlighted
+                  ? inSpotlightPath
+                    ? 2.9
+                    : 2.4
+                  : spotlightMode
+                  ? 1.05
+                  : branchViewMode === 'evidence'
+                  ? 1.5 + evidenceEdge * 1.5
+                  : 1.6 + llmIntensity * 1.1;
+                const edgeOpacity = highlighted
+                  ? inSpotlightPath
+                    ? 0.96
+                    : 0.92
+                  : spotlightMode
+                  ? 0.26
+                  : branchViewMode === 'evidence'
+                  ? 0.56 + evidenceEdge * 0.34
+                  : 0.62 + llmIntensity * 0.3;
                 return (
                   <g key={`${edge.from}-${edge.to}`}>
                     <path
                       d={path}
                       fill="none"
-                      stroke={highlighted ? '#2563eb' : llmIntensity > 0 ? `rgba(124,58,237,${0.2 + llmIntensity * 0.55})` : 'url(#tree-edge-canvas)'}
-                      strokeWidth={highlighted ? 2.4 : 1.6 + llmIntensity * 1.1}
-                      strokeOpacity={highlighted ? 0.92 : 0.62 + llmIntensity * 0.3}
+                      stroke={edgeStroke}
+                      strokeWidth={edgeWidth}
+                      strokeOpacity={edgeOpacity}
                       strokeDasharray={runningEdge ? '6 4' : undefined}
                       style={{ transition: 'stroke 180ms ease, stroke-width 180ms ease, stroke-opacity 180ms ease' }}
                     />
-                    {llmIntensity >= 0.75 && !highlighted && (
+                    {inSpotlightPath && (
+                      <path
+                        d={path}
+                        fill="none"
+                        stroke="rgba(56,189,248,.9)"
+                        strokeWidth={1.9}
+                        strokeOpacity={0.52}
+                        strokeDasharray="3 8"
+                      >
+                        <animate attributeName="stroke-opacity" values="0.12;0.7;0.12" dur="1.25s" repeatCount="indefinite" />
+                      </path>
+                    )}
+                    {llmIntensity >= 0.75 && !highlighted && !spotlightMode && (
                       <path
                         d={path}
                         fill="none"
@@ -1445,16 +1872,23 @@ export const AgenticTotCanvas: React.FC = () => {
                 const isFocused = node.nodeId === focusedNodeId;
                 const isReplayActive = replayNodeId === node.nodeId;
                 const isRunning = normStatus === 'RUNNING';
+                const isSpotlightNode = spotlightMode && spotlightNodeId === node.nodeId;
+                const inSpotlightPath = spotlightMode && spotlightPathIds.has(node.nodeId);
+                const fadeBySpotlight = spotlightMode && spotlightPathIds.size > 0 && !inSpotlightPath && !isFocused && !isReplayActive;
                 const riskLabel = String(node.risk || 'low').toLowerCase();
                 const hasChildren = (filteredChildCountByParent.get(node.nodeId) || 0) > 0;
                 const isCollapsed = !!collapsedNodeIds[node.nodeId];
                 const hiddenDescendantCount = isCollapsed ? descendantCountByNode.get(node.nodeId) || 0 : 0;
                 const searchMeta = getSearchMeta(node);
+                const frontierScore = Number(searchMeta.frontierScore || 0);
+                const frontierPct = Math.round(Math.max(0, Math.min(1, frontierScore)) * 100);
+                const normalizedFrontier = maxFrontierScore > 0 ? Math.max(0, Math.min(1, frontierScore / maxFrontierScore)) : 0;
                 const llmStat = llmTraceByNode.get(node.nodeId);
                 const llmCalls = llmStat?.total || 0;
                 const llmFailed = llmStat?.failed || 0;
                 const mutationPlans = mutationPlansByNode.get(node.nodeId) || [];
                 const primaryMutation = mutationPlans[0] || null;
+                const latestNodeRun = latestNodeRunByNode.get(node.nodeId) || null;
                 const mutationKind = String(primaryMutation?.mutationKind || '').toLowerCase();
                 const mutationTag = mutationKind ? mutationKind.toUpperCase() : '';
                 const mutationColors = mutationBadgeColors(mutationKind);
@@ -1467,6 +1901,14 @@ export const AgenticTotCanvas: React.FC = () => {
                 const mutationTargetHint = mutationTargetHintRaw
                   ? splitLines(mutationTargetHintRaw, 22, 1)[0]
                   : '';
+                const latestRunMutationKind = String(latestNodeRun?.mutationKind || '').toUpperCase();
+                const latestRunTargetHint = (latestNodeRun?.targetFiles || [])
+                  .slice(0, 2)
+                  .map(path => String(path || '').split('/').pop() || String(path || ''))
+                  .join(', ');
+                const evidenceScore = evidenceScoreByNode.get(node.nodeId) || 0;
+                const evidencePct = Math.round(evidenceScore * 100);
+                const evidenceGlow = (branchViewMode === 'evidence' && evidenceScore >= 0.65) || isSpotlightNode;
                 const revealStep = firstSeenStepByNode.get(node.nodeId) ?? 0;
                 const isJustRevealed = replayStep > 0 && revealStep === replayStep;
                 const cardBg = normStatus === 'FAILED'
@@ -1481,12 +1923,17 @@ export const AgenticTotCanvas: React.FC = () => {
                     key={node.nodeId}
                     transform={`translate(${point.x}, ${point.y - graph.cardHeight / 2})`}
                     className="cursor-pointer"
+                    opacity={fadeBySpotlight ? 0.35 : 1}
+                    style={{ transition: 'opacity 180ms ease' }}
                     onMouseEnter={() => setHoveredNodeId(node.nodeId)}
-                    onClick={() => setSelectedNodeId(node.nodeId)}
+                    onClick={() => {
+                      setSelectedNodeId(node.nodeId);
+                      setAutoFollowLatest(false);
+                    }}
                     onDoubleClick={() => openNodeEvidence(node.nodeId)}
                   >
                     <title>
-                      {`${node.nodeId} · ${node.title} · score ${scorePct} · llm ${llmCalls} · failed ${llmFailed} · latency ${llmStat?.avgLatencyMs || 0}ms${primaryMutation ? ` · mutation ${primaryMutation.mutationKind} · files ${primaryMutation.targetFiles.length}` : ''}${llmStat?.lastTask ? ` · ${llmStat.lastTask}` : ''}`}
+                      {`${node.nodeId} · ${node.title} · score ${scorePct} · evidence ${evidencePct} · llm ${llmCalls} · failed ${llmFailed} · latency ${llmStat?.avgLatencyMs || 0}ms${primaryMutation ? ` · mutation ${primaryMutation.mutationKind} · files ${primaryMutation.targetFiles.length}` : ''}${latestNodeRun ? ` · nodeRun ${latestNodeRun.nodeRunId} · diff ${latestNodeRun.diffFiles} · resolved ${latestNodeRun.resolvedTargets}` : ''}${llmStat?.lastTask ? ` · ${llmStat.lastTask}` : ''}`}
                     </title>
                     {isJustRevealed && (
                       <rect
@@ -1504,14 +1951,56 @@ export const AgenticTotCanvas: React.FC = () => {
                         <animate attributeName="stroke-width" values="2.8;1.4;0.8" dur="1.2s" repeatCount="1" />
                       </rect>
                     )}
+                    {isSpotlightNode && (
+                      <rect
+                        x={-5}
+                        y={-5}
+                        width={graph.cardWidth + 10}
+                        height={graph.cardHeight + 10}
+                        rx={18}
+                        fill="none"
+                        stroke="rgba(56,189,248,.95)"
+                        strokeWidth={1.5}
+                        strokeOpacity={0.22}
+                      >
+                        <animate attributeName="stroke-opacity" values="0.12;0.72;0.12" dur="1.4s" repeatCount="indefinite" />
+                        <animate attributeName="stroke-width" values="1.2;2.6;1.2" dur="1.4s" repeatCount="indefinite" />
+                      </rect>
+                    )}
                     <rect
                       width={graph.cardWidth}
                       height={graph.cardHeight}
                       rx={14}
                       fill={cardBg}
-                      stroke={isReplayActive ? 'rgba(99,102,241,.92)' : (isFocused ? 'rgba(37,99,235,.9)' : llmCalls > 0 ? 'rgba(124,58,237,.55)' : 'rgba(148,163,184,.7)')}
-                      strokeWidth={isReplayActive ? 2.2 : (isFocused ? 1.9 : 1.2)}
-                      filter={isFocused ? 'url(#tree-node-focus-canvas)' : 'url(#tree-node-shadow-canvas)'}
+                      stroke={
+                        isReplayActive
+                          ? 'rgba(99,102,241,.92)'
+                          : isSpotlightNode
+                          ? 'rgba(14,165,233,.92)'
+                          : isFocused
+                          ? 'rgba(37,99,235,.9)'
+                          : spotlightMode && inSpotlightPath
+                          ? `rgba(56,189,248,${0.36 + normalizedFrontier * 0.42})`
+                          : branchViewMode === 'evidence'
+                          ? `rgba(16,185,129,${0.28 + evidenceScore * 0.58})`
+                          : llmCalls > 0
+                          ? 'rgba(124,58,237,.55)'
+                          : 'rgba(148,163,184,.7)'
+                      }
+                      strokeWidth={
+                        isReplayActive
+                          ? 2.2
+                          : isSpotlightNode
+                          ? 2.5
+                          : isFocused
+                          ? 1.9
+                          : spotlightMode && inSpotlightPath
+                          ? 1.3 + normalizedFrontier * 1.1
+                          : branchViewMode === 'evidence'
+                          ? 1.15 + evidenceScore * 1.25
+                          : 1.2
+                      }
+                      filter={isFocused || evidenceGlow ? 'url(#tree-node-focus-canvas)' : 'url(#tree-node-shadow-canvas)'}
                     />
                     <circle cx={12} cy={13} r={3.5} fill={statusDot(node.status)}>
                       {isRunning && <animate attributeName="r" values="3.5;5;3.5" dur="1.25s" repeatCount="indefinite" />}
@@ -1536,6 +2025,57 @@ export const AgenticTotCanvas: React.FC = () => {
                         />
                         <text x={26} y={59.5} fontSize={7.7} fontWeight={700} fill={mutationColors.text}>
                           {mutationTag}
+                        </text>
+                      </>
+                    )}
+                    {latestNodeRun && (
+                      <>
+                        <rect
+                          x={20}
+                          y={65}
+                          width={96}
+                          height={11}
+                          rx={5.5}
+                          fill="rgba(37,99,235,.12)"
+                          stroke="rgba(37,99,235,.34)"
+                          strokeWidth={0.7}
+                        />
+                        <text x={25} y={73} fontSize={7.3} fontWeight={700} fill="#1d4ed8">
+                          {`NR ${latestNodeRun.diffFiles}/${latestNodeRun.resolvedTargets}`}
+                        </text>
+                      </>
+                    )}
+                    {branchViewMode === 'evidence' && (
+                      <>
+                        <rect
+                          x={graph.cardWidth - 116}
+                          y={50}
+                          width={40}
+                          height={12}
+                          rx={6}
+                          fill="rgba(16,185,129,.15)"
+                          stroke="rgba(16,185,129,.42)"
+                          strokeWidth={0.7}
+                        />
+                        <text x={graph.cardWidth - 96} y={58.5} textAnchor="middle" fontSize={7.2} fontWeight={700} fill="#047857">
+                          {`EV ${evidencePct}`}
+                        </text>
+                      </>
+                    )}
+                    {(frontierScore > 0 || normStatus === 'PENDING' || normStatus === 'RUNNING' || isSpotlightNode) && (
+                      <>
+                        <rect
+                          x={graph.cardWidth - 114}
+                          y={34}
+                          width={34}
+                          height={12}
+                          rx={6}
+                          fill={isSpotlightNode ? 'rgba(14,165,233,.2)' : 'rgba(59,130,246,.12)'}
+                          stroke={isSpotlightNode ? 'rgba(14,165,233,.52)' : 'rgba(59,130,246,.34)'}
+                          strokeWidth={0.7}
+                        />
+                        <text x={graph.cardWidth - 97} y={42.5} textAnchor="middle" fontSize={7.2} fontWeight={700} fill={isSpotlightNode ? '#0369a1' : '#1d4ed8'}>
+                          {`F ${frontierPct}`}
                         </text>
                       </>
                     )}
@@ -1588,10 +2128,18 @@ export const AgenticTotCanvas: React.FC = () => {
                       </g>
                     )}
                     <text x={20} y={graph.cardHeight - 38} fontSize={8.2} fill="#475569">
-                      {primaryMutation ? `${tx('代码变更', 'Code change')} · ${mutationTag || 'CODE'} · files ${mutationTargets.length}` : `N ${searchMeta.visits} · V ${(searchMeta.value || 0).toFixed(2)}`}
+                      {primaryMutation
+                        ? `${tx('代码变更', 'Code change')} · ${mutationTag || 'CODE'} · files ${mutationTargets.length} · F ${frontierPct}`
+                        : latestNodeRun
+                        ? `${tx('最近运行', 'Latest run')} · diff ${latestNodeRun.diffFiles} · ok ${latestNodeRun.resolvedTargets} · F ${frontierPct}`
+                        : `N ${searchMeta.visits} · V ${(searchMeta.value || 0).toFixed(2)} · F ${frontierPct}`}
                     </text>
                     <text x={20} y={graph.cardHeight - 28} fontSize={8.2} fill="#475569">
-                      {primaryMutation ? (mutationTargetHint || `${tx('策略', 'Strategy')}: ${primaryMutation.strategy}`) : `Sel ${searchMeta.selectedCount} · D ${searchMeta.depth}`}
+                      {primaryMutation
+                        ? (mutationTargetHint || `${tx('策略', 'Strategy')}: ${primaryMutation.strategy}`)
+                        : latestNodeRun
+                        ? (latestRunTargetHint || `${tx('变更类型', 'Mutation')}: ${latestRunMutationKind || 'CODE'}`)
+                        : `Sel ${searchMeta.selectedCount} · D ${searchMeta.depth}`}
                     </text>
                     <rect x={20} y={graph.cardHeight - 20} width={30} height={14} rx={7} fill="rgba(148,163,184,.16)" />
                     <text x={35} y={graph.cardHeight - 10} textAnchor="middle" fontSize={8.4} fontWeight={700} fill="#475569">
@@ -1620,6 +2168,33 @@ export const AgenticTotCanvas: React.FC = () => {
           )}
         </div>
 
+        {presentationMode ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            {!focusedNode ? (
+              <div className="text-xs text-slate-500">{tx('双击节点进入证据页。', 'Double-click a node to open evidence page.')}</div>
+            ) : (
+              <div className="min-w-0 text-xs text-slate-600">
+                <span className="font-semibold text-slate-800">{focusedNode.nodeId}</span>
+                {' · '}
+                {focusedNode.title || focusedNode.nodeId}
+                {' · '}
+                {tx('F', 'F')}
+                {Math.round((getSearchMeta(focusedNode).frontierScore || 0) * 100)}
+                {' · '}
+                EV {Math.round((evidenceScoreByNode.get(focusedNode.nodeId) || 0) * 100)}
+              </div>
+            )}
+            {focusedNode && (
+              <button
+                type="button"
+                onClick={() => openNodeEvidence(focusedNode.nodeId)}
+                className="inline-flex items-center rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+              >
+                {tx('证据页', 'Evidence')} <ArrowRight className="ml-1 h-3 w-3" />
+              </button>
+            )}
+          </div>
+        ) : (
         <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
           {!focusedNode ? (
             <div className="text-xs text-slate-500">{tx('暂无聚焦节点。', 'No focused node.')}</div>
@@ -1632,12 +2207,25 @@ export const AgenticTotCanvas: React.FC = () => {
                   <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">
                     {tx('搜索评分', 'Search score')} {Math.round((getSearchMeta(focusedNode).frontierScore || 0) * 100) || '-'}
                   </span>
+                  {spotlightMode && spotlightNodeId === focusedNode.nodeId && (
+                    <span className="rounded bg-sky-100 px-1.5 py-0.5 font-semibold text-sky-700">
+                      {tx('探索焦点', 'Spotlight')}
+                    </span>
+                  )}
                   <span className={`rounded px-1.5 py-0.5 font-semibold ${(focusedNodeLlm?.total || 0) > 0 ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>
                     LLM {focusedNodeLlm?.total || 0}
                   </span>
                   {(focusedNodeLlm?.total || 0) > 0 && (
                     <span className={`rounded px-1.5 py-0.5 font-semibold ${(focusedNodeLlm?.failed || 0) > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
                       {tx('失败', 'failed')} {focusedNodeLlm?.failed || 0}
+                    </span>
+                  )}
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-semibold text-emerald-700">
+                    EV {Math.round((evidenceScoreByNode.get(focusedNode.nodeId) || 0) * 100)}
+                  </span>
+                  {focusedNodeRun && (
+                    <span className="rounded bg-indigo-100 px-1.5 py-0.5 font-semibold text-indigo-700">
+                      {`NR ${focusedNodeRun.nodeRunId} · diff ${focusedNodeRun.diffFiles}`}
                     </span>
                   )}
                 </div>
@@ -1677,6 +2265,27 @@ export const AgenticTotCanvas: React.FC = () => {
                     {tx('最近 LLM 任务', 'Latest LLM task')}: {focusedNodeLlm?.lastTask || '-'} · {tx('均延迟', 'avg latency')} {focusedNodeLlm?.avgLatencyMs || 0}ms
                   </div>
                 )}
+                {focusedNodeRun && (
+                  <div className="mt-1 text-[11px] text-indigo-700">
+                    {tx('最近代码证据', 'Latest code evidence')}: {focusedNodeRun.mutationKind.toUpperCase() || 'CODE'} ·
+                    {' '}
+                    {tx('命中', 'resolved')} {focusedNodeRun.resolvedTargets}
+                    {' '}
+                    · {tx('未命中', 'unresolved')} {focusedNodeRun.unresolvedTargets}
+                    {' '}
+                    · {tx('语法失败', 'syntax failed')} {focusedNodeRun.pythonSyntaxFailed}
+                  </div>
+                )}
+                {focusedNodeRun?.changeSummary && (
+                  <div className="mt-1 text-[11px] text-slate-600">
+                    {tx('最近改动摘要', 'Latest change summary')}: {focusedNodeRun.changeSummary}
+                  </div>
+                )}
+                {focusedNodeRun && focusedNodeRun.targetFiles.length > 0 && (
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    {tx('最近目标文件', 'Latest target files')}: {focusedNodeRun.targetFiles.slice(0, 3).join(', ')}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1697,6 +2306,7 @@ export const AgenticTotCanvas: React.FC = () => {
             </div>
           )}
         </div>
+        )}
       </section>
 
       {message && (

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Bot, GitBranchPlus, Play, RefreshCcw, WandSparkles } from 'lucide-react';
 import { api } from '../services/api';
 import { useI18n } from '../services/i18n';
-import type { AgenticLlmTraceRecord, AgenticNode, AgenticNodeRunRecord, AgenticRunDetail } from '../types';
+import type { AgenticLlmTraceRecord, AgenticNode, AgenticNodeRunRecord, AgenticRunDetail, AgenticSubAgentRecord } from '../types';
 
 type TimelineCategoryId = 'planning' | 'execution' | 'safety' | 'recovery' | 'evaluation' | 'other';
 
@@ -33,6 +33,44 @@ type NodeMutationPlan = {
   validationCommand: string;
   risk: string;
   source: string;
+};
+
+type NodeRunDiffPreview = {
+  patchFile: string;
+  targets: string[];
+  mutationKind: string;
+  strategy: string;
+  changeSummary: string;
+  validationCommand: string;
+  preview: string;
+};
+
+type NodeRunFileMutation = {
+  target: string;
+  mutationMode: string;
+  syntaxValid?: boolean;
+  syntaxError?: string;
+};
+
+type NodeRunArtifactEvidence = {
+  diffFiles: number;
+  resolvedTargets: number;
+  unresolvedTargets: number;
+  pythonSyntaxFailed: number;
+  diffPreviews: NodeRunDiffPreview[];
+  fileMutations: NodeRunFileMutation[];
+};
+
+type DiffPreviewLine = {
+  kind: 'hunk' | 'add' | 'remove' | 'context';
+  text: string;
+};
+
+type DiffSideBySideRow = {
+  left: string;
+  right: string;
+  leftKind: 'hunk' | 'add' | 'remove' | 'context' | 'empty';
+  rightKind: 'hunk' | 'add' | 'remove' | 'context' | 'empty';
 };
 
 type EvidenceTab = 'overview' | 'timeline' | 'llm' | 'branch' | 'contract';
@@ -129,6 +167,136 @@ const mutationTagClass = (kind: string) => {
   return 'bg-slate-100 text-slate-700';
 };
 
+const extractNodeRunArtifactEvidence = (run: AgenticNodeRunRecord): NodeRunArtifactEvidence => {
+  const metrics = asRecord(run.metrics);
+  const artifacts = asRecord(metrics.nodeRunArtifacts);
+  const diffPreviews = (Array.isArray(artifacts.diffPreviews) ? artifacts.diffPreviews : [])
+    .map(item => asRecord(item))
+    .map(item => ({
+      patchFile: String(item.patchFile || ''),
+      targets: asStringArray(item.targets),
+      mutationKind: String(item.mutationKind || 'code').toLowerCase(),
+      strategy: String(item.strategy || ''),
+      changeSummary: String(item.changeSummary || ''),
+      validationCommand: String(item.validationCommand || ''),
+      preview: String(item.preview || ''),
+    }));
+  const fileMutations = (Array.isArray(artifacts.fileMutations) ? artifacts.fileMutations : [])
+    .map(item => asRecord(item))
+    .map(item => ({
+      target: String(item.target || ''),
+      mutationMode: String(item.mutationMode || ''),
+      syntaxValid: typeof item.syntaxValid === 'boolean' ? item.syntaxValid : undefined,
+      syntaxError: String(item.syntaxError || ''),
+    }));
+
+  const parseCount = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  return {
+    diffFiles: parseCount(artifacts.diffFiles),
+    resolvedTargets: parseCount(artifacts.resolvedTargets),
+    unresolvedTargets: parseCount(artifacts.unresolvedTargets),
+    pythonSyntaxFailed: parseCount(artifacts.pythonSyntaxFailed),
+    diffPreviews,
+    fileMutations,
+  };
+};
+
+const parseDiffPreviewLines = (preview: string, maxLines = 36): DiffPreviewLine[] => {
+  const rows = String(preview || '')
+    .split('\n')
+    .map(line => line.trimEnd())
+    .filter(Boolean);
+  const lines: DiffPreviewLine[] = [];
+  for (const line of rows) {
+    if (line.startsWith('--- ') || line.startsWith('+++ ')) continue;
+    if (line.startsWith('@@')) {
+      lines.push({ kind: 'hunk', text: line });
+    } else if (line.startsWith('+')) {
+      lines.push({ kind: 'add', text: line });
+    } else if (line.startsWith('-')) {
+      lines.push({ kind: 'remove', text: line });
+    } else {
+      lines.push({ kind: 'context', text: line });
+    }
+    if (lines.length >= maxLines) break;
+  }
+  return lines;
+};
+
+const toDiffSideBySideRows = (lines: DiffPreviewLine[], maxRows = 28, includeContext = true): DiffSideBySideRow[] => {
+  const rows: DiffSideBySideRow[] = [];
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const current = lines[idx];
+    if (!current) continue;
+    if (current.kind === 'hunk') {
+      rows.push({
+        left: current.text,
+        right: current.text,
+        leftKind: 'hunk',
+        rightKind: 'hunk',
+      });
+      if (rows.length >= maxRows) break;
+      continue;
+    }
+    if (current.kind === 'context') {
+      if (!includeContext) continue;
+      const text = current.text.startsWith(' ') ? current.text.slice(1) : current.text;
+      rows.push({
+        left: text,
+        right: text,
+        leftKind: 'context',
+        rightKind: 'context',
+      });
+      if (rows.length >= maxRows) break;
+      continue;
+    }
+    if (current.kind === 'remove') {
+      const next = lines[idx + 1];
+      if (next && next.kind === 'add') {
+        rows.push({
+          left: current.text,
+          right: next.text,
+          leftKind: 'remove',
+          rightKind: 'add',
+        });
+        idx += 1;
+      } else {
+        rows.push({
+          left: current.text,
+          right: '',
+          leftKind: 'remove',
+          rightKind: 'empty',
+        });
+      }
+      if (rows.length >= maxRows) break;
+      continue;
+    }
+    if (current.kind === 'add') {
+      rows.push({
+        left: '',
+        right: current.text,
+        leftKind: 'empty',
+        rightKind: 'add',
+      });
+      if (rows.length >= maxRows) break;
+      continue;
+    }
+  }
+  return rows;
+};
+
+const diffCellClass = (kind: DiffSideBySideRow['leftKind']) => {
+  if (kind === 'add') return 'bg-emerald-50 text-emerald-800';
+  if (kind === 'remove') return 'bg-rose-50 text-rose-800';
+  if (kind === 'hunk') return 'bg-blue-50 text-blue-700';
+  if (kind === 'empty') return 'bg-slate-50 text-slate-300';
+  return 'text-slate-700';
+};
+
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const statusLabel = (status: string) => {
@@ -171,10 +339,15 @@ export const AgenticNodeEvidence: React.FC = () => {
 
   const [detail, setDetail] = useState<AgenticRunDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [subAgentLoading, setSubAgentLoading] = useState(false);
   const [busy, setBusy] = useState<'none' | 'refresh' | 'next' | 'branch'>('none');
   const [message, setMessage] = useState('');
   const [timelineFilter, setTimelineFilter] = useState<'all' | TimelineCategoryId>('all');
   const [activeTab, setActiveTab] = useState<EvidenceTab>('overview');
+  const [nodeSubAgents, setNodeSubAgents] = useState<AgenticSubAgentRecord[]>([]);
+  const [selectedSubAgentId, setSelectedSubAgentId] = useState('');
+  const [diffIncludeContext, setDiffIncludeContext] = useState(false);
+  const [expandedDiffKeys, setExpandedDiffKeys] = useState<Record<string, boolean>>({});
 
   const [branchDraft, setBranchDraft] = useState({
     title: '',
@@ -200,10 +373,33 @@ export const AgenticNodeEvidence: React.FC = () => {
   useEffect(() => {
     loadRun().catch(() => undefined);
   }, [loadRun]);
+  const loadNodeSubAgents = useCallback(async () => {
+    if (!runId || !nodeId) return;
+    setSubAgentLoading(true);
+    try {
+      const res = await api.listAgenticSubAgents(runId, { page: 1, pageSize: 200, nodeId });
+      setNodeSubAgents(Array.isArray(res.items) ? res.items : []);
+    } catch (error) {
+      setNodeSubAgents([]);
+      setMessage(toErrorMessage(error));
+    } finally {
+      setSubAgentLoading(false);
+    }
+  }, [runId, nodeId]);
+  useEffect(() => {
+    loadNodeSubAgents().catch(() => undefined);
+  }, [loadNodeSubAgents]);
   useEffect(() => {
     setTimelineFilter('all');
     setActiveTab('overview');
+    setSelectedSubAgentId('');
+    setExpandedDiffKeys({});
   }, [nodeId]);
+  useEffect(() => {
+    if (selectedSubAgentId) return;
+    if (!nodeSubAgents.length) return;
+    setSelectedSubAgentId(nodeSubAgents[0].subAgentId);
+  }, [nodeSubAgents, selectedSubAgentId]);
 
   const nodeById = useMemo(() => {
     const map = new Map<string, AgenticNode>();
@@ -361,11 +557,87 @@ export const AgenticNodeEvidence: React.FC = () => {
       }))
       .filter(layer => layer.rows.length > 0);
   }, [filteredTimelineRows]);
+  const nodeSubAgentStats = useMemo(() => {
+    const total = nodeSubAgents.length;
+    const running = nodeSubAgents.filter(item => String(item.status || '').toUpperCase() === 'RUNNING').length;
+    const succeeded = nodeSubAgents.filter(item => String(item.status || '').toUpperCase() === 'SUCCEEDED').length;
+    const failed = nodeSubAgents.filter(item => String(item.status || '').toUpperCase() === 'FAILED').length;
+    return { total, running, succeeded, failed };
+  }, [nodeSubAgents]);
+  const selectedSubAgent = useMemo(
+    () => nodeSubAgents.find(item => item.subAgentId === selectedSubAgentId) || null,
+    [nodeSubAgents, selectedSubAgentId],
+  );
+  const nodeSubAgentGraph = useMemo(() => {
+    if (!selectedNode) {
+      return { width: 820, height: 240, nodes: [] as Array<Record<string, unknown>>, edges: [] as Array<{ from: string; to: string }> };
+    }
+    const byDepth = new Map<number, AgenticSubAgentRecord[]>();
+    nodeSubAgents
+      .slice()
+      .sort((a, b) => parseTimestamp(a.startedAt) - parseTimestamp(b.startedAt))
+      .forEach(item => {
+        const depth = Math.max(1, Number(item.depth || 1));
+        const rows = byDepth.get(depth) || [];
+        rows.push(item);
+        byDepth.set(depth, rows);
+      });
+    const depthKeys = Array.from(byDepth.keys()).sort((a, b) => a - b);
+    const maxDepth = depthKeys.length > 0 ? Math.max(...depthKeys) : 1;
+    const maxColumnCount = Math.max(1, ...depthKeys.map(depth => (byDepth.get(depth) || []).length));
+    const width = Math.max(820, 240 + (maxDepth + 1) * 220);
+    const height = Math.max(240, 120 + maxColumnCount * 88);
+    const rootY = Math.round(height / 2);
+    const nodes: Array<Record<string, unknown>> = [
+      {
+        id: selectedNode.nodeId,
+        label: selectedNode.nodeId,
+        role: selectedNode.agent,
+        status: selectedNode.status,
+        depth: 0,
+        parentId: null,
+        x: 28,
+        y: rootY,
+        kind: 'root',
+      },
+    ];
+    const edges: Array<{ from: string; to: string }> = [];
+    depthKeys.forEach(depth => {
+      const rows = byDepth.get(depth) || [];
+      const x = 28 + depth * 220;
+      const startY = Math.round((height - (rows.length - 1) * 86) / 2);
+      rows.forEach((item, idx) => {
+        const y = startY + idx * 86;
+        nodes.push({
+          id: item.subAgentId,
+          label: item.subAgentId,
+          role: item.role,
+          status: item.status,
+          depth,
+          parentId: item.parentSubAgentId || selectedNode.nodeId,
+          x,
+          y,
+          kind: 'sub',
+        });
+        edges.push({ from: String(item.parentSubAgentId || selectedNode.nodeId), to: item.subAgentId });
+      });
+    });
+    return { width, height, nodes, edges };
+  }, [nodeSubAgents, selectedNode]);
+  const nodeSubAgentNodeMap = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    nodeSubAgentGraph.nodes.forEach(node => {
+      const key = String(node.id || '');
+      if (!key) return;
+      map.set(key, node);
+    });
+    return map;
+  }, [nodeSubAgentGraph.nodes]);
 
   const handleRefresh = async () => {
     setBusy('refresh');
     setMessage('');
-    await loadRun();
+    await Promise.all([loadRun(), loadNodeSubAgents()]);
     setBusy('none');
   };
 
@@ -376,6 +648,7 @@ export const AgenticNodeEvidence: React.FC = () => {
     try {
       const res = await api.executeAgenticRun(runId, { mode: 'next' });
       setDetail(res.detail);
+      await loadNodeSubAgents();
       setMessage(res.message || tx('执行成功。', 'Execution succeeded.'));
     } catch (error) {
       setMessage(toErrorMessage(error));
@@ -401,6 +674,7 @@ export const AgenticNodeEvidence: React.FC = () => {
         risk: branchDraft.risk,
       });
       setDetail(res.detail);
+      await loadNodeSubAgents();
       setBranchDraft({ title: '', hypothesis: '', executionPlan: '', risk: 'medium' });
       setMessage(res.message || tx('分支创建成功。', 'Branch created.'));
     } catch (error) {
@@ -684,10 +958,98 @@ export const AgenticNodeEvidence: React.FC = () => {
                 </article>
 
                 <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('节点证据', 'Node Evidence')}</h2>
-                  <pre className="mt-2 max-h-[26rem] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-                    {JSON.stringify(selectedNode.evidence || {}, null, 2)}
-                  </pre>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('Sub-agent 探索链路', 'Sub-agent Exploration Chain')}</h2>
+                    <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">{tx('总数', 'Total')}: {nodeSubAgentStats.total}</span>
+                      <span className="rounded bg-blue-100 px-2 py-0.5 text-blue-700">{tx('运行中', 'Running')}: {nodeSubAgentStats.running}</span>
+                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">{tx('成功', 'Succeeded')}: {nodeSubAgentStats.succeeded}</span>
+                      <span className="rounded bg-rose-100 px-2 py-0.5 text-rose-700">{tx('失败', 'Failed')}: {nodeSubAgentStats.failed}</span>
+                    </div>
+                  </div>
+                  {subAgentLoading ? (
+                    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                      {tx('加载 sub-agent 链路中...', 'Loading sub-agent chain...')}
+                    </div>
+                  ) : nodeSubAgentGraph.nodes.length <= 1 ? (
+                    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                      {tx('当前节点暂无 sub-agent 执行记录。执行节点后会展示真实链路。', 'No sub-agent execution records yet for this node. Execute the node to populate live chain evidence.')}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-2 overflow-auto rounded-lg border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(219,234,254,.25),transparent_40%),linear-gradient(180deg,rgba(248,250,252,.82),rgba(255,255,255,.98))]">
+                        <svg width={nodeSubAgentGraph.width} height={nodeSubAgentGraph.height} viewBox={`0 0 ${nodeSubAgentGraph.width} ${nodeSubAgentGraph.height}`}>
+                          <defs>
+                            <linearGradient id="node-sub-agent-edge" x1="0%" y1="0%" x2="100%" y2="0%">
+                              <stop offset="0%" stopColor="#94a3b8" stopOpacity="0.55" />
+                              <stop offset="100%" stopColor="#cbd5e1" stopOpacity="0.2" />
+                            </linearGradient>
+                          </defs>
+                          {nodeSubAgentGraph.edges.map((edge, idx) => {
+                            const from = nodeSubAgentNodeMap.get(edge.from);
+                            const to = nodeSubAgentNodeMap.get(edge.to);
+                            if (!from || !to) return null;
+                            const fromX = Number(from.x || 0) + 154;
+                            const fromY = Number(from.y || 0);
+                            const toX = Number(to.x || 0);
+                            const toY = Number(to.y || 0);
+                            const path = `M ${fromX} ${fromY} C ${fromX + 54} ${fromY}, ${toX - 24} ${toY}, ${toX} ${toY}`;
+                            return <path key={`node-sub-edge-${idx}`} d={path} fill="none" stroke="url(#node-sub-agent-edge)" strokeWidth={1.35} />;
+                          })}
+                          {nodeSubAgentGraph.nodes.map(node => {
+                            const id = String(node.id || '');
+                            const role = String(node.role || '');
+                            const status = String(node.status || '').toUpperCase();
+                            const kind = String(node.kind || 'sub');
+                            const selected = id === selectedSubAgentId;
+                            const fill = kind === 'root'
+                              ? 'rgba(226,232,240,.92)'
+                              : status === 'FAILED'
+                              ? 'rgba(255,228,230,.92)'
+                              : status === 'SUCCEEDED'
+                              ? 'rgba(220,252,231,.92)'
+                              : status === 'RUNNING'
+                              ? 'rgba(219,234,254,.92)'
+                              : 'rgba(248,250,252,.94)';
+                            const stroke = selected ? '#2563eb' : 'rgba(148,163,184,.76)';
+                            return (
+                              <g
+                                key={`node-sub-${id}`}
+                                transform={`translate(${Number(node.x || 0)}, ${Number(node.y || 0) - 29})`}
+                                className={kind === 'sub' ? 'cursor-pointer' : ''}
+                                onClick={() => {
+                                  if (kind !== 'sub') return;
+                                  setSelectedSubAgentId(id);
+                                }}
+                              >
+                                <rect width={154} height={58} rx={11} fill={fill} stroke={stroke} strokeWidth={selected ? 1.8 : 1.2} />
+                                <text x={10} y={20} fontSize={9.4} fontWeight={700} fill="#1e293b">{id}</text>
+                                <text x={10} y={35} fontSize={8.4} fill="#475569">{role || '-'}</text>
+                                <text x={10} y={48} fontSize={8.1} fill="#64748b">{kind === 'root' ? 'ROOT' : status}</text>
+                              </g>
+                            );
+                          })}
+                        </svg>
+                      </div>
+                      <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-700">
+                        {!selectedSubAgent ? (
+                          <div>{tx('点击子代理节点查看执行细节。', 'Click a sub-agent node to inspect execution details.')}</div>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-slate-700">{selectedSubAgent.subAgentId}</span>
+                              <span className="rounded bg-white px-1.5 py-0.5 text-slate-600">{selectedSubAgent.role}</span>
+                              <span className={`rounded px-1.5 py-0.5 font-semibold ${statusBadgeClass(selectedSubAgent.status)}`}>{selectedSubAgent.status}</span>
+                            </div>
+                            <div className="mt-1 text-slate-700">{selectedSubAgent.objective || '-'}</div>
+                            <pre className="mt-2 max-h-40 overflow-auto rounded border border-slate-200 bg-white p-2 text-[11px] text-slate-700">
+                              {JSON.stringify(selectedSubAgent.evidence || {}, null, 2)}
+                            </pre>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </article>
 
                 <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -701,66 +1063,175 @@ export const AgenticNodeEvidence: React.FC = () => {
                     {nodeRunsForNode.map(run => (
                       <div key={`node-run-${run.nodeRunId}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                         {(() => {
-                          const artifactStats = ((run.metrics || {}) as Record<string, unknown>).nodeRunArtifacts as Record<string, unknown> | undefined;
-                          const diffFiles = Number(artifactStats?.diffFiles || 0);
-                          const resolvedTargets = Number(artifactStats?.resolvedTargets || 0);
-                          const unresolvedTargets = Number(artifactStats?.unresolvedTargets || 0);
-                          const syntaxFailed = Number(artifactStats?.pythonSyntaxFailed || 0);
+                          const artifactEvidence = extractNodeRunArtifactEvidence(run);
+                          const runPlans = extractNodeRunMutationPlans(run);
                           return (
-                            <div className="mb-2 flex flex-wrap gap-1 text-[10px]">
-                              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-700">{tx('Diff 文件', 'Diff files')}: {diffFiles}</span>
-                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700">{tx('命中目标', 'Resolved targets')}: {resolvedTargets}</span>
-                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">{tx('未命中', 'Unresolved')}: {unresolvedTargets}</span>
-                              <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{tx('语法失败', 'Syntax failed')}: {syntaxFailed}</span>
-                            </div>
+                            <>
+                              <div className="mb-2 flex flex-wrap gap-1 text-[10px]">
+                                <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-700">{tx('Diff 文件', 'Diff files')}: {artifactEvidence.diffFiles}</span>
+                                <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700">{tx('命中目标', 'Resolved targets')}: {artifactEvidence.resolvedTargets}</span>
+                                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">{tx('未命中', 'Unresolved')}: {artifactEvidence.unresolvedTargets}</span>
+                                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{tx('语法失败', 'Syntax failed')}: {artifactEvidence.pythonSyntaxFailed}</span>
+                              </div>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs font-semibold text-slate-700">{run.nodeRunId}</div>
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusBadgeClass(run.status)}`}>{run.status}</span>
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-500">
+                                {tx('开始', 'Start')}: {formatTimestamp(run.startedAt)} · {tx('结束', 'End')}: {run.finishedAt ? formatTimestamp(run.finishedAt) : '-'}
+                              </div>
+                              <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                                <div className="rounded border border-slate-200 bg-white p-2">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('Patch 计划', 'Patch Plan')}</div>
+                                  <div className="mt-1 max-h-40 space-y-1 overflow-auto text-[11px] text-slate-700">
+                                    {runPlans.length === 0 && <div className="rounded bg-slate-50 px-1.5 py-1 text-slate-500">-</div>}
+                                    {runPlans.map((plan, idx) => (
+                                      <div key={`run-plan-${run.nodeRunId}-${idx}`} className="rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
+                                        <div className="font-semibold text-slate-700">
+                                          {String(plan.mutationKind || 'code').toUpperCase()} · {plan.strategy}
+                                        </div>
+                                        <div className="mt-0.5 text-slate-600">{plan.changeSummary || '-'}</div>
+                                        {plan.targetFiles.length > 0 && (
+                                          <div className="mt-0.5 font-mono text-[10px] text-slate-500">{plan.targetFiles.join(', ')}</div>
+                                        )}
+                                        {plan.validationCommand && (
+                                          <div className="mt-0.5 font-mono text-[10px] text-slate-500">{plan.validationCommand}</div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="rounded border border-slate-200 bg-white p-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('代码改动证据', 'Code Mutation Evidence')}</div>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setDiffIncludeContext(false)}
+                                        className={`rounded border px-1.5 py-0.5 text-[10px] ${!diffIncludeContext ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600'}`}
+                                      >
+                                        {tx('仅变更', 'Changes only')}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setDiffIncludeContext(true)}
+                                        className={`rounded border px-1.5 py-0.5 text-[10px] ${diffIncludeContext ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600'}`}
+                                      >
+                                        {tx('含上下文', 'With context')}
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="mt-1 max-h-40 space-y-1 overflow-auto text-[11px] text-slate-700">
+                                    {artifactEvidence.diffPreviews.length === 0 && (
+                                      <div className="rounded bg-slate-50 px-1.5 py-1 text-slate-500">
+                                        {tx('暂无 diff 预览。', 'No diff previews yet.')}
+                                      </div>
+                                    )}
+                                    {artifactEvidence.diffPreviews.map((diff, idx) => {
+                                      const diffKey = `${run.nodeRunId}:${idx}:${diff.patchFile || diff.targets.join(',') || diff.mutationKind}`;
+                                      const expanded = !!expandedDiffKeys[diffKey];
+                                      return (
+                                        <div key={`diff-preview-${run.nodeRunId}-${idx}`} className="rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
+                                          <div className="flex flex-wrap items-center justify-between gap-1 text-[10px]">
+                                            <div className="flex flex-wrap items-center gap-1">
+                                              <span className={`rounded px-1.5 py-0.5 font-semibold ${mutationTagClass(diff.mutationKind)}`}>
+                                                {String(diff.mutationKind || 'code').toUpperCase()}
+                                              </span>
+                                              {diff.strategy && <span className="rounded bg-white px-1.5 py-0.5 text-slate-700">{diff.strategy}</span>}
+                                              {diff.patchFile && <span className="rounded bg-white px-1.5 py-0.5 font-mono text-slate-500">{diff.patchFile}</span>}
+                                            </div>
+                                            {diff.preview && (
+                                              <button
+                                                type="button"
+                                                onClick={() => setExpandedDiffKeys(prev => ({ ...prev, [diffKey]: !prev[diffKey] }))}
+                                                className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
+                                              >
+                                                {expanded ? tx('收起', 'Collapse') : tx('展开', 'Expand')}
+                                              </button>
+                                            )}
+                                          </div>
+                                          {diff.changeSummary && <div className="mt-0.5 text-slate-700">{diff.changeSummary}</div>}
+                                          {diff.targets.length > 0 && (
+                                            <div className="mt-0.5 font-mono text-[10px] text-slate-500">{diff.targets.join(', ')}</div>
+                                          )}
+                                          {diff.preview && (
+                                            <div className={`mt-1 overflow-auto rounded border border-slate-200 bg-white p-1 text-[10px] ${expanded ? 'max-h-64' : 'max-h-28'}`}>
+                                              {(() => {
+                                                const lines = parseDiffPreviewLines(diff.preview, expanded ? 160 : 60);
+                                                const rows = toDiffSideBySideRows(lines, expanded ? 120 : 28, diffIncludeContext);
+                                                if (rows.length === 0) {
+                                                  return <div className="rounded px-1 py-0.5 font-mono text-slate-500">-</div>;
+                                                }
+                                                return (
+                                                  <div className="space-y-0.5">
+                                                    <div className="grid grid-cols-2 gap-1 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-500">
+                                                      <div>{tx('变更前', 'Before')}</div>
+                                                      <div>{tx('变更后', 'After')}</div>
+                                                    </div>
+                                                    {rows.map((row, rowIdx) => (
+                                                      <div key={`diff-line-${run.nodeRunId}-${idx}-${rowIdx}`} className="grid grid-cols-2 gap-1">
+                                                        <div className={`rounded px-1 py-0.5 font-mono ${diffCellClass(row.leftKind)}`}>
+                                                          {row.left || ' '}
+                                                        </div>
+                                                        <div className={`rounded px-1 py-0.5 font-mono ${diffCellClass(row.rightKind)}`}>
+                                                          {row.right || ' '}
+                                                        </div>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                );
+                                              })()}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+                              {artifactEvidence.fileMutations.length > 0 && (
+                                <div className="mt-2 rounded border border-slate-200 bg-white p-2">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('文件级变更', 'File-level Mutations')}</div>
+                                  <div className="mt-1 max-h-24 space-y-1 overflow-auto text-[11px] text-slate-600">
+                                    {artifactEvidence.fileMutations.slice(0, 12).map((file, idx) => (
+                                      <div key={`file-mutation-${run.nodeRunId}-${idx}`} className="rounded bg-slate-50 px-1.5 py-0.5">
+                                        <span className="font-mono">{file.target || '-'}</span>
+                                        {file.mutationMode && <span className="ml-1 text-slate-500">· {file.mutationMode}</span>}
+                                        {typeof file.syntaxValid === 'boolean' && (
+                                          <span className={`ml-1 ${file.syntaxValid ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            {file.syntaxValid ? tx('语法通过', 'syntax ok') : tx('语法失败', 'syntax failed')}
+                                          </span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              <div className="mt-2 rounded border border-slate-200 bg-white p-2">
+                                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('产物路径', 'Artifact Paths')}</div>
+                                <div className="mt-1 max-h-24 space-y-1 overflow-auto text-[11px] text-slate-600">
+                                  {(run.artifactPaths || []).map(path => (
+                                    <div key={`artifact-${run.nodeRunId}-${path}`} className="rounded bg-slate-50 px-1.5 py-0.5 font-mono">{path}</div>
+                                  ))}
+                                </div>
+                              </div>
+                              <details className="mt-2 rounded border border-slate-200 bg-white p-2">
+                                <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">{tx('展开完整运行指标 JSON', 'Expand full run metrics JSON')}</summary>
+                                <pre className="mt-2 max-h-40 overflow-auto text-[11px] text-slate-700">{JSON.stringify(run.metrics || {}, null, 2)}</pre>
+                              </details>
+                            </>
                           );
                         })()}
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-xs font-semibold text-slate-700">{run.nodeRunId}</div>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusBadgeClass(run.status)}`}>{run.status}</span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-slate-500">
-                          {tx('开始', 'Start')}: {formatTimestamp(run.startedAt)} · {tx('结束', 'End')}: {run.finishedAt ? formatTimestamp(run.finishedAt) : '-'}
-                        </div>
-                        <div className="mt-2 grid gap-2 lg:grid-cols-2">
-                          <div className="rounded border border-slate-200 bg-white p-2">
-                            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('Patch 计划', 'Patch Plan')}</div>
-                            <div className="mt-1 max-h-40 space-y-1 overflow-auto text-[11px] text-slate-700">
-                              {(() => {
-                                const runPlans = extractNodeRunMutationPlans(run);
-                                if (runPlans.length === 0) {
-                                  return <div className="rounded bg-slate-50 px-1.5 py-1 text-slate-500">-</div>;
-                                }
-                                return runPlans.map((plan, idx) => (
-                                  <div key={`run-plan-${run.nodeRunId}-${idx}`} className="rounded border border-slate-200 bg-slate-50 px-1.5 py-1">
-                                    <div className="font-semibold text-slate-700">
-                                      {String(plan.mutationKind || 'code').toUpperCase()} · {plan.strategy}
-                                    </div>
-                                    <div className="mt-0.5 text-slate-600">{plan.changeSummary || '-'}</div>
-                                    {plan.targetFiles.length > 0 && (
-                                      <div className="mt-0.5 font-mono text-[10px] text-slate-500">{plan.targetFiles.join(', ')}</div>
-                                    )}
-                                  </div>
-                                ));
-                              })()}
-                            </div>
-                          </div>
-                          <div className="rounded border border-slate-200 bg-white p-2">
-                            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('运行指标', 'Run Metrics')}</div>
-                            <pre className="mt-1 max-h-32 overflow-auto text-[11px] text-slate-700">{JSON.stringify(run.metrics || {}, null, 2)}</pre>
-                          </div>
-                        </div>
-                        <div className="mt-2 rounded border border-slate-200 bg-white p-2">
-                          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{tx('产物路径', 'Artifact Paths')}</div>
-                          <div className="mt-1 max-h-24 space-y-1 overflow-auto text-[11px] text-slate-600">
-                            {(run.artifactPaths || []).map(path => (
-                              <div key={`artifact-${run.nodeRunId}-${path}`} className="rounded bg-slate-50 px-1.5 py-0.5 font-mono">{path}</div>
-                            ))}
-                          </div>
-                        </div>
                       </div>
                     ))}
                   </div>
+                </article>
+
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('节点证据（原始）', 'Node Evidence (Raw)')}</h2>
+                  <pre className="mt-2 max-h-[22rem] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                    {JSON.stringify(selectedNode.evidence || {}, null, 2)}
+                  </pre>
                 </article>
               </div>
               <aside className="space-y-4 xl:col-span-4">

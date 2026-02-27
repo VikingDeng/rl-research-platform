@@ -1,42 +1,58 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Bot, ChevronDown, ChevronUp, Play, RefreshCcw, Search, ShieldAlert, Sparkles, WandSparkles } from 'lucide-react';
+import { Activity, ArrowRight, Bot, Gauge, GitBranch, Layers3, Play, RefreshCcw, ShieldAlert, Sparkles } from 'lucide-react';
 import { api, isDemoMode } from '../services/api';
 import { useI18n } from '../services/i18n';
-import type { AgenticIdeaInput, AgenticNode, AgenticRunDetail, AgenticRunSummary } from '../types';
+import type { AgenticNode, AgenticNodeRunRecord, AgenticRunDetail, AgenticRunSummary } from '../types';
 
-type GraphLayoutPoint = {
-  nodeId: string;
-  x: number;
-  y: number;
+type SearchMeta = {
   depth: number;
+  visits: number;
+  value: number;
+  frontierScore: number;
+  selectedCount: number;
 };
 
-const statusBadgeClass = (status: string) => {
-  const normalized = String(status || '').toUpperCase();
-  if (normalized === 'SUCCEEDED') return 'bg-emerald-100 text-emerald-700';
-  if (normalized === 'FAILED') return 'bg-rose-100 text-rose-700';
-  if (normalized === 'BLOCKED') return 'bg-amber-100 text-amber-700';
-  if (normalized === 'RUNNING') return 'bg-blue-100 text-blue-700';
-  return 'bg-slate-100 text-slate-600';
+type EventRow = {
+  idx: number;
+  ts: string;
+  event: string;
+  nodeId: string;
+  depth: number;
+  summary: string;
+  mutationKind: string;
+  childCount: number;
 };
 
-const statusDot = (status: string) => {
-  const normalized = String(status || '').toUpperCase();
-  if (normalized === 'SUCCEEDED') return '#10b981';
-  if (normalized === 'FAILED') return '#f43f5e';
-  if (normalized === 'BLOCKED') return '#f59e0b';
-  if (normalized === 'RUNNING') return '#2563eb';
-  return '#94a3b8';
+type FrontierRow = {
+  nodeId: string;
+  title: string;
+  status: string;
+  depth: number;
+  visits: number;
+  frontier: number;
+  value: number;
+  evidence: number;
+  mutationKind: string;
+  scoreFrontier: number;
+  scoreValue: number;
+  scoreEvidence: number;
+  scoreUrgency: number;
+  score: number;
 };
 
-const parseMetricNumber = (raw: unknown): number | null => {
-  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
-  if (typeof raw === 'string') {
-    const parsed = Number(raw.replace(/[^\d.+-]/g, ''));
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
+type NodeRunEvidence = {
+  nodeRunId: string;
+  finishedAtMs: number;
+  diffFiles: number;
+  resolvedTargets: number;
+  unresolvedTargets: number;
+  syntaxFailed: number;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 };
 
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -70,95 +86,66 @@ const normalizeLlmIssue = (raw: string, tx: (zh: string, en: string) => string):
   return detail;
 };
 
-const splitLines = (value: string, maxChars: number, maxLines: number) => {
-  const rawTokens = String(value || '').split(/\s+/).filter(Boolean);
-  const tokens = rawTokens.flatMap(token => {
-    const chars = Array.from(token);
-    if (chars.length <= maxChars) return [token];
-    const chunks: string[] = [];
-    for (let idx = 0; idx < chars.length; idx += maxChars) {
-      chunks.push(chars.slice(idx, idx + maxChars).join(''));
-    }
-    return chunks;
-  });
-  if (tokens.length === 0) return ['-'];
-  const lines: string[] = [];
-  let current = '';
-  for (const token of tokens) {
-    const next = current ? `${current} ${token}` : token;
-    if (next.length <= maxChars) {
-      current = next;
-      continue;
-    }
-    if (current) lines.push(current);
-    current = token;
-    if (lines.length >= maxLines - 1) break;
-  }
-  if (current && lines.length < maxLines) lines.push(current);
-  if (lines.length > maxLines) return lines.slice(0, maxLines);
-  const hasOverflow = tokens.join(' ').length > lines.join(' ').length;
-  if (hasOverflow && lines.length > 0) {
-    lines[lines.length - 1] = `${lines[lines.length - 1].slice(0, Math.max(0, maxChars - 1))}…`;
-  }
-  return lines;
+const statusBadgeClass = (status: string) => {
+  const normalized = String(status || '').toUpperCase();
+  if (normalized === 'SUCCEEDED') return 'bg-emerald-100 text-emerald-700';
+  if (normalized === 'FAILED') return 'bg-rose-100 text-rose-700';
+  if (normalized === 'BLOCKED') return 'bg-amber-100 text-amber-700';
+  if (normalized === 'RUNNING') return 'bg-blue-100 text-blue-700';
+  return 'bg-slate-100 text-slate-600';
 };
 
-const buildIdeaPayload = (input: {
-  title: string;
-  taskGoal: string;
-  environment: string;
-  targetWinRate: string;
-  gpuHours: string;
-  wallclockMinutes: string;
-}): AgenticIdeaInput => ({
-  title: input.title.trim() || 'Agentic MARL objective',
-  taskGoal: input.taskGoal.trim() || input.title.trim() || 'Improve win-rate under constrained budget.',
-  environment: input.environment.trim() || 'pettingzoo.smac_v2:3s5z',
-  dataSources: ['registry://baseline_runs'],
-  successMetrics: {
-    winRate: `>=${input.targetWinRate.trim() || '0.62'}`,
-  },
-  budget: {
-    gpuHours: Number(input.gpuHours) > 0 ? Number(input.gpuHours) : 2,
-    wallclockMinutes: Number(input.wallclockMinutes) > 0 ? Number(input.wallclockMinutes) : 90,
-  },
-  constraints: {
-    compliance: ['no_pii', 'no_external_data_push'],
-    forbiddenActions: ['data_exfiltration'],
-    allowNetwork: false,
-    allowDependencyInstall: false,
-  },
-  executionMode: 'offline_stub',
-  requestedActions: [],
-});
-
-const extractExpectedWinRate = (node: AgenticNode): number => {
-  const metrics = (node.expectedMetrics || {}) as Record<string, unknown>;
-  const raw = metrics.winRate ?? metrics.win_rate ?? metrics.targetWinRate;
-  const parsed = parseMetricNumber(raw);
-  if (parsed === null) return 0.5;
-  if (parsed > 1) return Math.min(1, parsed / 100);
-  return Math.max(0, Math.min(1, parsed));
+const getSearchMeta = (node: AgenticNode): SearchMeta => {
+  const search = asRecord(asRecord(node.evidence).search);
+  const toNum = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return {
+    depth: toNum(search.depth),
+    visits: toNum(search.visits),
+    value: toNum(search.value),
+    frontierScore: toNum(search.frontierScore),
+    selectedCount: toNum(search.selectedCount),
+  };
 };
 
-const mctsLikeScore = (node: AgenticNode, parentBranching: number, childCount: number): number => {
-  const expected = extractExpectedWinRate(node);
-  const risk = String(node.risk || 'low').toLowerCase();
-  const riskPenalty = risk === 'high' ? 0.24 : risk === 'medium' ? 0.12 : 0.02;
-  const normalizedStatus = String(node.status || '').toUpperCase();
-  const statusFactor = normalizedStatus === 'SUCCEEDED'
-    ? 0.12
-    : normalizedStatus === 'RUNNING'
-    ? 0.06
-    : normalizedStatus === 'FAILED'
-    ? -0.18
-    : normalizedStatus === 'BLOCKED'
-    ? -0.22
-    : 0;
+const getNodeMutationKind = (node: AgenticNode): string => {
+  const evidence = asRecord(node.evidence);
+  const expansion = asRecord(evidence.expansion);
+  const mutationPlan = expansion.mutationPlan;
+  const first = Array.isArray(mutationPlan) ? asRecord(mutationPlan[0]) : asRecord(mutationPlan);
+  const raw = String(first.mutationKind || '').trim().toLowerCase();
+  return raw || 'code';
+};
 
-  const exploration = Math.sqrt(Math.log(parentBranching + 2) / (childCount + 1));
-  const blended = expected * 0.62 + exploration * 0.33 + statusFactor - riskPenalty;
-  return Math.max(0, Math.min(1, blended));
+const extractNodeRunEvidence = (run: AgenticNodeRunRecord): NodeRunEvidence => {
+  const metrics = asRecord(run.metrics);
+  const artifacts = asRecord(metrics.nodeRunArtifacts);
+  const toCount = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+  };
+  const finishedAtMs = Date.parse(String(run.finishedAt || run.startedAt || ''));
+  return {
+    nodeRunId: String(run.nodeRunId || ''),
+    finishedAtMs: Number.isFinite(finishedAtMs) ? finishedAtMs : 0,
+    diffFiles: toCount(artifacts.diffFiles),
+    resolvedTargets: toCount(artifacts.resolvedTargets),
+    unresolvedTargets: toCount(artifacts.unresolvedTargets),
+    syntaxFailed: toCount(artifacts.pythonSyntaxFailed),
+  };
+};
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+const eventTone = (event: string) => {
+  const e = String(event || '').toLowerCase();
+  if (e === 'tot_node_expanded') return 'bg-blue-50 text-blue-700 border-blue-200';
+  if (e === 'search_node_selected') return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  if (e.includes('failed') || e.includes('error')) return 'bg-rose-50 text-rose-700 border-rose-200';
+  if (e.includes('succeed')) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  return 'bg-slate-50 text-slate-700 border-slate-200';
 };
 
 export const AgenticLab: React.FC = () => {
@@ -170,37 +157,14 @@ export const AgenticLab: React.FC = () => {
   const [detail, setDetail] = useState<AgenticRunDetail | null>(null);
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [loadingRun, setLoadingRun] = useState(false);
-  const [busyAction, setBusyAction] = useState<'none' | 'spec' | 'create' | 'next' | 'all' | 'recover'>('none');
+  const [busyAction, setBusyAction] = useState<'none' | 'next' | 'all' | 'recover'>('none');
   const [message, setMessage] = useState('');
-
-  const [query, setQuery] = useState('');
-  const [showActiveOnly, setShowActiveOnly] = useState(false);
-  const [graphZoomPct, setGraphZoomPct] = useState(100);
-  const [graphViewportBox, setGraphViewportBox] = useState({ x: 0, y: 0, width: 0, height: 0 });
-  const [selectedNodeId, setSelectedNodeId] = useState('');
-  const [hoveredNodeId, setHoveredNodeId] = useState('');
-  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Record<string, boolean>>({});
-  const [showInsightRail, setShowInsightRail] = useState(true);
-  const [insightPanel, setInsightPanel] = useState<'frontier' | 'focus' | 'minimap'>('frontier');
-  const [focusView, setFocusView] = useState(false);
-  const [showIdeaComposer, setShowIdeaComposer] = useState(false);
-  const graphViewportRef = useRef<HTMLDivElement | null>(null);
-
-  const [ideaDraft, setIdeaDraft] = useState({
-    title: 'SMAC budget-constrained uplift',
-    taskGoal: 'Improve MARL win rate under strict GPU/time budget while keeping auditability.',
-    environment: 'pettingzoo.smac_v2:3s5z',
-    targetWinRate: '0.62',
-    gpuHours: '2',
-    wallclockMinutes: '90',
-  });
-
-  const selectedRunSummary = useMemo(() => runs.find(item => item.runId === selectedRunId) || null, [runs, selectedRunId]);
+  const [selectedFrontierNodeId, setSelectedFrontierNodeId] = useState('');
 
   const refreshRuns = useCallback(async () => {
     setLoadingRuns(true);
     try {
-      const res = await api.listAgenticRuns({ page: 1, pageSize: 80 });
+      const res = await api.listAgenticRuns({ page: 1, pageSize: 120 });
       const items = res.items || [];
       setRuns(items);
       if (items.length === 0) {
@@ -208,7 +172,7 @@ export const AgenticLab: React.FC = () => {
         setDetail(null);
         return;
       }
-      if (!selectedRunId || !items.some(row => row.runId === selectedRunId)) {
+      if (!selectedRunId || !items.some(item => item.runId === selectedRunId)) {
         setSelectedRunId(items[0].runId);
       }
     } catch (error) {
@@ -218,20 +182,32 @@ export const AgenticLab: React.FC = () => {
     }
   }, [selectedRunId]);
 
-  const loadRun = useCallback(async (runId: string) => {
+  const loadRun = useCallback(async (runId: string, background = false) => {
     if (!runId) {
       setDetail(null);
       return;
     }
-    setLoadingRun(true);
+    if (!background) setLoadingRun(true);
     try {
       const payload = await api.getAgenticRun(runId);
-      setDetail(payload);
+      setDetail(prev => {
+        if (!prev) return payload;
+        const unchanged =
+          String(prev.updatedAt || '') === String(payload.updatedAt || '')
+          && String(prev.status || '') === String(payload.status || '')
+          && (prev.totTree?.length || 0) === (payload.totTree?.length || 0)
+          && (prev.events?.length || 0) === (payload.events?.length || 0)
+          && (prev.nodeRuns?.length || 0) === (payload.nodeRuns?.length || 0)
+          && (prev.llmTraces?.length || 0) === (payload.llmTraces?.length || 0);
+        return unchanged ? prev : payload;
+      });
     } catch (error) {
-      setMessage(toErrorMessage(error));
-      setDetail(null);
+      if (!background) {
+        setMessage(toErrorMessage(error));
+        setDetail(null);
+      }
     } finally {
-      setLoadingRun(false);
+      if (!background) setLoadingRun(false);
     }
   }, []);
 
@@ -244,385 +220,209 @@ export const AgenticLab: React.FC = () => {
       setDetail(null);
       return;
     }
-    loadRun(selectedRunId).catch(() => undefined);
+    loadRun(selectedRunId, false).catch(() => undefined);
   }, [selectedRunId, loadRun]);
 
   useEffect(() => {
     if (!selectedRunId) return;
     const status = String(detail?.status || '').toUpperCase();
     if (status !== 'RUNNING' && status !== 'PENDING' && status !== 'BLOCKED') return;
+    if (busyAction !== 'none') return;
     const timer = window.setInterval(() => {
-      loadRun(selectedRunId).catch(() => undefined);
-    }, 3000);
+      loadRun(selectedRunId, true).catch(() => undefined);
+    }, 2500);
     return () => window.clearInterval(timer);
-  }, [selectedRunId, detail?.status, loadRun]);
-  useEffect(() => {
-    if (runs.length === 0) {
-      setShowIdeaComposer(true);
-    }
-  }, [runs.length]);
-  useEffect(() => {
-    if (selectedRunId) {
-      setSelectedNodeId('');
-      setHoveredNodeId('');
-      setCollapsedNodeIds({});
-    }
-  }, [selectedRunId]);
+  }, [selectedRunId, detail?.status, loadRun, busyAction]);
 
-  const nodes = useMemo(() => detail?.totTree || [], [detail]);
+  const nodes = useMemo(() => (Array.isArray(detail?.totTree) ? detail?.totTree : []), [detail]);
   const nodeById = useMemo(() => new Map(nodes.map(node => [node.nodeId, node])), [nodes]);
 
-  const childCountByParent = useMemo(() => {
-    const map = new Map<string, number>();
-    nodes.forEach(node => {
-      if (!node.parentId) return;
-      map.set(node.parentId, (map.get(node.parentId) || 0) + 1);
-    });
-    return map;
-  }, [nodes]);
-
-  const filteredNodes = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return nodes.filter(node => {
-      if (showActiveOnly && String(node.status || '').toUpperCase() === 'SUCCEEDED') return false;
-      if (!normalizedQuery) return true;
-      return `${node.nodeId} ${node.title} ${node.hypothesis}`.toLowerCase().includes(normalizedQuery);
-    });
-  }, [nodes, query, showActiveOnly]);
-
-  const filteredNodeMap = useMemo(() => new Map(filteredNodes.map(node => [node.nodeId, node])), [filteredNodes]);
-  const filteredChildCountByParent = useMemo(() => {
-    const map = new Map<string, number>();
-    filteredNodes.forEach(node => {
-      if (!node.parentId || !filteredNodeMap.has(node.parentId)) return;
-      map.set(node.parentId, (map.get(node.parentId) || 0) + 1);
-    });
-    return map;
-  }, [filteredNodes, filteredNodeMap]);
-  const filteredChildrenByParent = useMemo(() => {
-    const map = new Map<string, AgenticNode[]>();
-    filteredNodes.forEach(node => {
-      if (!node.parentId || !filteredNodeMap.has(node.parentId)) return;
-      const group = map.get(node.parentId) || [];
-      group.push(node);
-      map.set(node.parentId, group);
-    });
-    return map;
-  }, [filteredNodes, filteredNodeMap]);
-  const visibleNodes = useMemo(() => {
-    return filteredNodes.filter(node => {
-      let parentId = node.parentId || null;
-      while (parentId) {
-        if (collapsedNodeIds[parentId] && filteredNodeMap.has(parentId)) return false;
-        parentId = filteredNodeMap.get(parentId)?.parentId || null;
+  const nodeRunEvidenceByNode = useMemo(() => {
+    const map = new Map<string, NodeRunEvidence>();
+    const rows = Array.isArray(detail?.nodeRuns) ? detail.nodeRuns : [];
+    rows.forEach(run => {
+      const nodeId = String(run.nodeId || '').trim();
+      if (!nodeId) return;
+      const summary = extractNodeRunEvidence(run);
+      const prev = map.get(nodeId);
+      if (!prev || summary.finishedAtMs >= prev.finishedAtMs) {
+        map.set(nodeId, summary);
       }
-      return true;
-    });
-  }, [filteredNodes, filteredNodeMap, collapsedNodeIds]);
-  const visibleNodeMap = useMemo(() => new Map(visibleNodes.map(node => [node.nodeId, node])), [visibleNodes]);
-  const visibleChildCountByParent = useMemo(() => {
-    const map = new Map<string, number>();
-    visibleNodes.forEach(node => {
-      if (!node.parentId || !visibleNodeMap.has(node.parentId)) return;
-      map.set(node.parentId, (map.get(node.parentId) || 0) + 1);
     });
     return map;
-  }, [visibleNodes, visibleNodeMap]);
-  const descendantCountByNode = useMemo(() => {
-    const memo = new Map<string, number>();
-    const countDescendants = (nodeId: string): number => {
-      if (memo.has(nodeId)) return memo.get(nodeId) || 0;
-      const children = filteredChildrenByParent.get(nodeId) || [];
-      const count = children.reduce((acc, child) => acc + 1 + countDescendants(child.nodeId), 0);
-      memo.set(nodeId, count);
-      return count;
-    };
-    filteredNodes.forEach(node => {
-      countDescendants(node.nodeId);
-    });
-    return memo;
-  }, [filteredChildrenByParent, filteredNodes]);
-
-  const graph = useMemo(() => {
-    const laneWidth = 264;
-    const leafHeight = 160;
-    const cardWidth = 220;
-    const cardHeight = 112;
-
-    const childrenByParent = new Map<string, AgenticNode[]>();
-    visibleNodes.forEach(node => {
-      const parentKey = node.parentId && visibleNodeMap.has(node.parentId) ? node.parentId : '__root__';
-      const group = childrenByParent.get(parentKey) || [];
-      group.push(node);
-      childrenByParent.set(parentKey, group);
-    });
-
-    childrenByParent.forEach(group => {
-      group.sort((a, b) => a.nodeId.localeCompare(b.nodeId));
-    });
-
-    const layout = new Map<string, GraphLayoutPoint>();
-    let cursor = 0;
-    let maxDepth = 0;
-
-    const place = (node: AgenticNode, depth: number): number => {
-      maxDepth = Math.max(maxDepth, depth);
-      const children = childrenByParent.get(node.nodeId) || [];
-      let y = cursor * leafHeight + 60;
-      if (children.length === 0) {
-        cursor += 1;
-      } else {
-        const ys = children.map(child => place(child, depth + 1));
-        y = ys.reduce((acc, item) => acc + item, 0) / ys.length;
-      }
-      layout.set(node.nodeId, {
-        nodeId: node.nodeId,
-        x: depth * laneWidth + 30,
-        y,
-        depth,
-      });
-      return y;
-    };
-
-    (childrenByParent.get('__root__') || []).forEach(root => place(root, 0));
-
-    const edges: Array<{ from: string; to: string }> = [];
-    visibleNodes.forEach(node => {
-      if (!node.parentId || !visibleNodeMap.has(node.parentId)) return;
-      edges.push({ from: node.parentId, to: node.nodeId });
-    });
-
-    return {
-      layout,
-      edges,
-      laneWidth,
-      cardWidth,
-      cardHeight,
-      maxDepth,
-      width: Math.max(640, (maxDepth + 1) * laneWidth + 280),
-      height: Math.max(320, cursor * leafHeight + 120),
-    };
-  }, [visibleNodes, visibleNodeMap]);
-
-  const frontierRanking = useMemo(() => {
-    const rows = visibleNodes.map(node => {
-      const parentCount = node.parentId ? childCountByParent.get(node.parentId) || 0 : 1;
-      const childCount = childCountByParent.get(node.nodeId) || 0;
-      const score = mctsLikeScore(node, parentCount, childCount);
-      return {
-        node,
-        score,
-        childCount,
-      };
-    });
-    return rows.sort((a, b) => b.score - a.score).slice(0, 8);
-  }, [visibleNodes, childCountByParent]);
-  const frontierTopSet = useMemo(() => new Set(frontierRanking.slice(0, 3).map(item => item.node.nodeId)), [frontierRanking]);
-  const focusedNodeId = useMemo(() => {
-    if (selectedNodeId && visibleNodeMap.has(selectedNodeId)) return selectedNodeId;
-    if (hoveredNodeId && visibleNodeMap.has(hoveredNodeId)) return hoveredNodeId;
-    if (frontierRanking.length > 0) return frontierRanking[0].node.nodeId;
-    return visibleNodes[0]?.nodeId || '';
-  }, [selectedNodeId, hoveredNodeId, frontierRanking, visibleNodes, visibleNodeMap]);
-  const focusedNode = useMemo(() => (focusedNodeId ? nodeById.get(focusedNodeId) || null : null), [focusedNodeId, nodeById]);
-  const focusedNodeScore = useMemo(() => {
-    if (!focusedNode) return 0;
-    const parentCount = focusedNode.parentId ? childCountByParent.get(focusedNode.parentId) || 1 : 1;
-    const childCount = childCountByParent.get(focusedNode.nodeId) || 0;
-    return Math.round(mctsLikeScore(focusedNode, parentCount, childCount) * 100);
-  }, [focusedNode, childCountByParent]);
+  }, [detail?.nodeRuns]);
 
   const runStats = useMemo(() => {
-    const stats = { total: nodes.length, running: 0, failed: 0, blocked: 0, succeeded: 0 };
+    const stats = { total: nodes.length, pending: 0, running: 0, blocked: 0, failed: 0, succeeded: 0 };
     nodes.forEach(node => {
       const status = String(node.status || '').toUpperCase();
-      if (status === 'RUNNING') stats.running += 1;
+      if (status === 'SUCCEEDED') stats.succeeded += 1;
       else if (status === 'FAILED') stats.failed += 1;
       else if (status === 'BLOCKED') stats.blocked += 1;
-      else if (status === 'SUCCEEDED') stats.succeeded += 1;
+      else if (status === 'RUNNING') stats.running += 1;
+      else stats.pending += 1;
     });
     return stats;
   }, [nodes]);
-  const llmTraceSummary = useMemo(() => {
-    const traces = Array.isArray(detail?.llmTraces) ? detail?.llmTraces : [];
+
+  const searchStats = detail?.searchStats || null;
+
+  const llmSummary = useMemo(() => {
+    const traces = Array.isArray(detail?.llmTraces) ? detail.llmTraces : [];
     const total = traces.length;
-    const failed = traces.filter(item => String(item.status || '').toLowerCase() !== 'succeeded').length;
-    const succeeded = total - failed;
-    const avgLatencyMs = total > 0
-      ? Math.round(
-          traces.reduce((acc, item) => {
-            const latency = Number(item.latencyMs || 0);
-            return acc + (Number.isFinite(latency) ? Math.max(0, latency) : 0);
-          }, 0) / total,
-        )
-      : 0;
-    return { total, succeeded, failed, avgLatencyMs };
+    let failed = 0;
+    let latencyTotal = 0;
+    const roleMap = new Map<string, { total: number; failed: number }>();
+
+    traces.forEach(trace => {
+      const ok = String(trace.status || '').toLowerCase() === 'succeeded';
+      if (!ok) failed += 1;
+      const latency = Number(trace.latencyMs || 0);
+      if (Number.isFinite(latency) && latency > 0) latencyTotal += latency;
+      const role = String(trace.role || 'unknown').trim() || 'unknown';
+      const prev = roleMap.get(role) || { total: 0, failed: 0 };
+      roleMap.set(role, { total: prev.total + 1, failed: prev.failed + (ok ? 0 : 1) });
+    });
+
+    const topRoles = Array.from(roleMap.entries())
+      .map(([role, row]) => ({ role, total: row.total, failed: row.failed }))
+      .sort((a, b) => b.total - a.total || a.role.localeCompare(b.role))
+      .slice(0, 6);
+
+    return {
+      total,
+      failed,
+      avgLatencyMs: total > 0 ? Math.round(latencyTotal / total) : 0,
+      topRoles,
+    };
   }, [detail?.llmTraces]);
 
-  const fitGraphToViewport = useCallback(() => {
-    const viewport = graphViewportRef.current;
-    if (!viewport) return;
-    const widthZoom = ((viewport.clientWidth - 24) / Math.max(1, graph.width)) * 100;
-    const heightZoom = ((viewport.clientHeight - 24) / Math.max(1, graph.height)) * 100;
-    const target = Math.min(widthZoom, heightZoom);
-    const snapped = Math.round(target / 5) * 5;
-    setGraphZoomPct(Math.max(65, Math.min(150, snapped || 100)));
-  }, [graph.width, graph.height]);
+  const depthDistribution = useMemo(() => {
+    const map = new Map<number, number>();
+    nodes.forEach(node => {
+      const depth = Number(getSearchMeta(node).depth || 0);
+      map.set(depth, (map.get(depth) || 0) + 1);
+    });
+    return Array.from(map.entries())
+      .map(([depth, count]) => ({ depth, count }))
+      .sort((a, b) => a.depth - b.depth);
+  }, [nodes]);
 
-  const refreshGraphViewportBox = useCallback(() => {
-    const viewport = graphViewportRef.current;
-    if (!viewport) return;
-    const scale = graphZoomPct / 100;
-    setGraphViewportBox({
-      x: viewport.scrollLeft / scale,
-      y: viewport.scrollTop / scale,
-      width: viewport.clientWidth / scale,
-      height: viewport.clientHeight / scale,
+  const mutationDistribution = useMemo(() => {
+    const map = new Map<string, number>();
+    nodes.forEach(node => {
+      const kind = getNodeMutationKind(node);
+      map.set(kind, (map.get(kind) || 0) + 1);
     });
-  }, [graphZoomPct]);
-  const centerNodeInViewport = useCallback((nodeId: string, behavior: ScrollBehavior = 'smooth') => {
-    if (!nodeId) return;
-    const viewport = graphViewportRef.current;
-    const point = graph.layout.get(nodeId);
-    if (!viewport || !point) return;
-    const scale = graphZoomPct / 100;
-    const centerX = (point.x + graph.cardWidth / 2) * scale;
-    const centerY = point.y * scale;
-    viewport.scrollTo({
-      left: Math.max(0, centerX - viewport.clientWidth / 2),
-      top: Math.max(0, centerY - viewport.clientHeight / 2),
-      behavior,
-    });
-  }, [graph.layout, graph.cardWidth, graphZoomPct]);
-  const miniMapLayout = useMemo(() => {
-    const width = 220;
-    const height = 130;
-    const scale = Math.min(width / Math.max(1, graph.width), height / Math.max(1, graph.height));
-    const renderWidth = graph.width * scale;
-    const renderHeight = graph.height * scale;
-    return {
-      width,
-      height,
-      scale,
-      offsetX: (width - renderWidth) / 2,
-      offsetY: (height - renderHeight) / 2,
-    };
-  }, [graph.width, graph.height]);
-  const handleMiniMapClick = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
-    const viewport = graphViewportRef.current;
-    if (!viewport || miniMapLayout.scale <= 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const localX = event.clientX - rect.left - miniMapLayout.offsetX;
-    const localY = event.clientY - rect.top - miniMapLayout.offsetY;
-    const graphX = Math.max(0, Math.min(graph.width, localX / miniMapLayout.scale));
-    const graphY = Math.max(0, Math.min(graph.height, localY / miniMapLayout.scale));
-    const zoomScale = graphZoomPct / 100;
-    viewport.scrollTo({
-      left: Math.max(0, graphX * zoomScale - viewport.clientWidth / 2),
-      top: Math.max(0, graphY * zoomScale - viewport.clientHeight / 2),
-      behavior: 'smooth',
-    });
-  }, [miniMapLayout, graph.width, graph.height, graphZoomPct]);
-  const toggleNodeCollapsed = useCallback((nodeId: string) => {
-    setCollapsedNodeIds(prev => ({ ...prev, [nodeId]: !prev[nodeId] }));
-  }, []);
-  const collapseAllVisible = useCallback(() => {
-    const next: Record<string, boolean> = {};
-    visibleChildCountByParent.forEach((count, nodeId) => {
-      if (count > 0) next[nodeId] = true;
-    });
-    setCollapsedNodeIds(next);
-  }, [visibleChildCountByParent]);
-  const expandAllVisible = useCallback(() => {
-    setCollapsedNodeIds({});
-  }, []);
+    return Array.from(map.entries())
+      .map(([kind, count]) => ({ kind, count }))
+      .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind));
+  }, [nodes]);
+
+  const frontierQueue = useMemo(() => {
+    const rows = nodes
+      .filter(node => {
+        const status = String(node.status || '').toUpperCase();
+        return status === 'PENDING' || status === 'RUNNING' || status === 'RETRY_PENDING';
+      })
+      .map(node => {
+        const search = getSearchMeta(node);
+        const runEvidence = nodeRunEvidenceByNode.get(node.nodeId);
+        const evidenceSignal = runEvidence
+          ? clamp01((runEvidence.diffFiles * 0.28 + runEvidence.resolvedTargets * 0.35 - runEvidence.unresolvedTargets * 0.18 - runEvidence.syntaxFailed * 0.2) / 3)
+          : 0;
+        const status = String(node.status || '').toUpperCase();
+        const urgency = status === 'RUNNING' ? 0.12 : status === 'RETRY_PENDING' ? 0.08 : 0;
+        const scoreFrontier = search.frontierScore * 0.56;
+        const scoreValue = search.value * 0.18;
+        const scoreEvidence = evidenceSignal * 0.2;
+        const scoreUrgency = urgency;
+        return {
+          nodeId: node.nodeId,
+          title: node.title || node.nodeId,
+          status,
+          depth: Number(search.depth || 0),
+          visits: Number(search.visits || 0),
+          frontier: clamp01(Number(search.frontierScore || 0)),
+          value: clamp01(Number(search.value || 0)),
+          evidence: evidenceSignal,
+          mutationKind: getNodeMutationKind(node),
+          scoreFrontier,
+          scoreValue,
+          scoreEvidence,
+          scoreUrgency,
+          score: scoreFrontier + scoreValue + scoreEvidence + scoreUrgency,
+        } as FrontierRow;
+      })
+      .sort((a, b) => b.score - a.score || b.frontier - a.frontier || a.depth - b.depth || a.nodeId.localeCompare(b.nodeId));
+    return rows.slice(0, 12);
+  }, [nodes, nodeRunEvidenceByNode]);
 
   useEffect(() => {
-    refreshGraphViewportBox();
-    const viewport = graphViewportRef.current;
-    if (!viewport) return;
-    const onScroll = () => refreshGraphViewportBox();
-    viewport.addEventListener('scroll', onScroll);
-    window.addEventListener('resize', refreshGraphViewportBox);
-    return () => {
-      viewport.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', refreshGraphViewportBox);
-    };
-  }, [refreshGraphViewportBox, graph.width, graph.height]);
-  useEffect(() => {
-    if (visibleNodes.length === 0) {
-      setSelectedNodeId('');
+    if (frontierQueue.length === 0) {
+      setSelectedFrontierNodeId('');
       return;
     }
-    if (!selectedNodeId || !visibleNodes.some(node => node.nodeId === selectedNodeId)) {
-      setSelectedNodeId(visibleNodes[0].nodeId);
+    if (!selectedFrontierNodeId || !frontierQueue.some(item => item.nodeId === selectedFrontierNodeId)) {
+      setSelectedFrontierNodeId(frontierQueue[0].nodeId);
     }
-  }, [visibleNodes, selectedNodeId]);
-  useEffect(() => {
-    if (frontierRanking.length === 0) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) return;
-      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-      event.preventDefault();
-      const ids = frontierRanking.map(item => item.node.nodeId);
-      if (ids.length === 0) return;
-      const currentIdx = selectedNodeId ? ids.indexOf(selectedNodeId) : -1;
-      const nextIdx = event.key === 'ArrowDown'
-        ? (currentIdx + 1 + ids.length) % ids.length
-        : (currentIdx - 1 + ids.length) % ids.length;
-      const nextId = ids[nextIdx];
-      setSelectedNodeId(nextId);
-      centerNodeInViewport(nextId, 'smooth');
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [frontierRanking, selectedNodeId, centerNodeInViewport]);
+  }, [frontierQueue, selectedFrontierNodeId]);
 
-  const openNodeEvidence = (nodeId: string) => {
-    if (!selectedRunId) return;
-    navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/nodes/${encodeURIComponent(nodeId)}`);
-  };
+  const selectedFrontier = useMemo(
+    () => frontierQueue.find(item => item.nodeId === selectedFrontierNodeId) || frontierQueue[0] || null,
+    [frontierQueue, selectedFrontierNodeId],
+  );
 
-  const handleValidateSpec = async () => {
-    setBusyAction('spec');
-    setMessage('');
-    try {
-      const result = await api.validateAgenticSpec(buildIdeaPayload(ideaDraft));
-      setMessage(
-        tx(
-          `规范校验通过，风险声明：${result.riskStatement || '无'}`,
-          `Spec validated. Risk statement: ${result.riskStatement || 'none'}`,
-        ),
-      );
-    } catch (error) {
-      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
-    } finally {
-      setBusyAction('none');
-    }
-  };
-
-  const handleCreateRun = async () => {
-    setBusyAction('create');
-    setMessage('');
-    try {
-      const idea = buildIdeaPayload(ideaDraft);
-      await api.validateAgenticSpec(idea);
-      const result = await api.createAgenticRun({
-        idea,
-        autoExecute: false,
+  const eventRows = useMemo(() => {
+    const rows = Array.isArray(detail?.events) ? detail.events : [];
+    const selected = rows
+      .map((raw, idx) => {
+        const row = asRecord(raw);
+        const event = String(row.event || '').trim();
+        if (!event) return null;
+        const payload = asRecord(row.payload);
+        const nodeId = String(payload.nodeId || payload.node_id || '').trim();
+        const node = nodeId ? nodeById.get(nodeId) : null;
+        const childIds = Array.isArray(payload.childIds)
+          ? payload.childIds.map(item => String(item || '').trim()).filter(Boolean)
+          : [];
+        const mutations = Array.isArray(payload.mutations) ? payload.mutations : [];
+        const firstMutation = asRecord(mutations[0]);
+        const depth = Number(payload.depth || (node ? getSearchMeta(node).depth : 0) || 0);
+        const mutationKind = String(firstMutation.mutationKind || (node ? getNodeMutationKind(node) : '') || '').trim().toLowerCase();
+        const summary = String(row.message || event);
+        return {
+          idx,
+          ts: String(row.ts || ''),
+          event,
+          nodeId,
+          depth,
+          summary,
+          mutationKind: mutationKind || '-',
+          childCount: childIds.length,
+        } as EventRow;
+      })
+      .filter((item): item is EventRow => !!item)
+      .filter(item => {
+        const e = item.event.toLowerCase();
+        return (
+          e === 'search_node_selected'
+          || e === 'tot_node_expanded'
+          || e === 'node_succeeded'
+          || e === 'node_failed'
+          || e === 'sub_agent_started'
+          || e === 'sub_agent_failed'
+          || e === 'sub_agent_succeeded'
+        );
       });
-      await refreshRuns();
-      setSelectedRunId(result.runId);
-      setDetail(result.detail);
-      setMessage(tx(`已创建 Run ${result.runId}`, `Run ${result.runId} created.`));
-    } catch (error) {
-      setMessage(normalizeLlmIssue(toErrorMessage(error), tx));
-    } finally {
-      setBusyAction('none');
-    }
-  };
+
+    return selected.slice(-80).reverse();
+  }, [detail?.events, nodeById]);
+
+  const selectedNode = useMemo(() => {
+    if (!selectedFrontier?.nodeId) return null;
+    return nodeById.get(selectedFrontier.nodeId) || null;
+  }, [selectedFrontier?.nodeId, nodeById]);
 
   const runExecutionAction = async (mode: 'next' | 'all' | 'recover') => {
     if (!selectedRunId) return;
@@ -642,33 +442,37 @@ export const AgenticLab: React.FC = () => {
     }
   };
 
+  const openNodeEvidence = (nodeId: string) => {
+    if (!selectedRunId || !nodeId) return;
+    navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/nodes/${encodeURIComponent(nodeId)}`);
+  };
+
+  const selectedRunSummary = useMemo(() => runs.find(item => item.runId === selectedRunId) || null, [runs, selectedRunId]);
   const isActionBusy = busyAction !== 'none' || loadingRun;
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-3xl border border-slate-200 bg-gradient-to-r from-blue-50 via-white to-cyan-50 p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-4xl">
-            <div className="mb-2 inline-flex items-center rounded-full border border-blue-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-              {tx('Tree Search First', 'Tree Search First')}
+    <div className="space-y-4">
+      <section className="rounded-3xl border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(37,99,235,.12),transparent_34%),radial-gradient(circle_at_100%_0%,rgba(14,165,233,.12),transparent_34%),linear-gradient(180deg,rgba(248,250,252,.96),rgba(255,255,255,.98))] p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold tracking-wide text-slate-700">
+              <Activity className="mr-1.5 h-3.5 w-3.5 text-sky-600" />
+              {tx('探索洞察专页', 'Exploration Insights')}
             </div>
-            <h1 className="display-title text-2xl font-semibold text-slate-900">
-              {tx('Agentic ToT / MCTS 决策树工作台', 'Agentic ToT / MCTS Planning Workbench')}
-            </h1>
-            <p className="mt-2 text-sm text-slate-600">
+            <h1 className="mt-2 text-xl font-semibold text-slate-900">{tx('Agentic Search Intelligence Workbench', 'Agentic Search Intelligence Workbench')}</h1>
+            <p className="mt-1 text-sm text-slate-600">
               {tx(
-                '主页面只保留树搜索。当前实现采用轻量 UCT-like 评分用于分支优先级（前沿常见范式是 MCTS + value/policy guidance）。点击节点进入独立证据页。',
-                'The main page focuses on tree search only. This view uses a lightweight UCT-like score for branch priority (state-of-the-art trend: MCTS + value/policy guidance). Click any node to open the dedicated evidence page.',
+                '这里不再展示主树图，专注回答三个问题：当前在探索什么、为何扩展该节点、证据链质量如何。',
+                'This page does not render the main tree; it focuses on three questions: what is being explored, why this node is next, and how strong the evidence chain is.',
               )}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-2 text-xs text-slate-500">
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-1 font-semibold">
-              {tx('链路来源', 'Pipeline source')}: {isDemoMode ? 'Demo API' : 'Live API'}
+          <div className="text-xs text-slate-600">
+            <span className="rounded bg-white px-2 py-1">
+              {tx('来源', 'Source')}: <span className="font-semibold">{isDemoMode ? 'Demo API' : 'Live API'}</span>
             </span>
             {selectedRunSummary && (
-              <span className={`rounded-full px-2 py-1 font-semibold ${statusBadgeClass(selectedRunSummary.status)}`}>
+              <span className={`ml-2 rounded px-2 py-1 font-semibold ${statusBadgeClass(selectedRunSummary.status)}`}>
                 {selectedRunSummary.status}
               </span>
             )}
@@ -676,10 +480,8 @@ export const AgenticLab: React.FC = () => {
         </div>
       </section>
 
-      {!focusView && (
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('当前 Run', 'Current Run')}</label>
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={selectedRunId}
             onChange={e => setSelectedRunId(e.target.value)}
@@ -693,8 +495,8 @@ export const AgenticLab: React.FC = () => {
           <button
             type="button"
             onClick={() => refreshRuns()}
-            className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
             disabled={loadingRuns}
+            className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
           >
             <RefreshCcw className={`mr-1.5 h-4 w-4 ${loadingRuns ? 'animate-spin' : ''}`} />
             {tx('刷新', 'Refresh')}
@@ -703,653 +505,260 @@ export const AgenticLab: React.FC = () => {
             type="button"
             onClick={() => runExecutionAction('next')}
             disabled={!selectedRunId || isActionBusy}
-            className="inline-flex items-center rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
           >
             <Play className="mr-1.5 h-4 w-4" />
-            {tx('执行下一步', 'Run Next')}
+            {tx('Search Step', 'Search Step')}
           </button>
           <button
             type="button"
             onClick={() => runExecutionAction('all')}
             disabled={!selectedRunId || isActionBusy}
-            className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            {tx('执行全部', 'Run All')}
+            {tx('Auto Search', 'Auto Search')}
           </button>
           <button
             type="button"
             onClick={() => runExecutionAction('recover')}
             disabled={!selectedRunId || isActionBusy}
-            className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
           >
             <ShieldAlert className="mr-1.5 h-4 w-4" />
-            {tx('失败恢复', 'Recover')}
+            {tx('恢复', 'Recover')}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/agentic')}
+            className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-700 hover:bg-sky-100"
+          >
+            {tx('打开 ToT 主画布', 'Open ToT Canvas')}
           </button>
           <button
             type="button"
             onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
             disabled={!selectedRunId}
-            className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
           >
             <Bot className="mr-1.5 h-4 w-4" />
             {tx('Agent 面板', 'Agent Panel')}
           </button>
-          <button
-            type="button"
-            onClick={() => navigate('/agentic/classic')}
-            className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-          >
-            <WandSparkles className="mr-1.5 h-4 w-4" />
-            {tx('经典控制台', 'Classic Console')}
-          </button>
         </div>
-
-        {selectedRunSummary && (
-          <div className="grid gap-2 sm:grid-cols-8">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800">{tx('总节点', 'Total Nodes')}</div>
-              <div className="mt-1 text-lg font-semibold text-slate-900">{runStats.total}</div>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800">{tx('运行中', 'Running')}</div>
-              <div className="mt-1 text-lg font-semibold text-blue-700">{runStats.running}</div>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800">{tx('失败', 'Failed')}</div>
-              <div className="mt-1 text-lg font-semibold text-rose-700">{runStats.failed}</div>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800">{tx('阻塞', 'Blocked')}</div>
-              <div className="mt-1 text-lg font-semibold text-amber-700">{runStats.blocked}</div>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800">{tx('合同通过率', 'Contract Pass')}</div>
-              <div className="mt-1 text-lg font-semibold text-slate-900">{Math.round((selectedRunSummary.contractPassRate || 0) * 100)}%</div>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800">{tx('前沿候选', 'Frontier')}</div>
-              <div className="mt-1 text-lg font-semibold text-blue-700">{frontierRanking.length}</div>
-            </div>
-            <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-700">
-              <div className="font-semibold">{tx('LLM 调用', 'LLM Calls')}</div>
-              <div className="mt-1 text-lg font-semibold">{llmTraceSummary.total}</div>
-            </div>
-            <div className={`rounded-lg border px-3 py-2 text-xs ${llmTraceSummary.failed > 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-              <div className="font-semibold">{tx('LLM 失败/延迟', 'LLM Failed/Latency')}</div>
-              <div className="mt-1 text-lg font-semibold">{llmTraceSummary.failed} / {llmTraceSummary.avgLatencyMs}ms</div>
-            </div>
-          </div>
-        )}
       </section>
-      )}
 
-      {!focusView && (
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            {tx('Idea 输入（自动规范化）', 'Idea Input (auto-normalized spec)')}
-          </h2>
-          <div className="flex items-center gap-2">
-            <div className="text-xs text-slate-500">{tx('避免硬编码，按规则生成标准模板。', 'Avoid hard-coding and generate normalized templates from rules.')}</div>
-            <button
-              type="button"
-              onClick={() => setShowIdeaComposer(prev => !prev)}
-              className="inline-flex items-center rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-            >
-              {showIdeaComposer ? <ChevronUp className="mr-1 h-3 w-3" /> : <ChevronDown className="mr-1 h-3 w-3" />}
-              {showIdeaComposer ? tx('收起', 'Hide') : tx('展开', 'Expand')}
-            </button>
-          </div>
+      <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">{tx('Tree', 'Tree')}</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900">{runStats.total}</div>
+          <div className="text-[11px] text-slate-600">D{searchStats?.maxDepth || 0} · {tx('覆盖', 'Coverage')} {Math.round((searchStats?.explorationCoverage || 0) * 100)}%</div>
         </div>
-        {showIdeaComposer && (
-        <div className="grid gap-3 lg:grid-cols-6">
-          <input
-            value={ideaDraft.title}
-            onChange={e => setIdeaDraft(prev => ({ ...prev, title: e.target.value }))}
-            placeholder={tx('研究标题', 'Research title')}
-            className="lg:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-          <input
-            value={ideaDraft.taskGoal}
-            onChange={e => setIdeaDraft(prev => ({ ...prev, taskGoal: e.target.value }))}
-            placeholder={tx('任务目标', 'Task goal')}
-            className="lg:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-          <input
-            value={ideaDraft.environment}
-            onChange={e => setIdeaDraft(prev => ({ ...prev, environment: e.target.value }))}
-            placeholder={tx('环境', 'Environment')}
-            className="lg:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-          <input
-            value={ideaDraft.targetWinRate}
-            onChange={e => setIdeaDraft(prev => ({ ...prev, targetWinRate: e.target.value }))}
-            placeholder={tx('目标胜率', 'Target win-rate')}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-          <input
-            value={ideaDraft.gpuHours}
-            onChange={e => setIdeaDraft(prev => ({ ...prev, gpuHours: e.target.value }))}
-            placeholder="GPU h"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-          <input
-            value={ideaDraft.wallclockMinutes}
-            onChange={e => setIdeaDraft(prev => ({ ...prev, wallclockMinutes: e.target.value }))}
-            placeholder={tx('时长分钟', 'Minutes')}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-          <div className="lg:col-span-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleValidateSpec}
-              disabled={isActionBusy}
-              className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busyAction === 'spec' ? tx('校验中...', 'Validating...') : tx('生成规范草案', 'Draft Spec')}
-            </button>
-            <button
-              type="button"
-              onClick={handleCreateRun}
-              disabled={isActionBusy}
-              className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busyAction === 'create' ? tx('创建中...', 'Creating...') : tx('创建 Run', 'Create Run')}
-            </button>
-          </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 shadow-sm">
+          <div className="text-[11px] uppercase tracking-wide text-blue-700">{tx('Frontier', 'Frontier')}</div>
+          <div className="mt-1 text-lg font-semibold text-blue-900">{frontierQueue.length}</div>
+          <div className="text-[11px] text-blue-700">{tx('Top', 'Top')} {selectedFrontier ? selectedFrontier.nodeId : '-'}</div>
         </div>
-        )}
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 shadow-sm">
+          <div className="text-[11px] uppercase tracking-wide text-violet-700">LLM</div>
+          <div className="mt-1 text-lg font-semibold text-violet-900">{llmSummary.total}</div>
+          <div className="text-[11px] text-violet-700">{tx('失败', 'Failed')} {llmSummary.failed} · {llmSummary.avgLatencyMs}ms</div>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 shadow-sm">
+          <div className="text-[11px] uppercase tracking-wide text-emerald-700">{tx('Evidence', 'Evidence')}</div>
+          <div className="mt-1 text-lg font-semibold text-emerald-900">{detail?.nodeRuns?.length || 0}</div>
+          <div className="text-[11px] text-emerald-700">{tx('合同通过率', 'Contract')} {Math.round((selectedRunSummary?.contractPassRate || 0) * 100)}%</div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 shadow-sm">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">{tx('Status', 'Status')}</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900">{runStats.succeeded}/{runStats.failed}/{runStats.blocked}</div>
+          <div className="text-[11px] text-slate-600">{tx('成功/失败/阻塞', 'Succeeded/Failed/Blocked')}</div>
+        </div>
       </section>
-      )}
 
       <section className="grid gap-4 xl:grid-cols-12">
-        <div className={`${showInsightRail ? 'xl:col-span-9' : 'xl:col-span-12'} rounded-2xl border border-slate-200 bg-white p-3 shadow-sm`}>
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-800">{tx('核心：ToT / MCTS 树搜索', 'Core: ToT / MCTS Tree Search')}</h2>
-            <div className="flex flex-wrap items-center gap-2">
-              {focusView && (
-                <select
-                  value={selectedRunId}
-                  onChange={e => setSelectedRunId(e.target.value)}
-                  className="max-w-[14rem] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+        <div className="space-y-4 xl:col-span-7">
+          <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-sky-700">{tx('为什么是这个节点', 'Why This Node Next')}</h2>
+              {selectedFrontier && (
+                <button
+                  type="button"
+                  onClick={() => openNodeEvidence(selectedFrontier.nodeId)}
+                  className="inline-flex items-center rounded-md border border-sky-300 bg-white px-2 py-1 text-xs text-sky-700 hover:bg-sky-100"
                 >
-                  {runs.length === 0 && <option value="">{tx('暂无运行', 'No runs')}</option>}
-                  {runs.map(run => (
-                    <option key={`focus-run-${run.runId}`} value={run.runId}>
-                      {run.runId}
-                    </option>
-                  ))}
-                </select>
+                  {tx('证据页', 'Evidence')} <ArrowRight className="ml-1 h-3 w-3" />
+                </button>
               )}
-              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1">
-                <Search className="h-3.5 w-3.5 text-slate-400" />
-                <input
-                  value={query}
-                  onChange={e => setQuery(e.target.value)}
-                  placeholder={tx('搜索节点', 'Search nodes')}
-                  className="w-36 bg-transparent text-xs text-slate-700 outline-none"
-                />
-              </div>
-              <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={showActiveOnly}
-                  onChange={e => setShowActiveOnly(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-slate-300"
-                />
-                {tx('只看活跃节点', 'Active only')}
-              </label>
-              <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
-                <span>{graphZoomPct}%</span>
-                <input
-                  type="range"
-                  min={65}
-                  max={150}
-                  step={5}
-                  value={graphZoomPct}
-                  onChange={e => setGraphZoomPct(Number(e.target.value || 100))}
-                  className="w-24 accent-blue-600"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={fitGraphToViewport}
-                className="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-              >
-                {tx('适配视图', 'Fit')}
-              </button>
-              <button
-                type="button"
-                onClick={() => focusedNodeId && centerNodeInViewport(focusedNodeId)}
-                disabled={!focusedNodeId}
-                className="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-              >
-                {tx('定位节点', 'Center Node')}
-              </button>
-              <button
-                type="button"
-                onClick={() => focusedNodeId && openNodeEvidence(focusedNodeId)}
-                disabled={!focusedNodeId}
-                className="rounded-lg border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100 disabled:opacity-40"
-              >
-                {tx('查看证据', 'Open Evidence')}
-              </button>
-              <button
-                type="button"
-                onClick={collapseAllVisible}
-                className="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-              >
-                {tx('折叠分支', 'Collapse')}
-              </button>
-              <button
-                type="button"
-                onClick={expandAllVisible}
-                className="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-              >
-                {tx('展开分支', 'Expand')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowInsightRail(prev => !prev)}
-                className="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-              >
-                {showInsightRail ? tx('隐藏侧栏', 'Hide Rail') : tx('显示侧栏', 'Show Rail')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setFocusView(prev => {
-                    const next = !prev;
-                    if (next) {
-                      setShowInsightRail(false);
-                    }
-                    return next;
-                  });
-                }}
-                className={`rounded-lg border px-2 py-1 text-xs ${focusView ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
-              >
-                {focusView ? tx('退出专注', 'Exit Focus') : tx('专注视图', 'Focus View')}
-              </button>
             </div>
-          </div>
-
-          <div ref={graphViewportRef} className={`${focusView ? 'max-h-[82vh]' : 'max-h-[72vh]'} overflow-auto rounded-xl border border-slate-200 bg-[radial-gradient(circle_at_0%_0%,rgba(219,234,254,.34),transparent_42%),radial-gradient(circle_at_100%_0%,rgba(209,250,229,.24),transparent_38%),linear-gradient(180deg,rgba(248,250,252,.72),rgba(255,255,255,.95))]`}>
-            {loadingRun ? (
-              <div className="p-6 text-sm text-slate-500">{tx('加载运行详情中...', 'Loading run detail...')}</div>
-            ) : visibleNodes.length === 0 ? (
-              <div className="p-6 text-sm text-slate-500">{tx('暂无节点，先创建一个 Run。', 'No nodes yet. Create a run first.')}</div>
+            {!selectedFrontier ? (
+              <div className="mt-2 text-sm text-slate-500">{tx('暂无可探索前沿节点。', 'No frontier nodes available.')}</div>
             ) : (
-              <svg
-                width={Math.round((graph.width * graphZoomPct) / 100)}
-                height={Math.round((graph.height * graphZoomPct) / 100)}
-                viewBox={`0 0 ${graph.width} ${graph.height}`}
-                onMouseLeave={() => setHoveredNodeId('')}
-              >
-                <defs>
-                  <pattern id="tree-grid" width="30" height="30" patternUnits="userSpaceOnUse">
-                    <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#e2e8f0" strokeWidth="1" strokeOpacity="0.45" />
-                  </pattern>
-                  <linearGradient id="tree-edge" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#94a3b8" stopOpacity="0.54" />
-                    <stop offset="100%" stopColor="#cbd5e1" stopOpacity="0.2" />
-                  </linearGradient>
-                  <filter id="tree-node-shadow" x="-22%" y="-22%" width="144%" height="144%">
-                    <feDropShadow dx="0" dy="6" stdDeviation="5" floodColor="#0f172a" floodOpacity="0.13" />
-                  </filter>
-                  <filter id="tree-node-focus" x="-28%" y="-28%" width="156%" height="156%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="7" floodColor="#2563eb" floodOpacity="0.24" />
-                  </filter>
-                </defs>
-                <rect x={0} y={0} width={graph.width} height={graph.height} fill="url(#tree-grid)" opacity={0.58} />
-                {Array.from({ length: graph.maxDepth + 1 }, (_, depth) => (
-                  <g key={`lane-${depth}`}>
-                    <rect
-                      x={depth * graph.laneWidth + 12}
-                      y={0}
-                      width={graph.laneWidth - 24}
-                      height={graph.height}
-                      fill={depth % 2 === 0 ? 'rgba(148,163,184,.04)' : 'rgba(59,130,246,.035)'}
-                    />
-                    <text
-                      x={depth * graph.laneWidth + 24}
-                      y={18}
-                      fontSize={8.8}
-                      fontWeight={700}
-                      fill="#64748b"
-                    >
-                      {tx('深度', 'Depth')} {depth}
-                    </text>
-                  </g>
-                ))}
-
-                {graph.edges.map(edge => {
-                  const from = graph.layout.get(edge.from);
-                  const to = graph.layout.get(edge.to);
-                  if (!from || !to) return null;
-                  const highlighted = edge.from === focusedNodeId || edge.to === focusedNodeId;
-                  const runningEdge = String(visibleNodeMap.get(edge.from)?.status || '').toUpperCase() === 'RUNNING'
-                    || String(visibleNodeMap.get(edge.to)?.status || '').toUpperCase() === 'RUNNING';
-                  const path = `M ${from.x + graph.cardWidth} ${from.y} C ${from.x + graph.cardWidth + 56} ${from.y}, ${to.x - 56} ${to.y}, ${to.x} ${to.y}`;
-                  return (
-                    <path
-                      key={`${edge.from}-${edge.to}`}
-                      d={path}
-                      fill="none"
-                      stroke={highlighted ? '#2563eb' : 'url(#tree-edge)'}
-                      strokeWidth={highlighted ? 2.3 : 1.7}
-                      strokeOpacity={highlighted ? 0.9 : 0.7}
-                      strokeDasharray={runningEdge ? '6 4' : undefined}
-                      style={{ transition: 'stroke 180ms ease, stroke-width 180ms ease, stroke-opacity 180ms ease' }}
-                    />
-                  );
-                })}
-
-                {visibleNodes.map(node => {
-                  const point = graph.layout.get(node.nodeId);
-                  if (!point) return null;
-                  const childCount = childCountByParent.get(node.nodeId) || 0;
-                  const visibleChildCount = visibleChildCountByParent.get(node.nodeId) || 0;
-                  const parentCount = node.parentId ? childCountByParent.get(node.parentId) || 1 : 1;
-                  const score = mctsLikeScore(node, parentCount, childCount);
-                  const scorePct = Math.round(score * 100);
-                  const nodeTitle = splitLines(node.title || node.nodeId, 20, 2);
-                  const normStatus = String(node.status || '').toUpperCase();
-                  const isFocused = node.nodeId === focusedNodeId;
-                  const isFrontier = frontierTopSet.has(node.nodeId);
-                  const isRunning = normStatus === 'RUNNING';
-                  const riskLabel = String(node.risk || 'low').toLowerCase();
-                  const hasChildren = (filteredChildCountByParent.get(node.nodeId) || 0) > 0;
-                  const isCollapsed = !!collapsedNodeIds[node.nodeId];
-                  const hiddenDescendantCount = isCollapsed ? descendantCountByNode.get(node.nodeId) || 0 : 0;
-                  const cardBg = normStatus === 'FAILED'
-                    ? 'rgba(255,241,242,0.95)'
-                    : normStatus === 'BLOCKED'
-                    ? 'rgba(255,251,235,0.95)'
-                    : normStatus === 'SUCCEEDED'
-                    ? 'rgba(240,253,244,0.95)'
-                    : 'rgba(248,250,252,0.96)';
-                  return (
-                    <g
-                      key={node.nodeId}
-                      transform={`translate(${point.x}, ${point.y - graph.cardHeight / 2})`}
-                      className="cursor-pointer"
-                      onMouseEnter={() => setHoveredNodeId(node.nodeId)}
-                      onClick={() => setSelectedNodeId(node.nodeId)}
-                      onDoubleClick={() => openNodeEvidence(node.nodeId)}
-                    >
-                      <title>{`${node.nodeId} · ${node.title} · score ${scorePct}`}</title>
-                      <rect
-                        width={graph.cardWidth}
-                        height={graph.cardHeight}
-                        rx={14}
-                        fill={cardBg}
-                        stroke={isFocused ? 'rgba(37,99,235,.9)' : isFrontier ? 'rgba(59,130,246,.65)' : 'rgba(148,163,184,.7)'}
-                        strokeWidth={isFocused ? 1.9 : 1.2}
-                        filter={isFocused ? 'url(#tree-node-focus)' : 'url(#tree-node-shadow)'}
-                      />
-                      <circle cx={12} cy={13} r={3.5} fill={statusDot(node.status)}>
-                        {isRunning && <animate attributeName="r" values="3.5;5;3.5" dur="1.25s" repeatCount="indefinite" />}
-                      </circle>
-                      <text x={20} y={16} fontSize={9.5} fontWeight={700} fill="#334155">{node.nodeId}</text>
-                      <text x={20} y={33} fontSize={10.5} fontWeight={700} fill="#0f172a">
-                        {nodeTitle.map((line, idx) => (
-                          <tspan key={`${node.nodeId}-${idx}`} x={20} dy={idx === 0 ? 0 : 12}>{line}</tspan>
-                        ))}
-                      </text>
-                      {hasChildren && (
-                        <g
-                          transform={`translate(${graph.cardWidth - 17}, 14)`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleNodeCollapsed(node.nodeId);
-                          }}
-                        >
-                          <circle r={8} fill="rgba(255,255,255,.92)" stroke="rgba(148,163,184,.8)" strokeWidth={1} />
-                          <line x1={-3} y1={0} x2={3} y2={0} stroke="#334155" strokeWidth={1.2} strokeLinecap="round" />
-                          {isCollapsed && <line x1={0} y1={-3} x2={0} y2={3} stroke="#334155" strokeWidth={1.2} strokeLinecap="round" />}
-                        </g>
-                      )}
-                      <rect x={20} y={graph.cardHeight - 28} width={30} height={14} rx={7} fill="rgba(148,163,184,.16)" />
-                      <text x={35} y={graph.cardHeight - 18} textAnchor="middle" fontSize={8.4} fontWeight={700} fill="#475569">
-                        {riskLabel === 'high' ? 'H' : riskLabel === 'medium' ? 'M' : 'L'}
-                      </text>
-                      <text x={58} y={graph.cardHeight - 18} fontSize={8.4} fill="#475569">
-                        {tx('分支', 'Ch')} {visibleChildCount}/{childCount}
-                      </text>
-                      {hiddenDescendantCount > 0 && (
-                        <>
-                          <rect x={graph.cardWidth - 110} y={graph.cardHeight - 30} width={42} height={16} rx={8} fill="rgba(15,23,42,.1)" />
-                          <text x={graph.cardWidth - 89} y={graph.cardHeight - 19} textAnchor="middle" fontSize={8.2} fontWeight={700} fill="#334155">
-                            +{hiddenDescendantCount}
-                          </text>
-                        </>
-                      )}
-                      <rect x={graph.cardWidth - 60} y={graph.cardHeight - 30} width={42} height={16} rx={8} fill={isFocused ? 'rgba(37,99,235,.2)' : 'rgba(59,130,246,.13)'} />
-                      <text x={graph.cardWidth - 39} y={graph.cardHeight - 19} textAnchor="middle" fontSize={9.5} fontWeight={700} fill="#1d4ed8">
-                        {scorePct}
-                      </text>
-                      <text x={graph.cardWidth - 6} y={graph.cardHeight - 19} textAnchor="end" fontSize={8.2} fill="#64748b">
-                        UCT
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
+              <>
+                <div className="mt-2 text-sm font-semibold text-slate-900">{selectedFrontier.nodeId} · {selectedFrontier.title}</div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                  <span className={`rounded px-2 py-1 ${statusBadgeClass(selectedFrontier.status)}`}>{selectedFrontier.status}</span>
+                  <span className="rounded bg-white px-2 py-1">{tx('深度', 'Depth')} {selectedFrontier.depth}</span>
+                  <span className="rounded bg-white px-2 py-1">{tx('访问', 'Visits')} {selectedFrontier.visits}</span>
+                  <span className="rounded bg-white px-2 py-1">{tx('变更', 'Mutation')} {selectedFrontier.mutationKind.toUpperCase()}</span>
+                  <span className="rounded bg-sky-100 px-2 py-1 font-semibold text-sky-700">{tx('总分', 'Score')} {selectedFrontier.score.toFixed(2)}</span>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  <div className="rounded-lg border border-sky-200 bg-white px-2.5 py-2">
+                    <div className="text-[11px] font-semibold text-sky-700">Frontier</div>
+                    <div className="mt-0.5 text-xs text-slate-700">{Math.round(selectedFrontier.frontier * 100)} · +{selectedFrontier.scoreFrontier.toFixed(2)}</div>
+                  </div>
+                  <div className="rounded-lg border border-sky-200 bg-white px-2.5 py-2">
+                    <div className="text-[11px] font-semibold text-sky-700">Value</div>
+                    <div className="mt-0.5 text-xs text-slate-700">{Math.round(selectedFrontier.value * 100)} · +{selectedFrontier.scoreValue.toFixed(2)}</div>
+                  </div>
+                  <div className="rounded-lg border border-sky-200 bg-white px-2.5 py-2">
+                    <div className="text-[11px] font-semibold text-sky-700">Evidence</div>
+                    <div className="mt-0.5 text-xs text-slate-700">{Math.round(selectedFrontier.evidence * 100)} · +{selectedFrontier.scoreEvidence.toFixed(2)}</div>
+                  </div>
+                  <div className="rounded-lg border border-sky-200 bg-white px-2.5 py-2">
+                    <div className="text-[11px] font-semibold text-sky-700">Urgency</div>
+                    <div className="mt-0.5 text-xs text-slate-700">+{selectedFrontier.scoreUrgency.toFixed(2)}</div>
+                  </div>
+                </div>
+                {selectedNode?.hypothesis && (
+                  <div className="mt-2 text-xs text-slate-700">
+                    <span className="font-semibold">{tx('假设', 'Hypothesis')}: </span>
+                    {selectedNode.hypothesis}
+                  </div>
+                )}
+              </>
             )}
           </div>
-          {focusedNode && (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">{focusedNode.nodeId}</span>
-                    <span className={`rounded px-1.5 py-0.5 font-semibold ${statusBadgeClass(focusedNode.status)}`}>{focusedNode.status}</span>
-                    <span className="rounded bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">UCT {focusedNodeScore}</span>
-                    <span className="rounded bg-slate-200 px-1.5 py-0.5 font-semibold text-slate-700">
-                      {tx('目标胜率', 'Target Win')} {Math.round(extractExpectedWinRate(focusedNode) * 100)}%
-                    </span>
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-800">{focusedNode.title || focusedNode.nodeId}</div>
-                  <p className="mt-1 line-clamp-2 text-xs text-slate-600">{focusedNode.hypothesis || '-'}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => centerNodeInViewport(focusedNode.nodeId)}
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
-                  >
-                    {tx('定位', 'Center')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openNodeEvidence(focusedNode.nodeId)}
-                    className="inline-flex items-center rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
-                  >
-                    {tx('证据页', 'Evidence Page')} <ArrowRight className="ml-1 h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => runExecutionAction('next')}
-                    disabled={isActionBusy}
-                    className="inline-flex items-center rounded-md border border-blue-300 bg-white px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50"
-                  >
-                    <Play className="mr-1 h-3.5 w-3.5" />
-                    {tx('继续一步', 'Run Next')}
-                  </button>
-                </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('Frontier 队列', 'Frontier Queue')}</h2>
+            {frontierQueue.length === 0 ? (
+              <div className="mt-2 text-sm text-slate-500">{tx('当前没有待探索节点。', 'No pending exploration nodes at the moment.')}</div>
+            ) : (
+              <div className="mt-2 overflow-auto">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Node</th>
+                      <th className="px-2 py-1 text-left">Status</th>
+                      <th className="px-2 py-1 text-right">F</th>
+                      <th className="px-2 py-1 text-right">V</th>
+                      <th className="px-2 py-1 text-right">EV</th>
+                      <th className="px-2 py-1 text-right">Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {frontierQueue.map(row => {
+                      const active = row.nodeId === selectedFrontierNodeId;
+                      return (
+                        <tr
+                          key={`frontier-row-${row.nodeId}`}
+                          className={`border-t border-slate-100 ${active ? 'bg-sky-50' : 'bg-white hover:bg-slate-50'}`}
+                          onClick={() => setSelectedFrontierNodeId(row.nodeId)}
+                        >
+                          <td className="px-2 py-1.5 font-medium text-slate-800">{row.nodeId}</td>
+                          <td className="px-2 py-1.5">
+                            <span className={`rounded px-1.5 py-0.5 ${statusBadgeClass(row.status)}`}>{row.status}</span>
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-slate-700">{Math.round(row.frontier * 100)}</td>
+                          <td className="px-2 py-1.5 text-right text-slate-700">{Math.round(row.value * 100)}</td>
+                          <td className="px-2 py-1.5 text-right text-slate-700">{Math.round(row.evidence * 100)}</td>
+                          <td className="px-2 py-1.5 text-right font-semibold text-sky-700">{row.score.toFixed(2)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {showInsightRail && (
-          <aside className="xl:col-span-3">
-            <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('树搜索洞察', 'Tree Insights')}</h3>
-                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setInsightPanel('frontier')}
-                    className={`rounded-md px-2 py-1 ${insightPanel === 'frontier' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
-                  >
-                    {tx('前沿', 'Frontier')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInsightPanel('focus')}
-                    className={`rounded-md px-2 py-1 ${insightPanel === 'focus' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
-                  >
-                    {tx('聚焦', 'Focus')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInsightPanel('minimap')}
-                    className={`rounded-md px-2 py-1 ${insightPanel === 'minimap' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
-                  >
-                    Minimap
-                  </button>
+        <div className="space-y-4 xl:col-span-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tx('探索事件流', 'Exploration Event Stream')}</h2>
+            <div className="mt-2 max-h-[26rem] space-y-2 overflow-auto pr-1">
+              {eventRows.length === 0 && (
+                <div className="text-sm text-slate-500">{tx('暂无探索事件。', 'No exploration events yet.')}</div>
+              )}
+              {eventRows.map(row => (
+                <div key={`event-row-${row.idx}-${row.event}`} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold ${eventTone(row.event)}`}>{row.event}</span>
+                    <span className="text-[11px] text-slate-500">{row.ts ? new Date(row.ts).toLocaleTimeString() : '-'}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-800">{row.summary}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+                    {row.nodeId && <span className="rounded bg-white px-1.5 py-0.5">{row.nodeId}</span>}
+                    <span className="rounded bg-white px-1.5 py-0.5">D{row.depth}</span>
+                    <span className="rounded bg-white px-1.5 py-0.5">{row.mutationKind.toUpperCase()}</span>
+                    {row.childCount > 0 && <span className="rounded bg-white px-1.5 py-0.5">+{row.childCount} {tx('子节点', 'children')}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <div className="inline-flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <Layers3 className="mr-1 h-3.5 w-3.5" />
+                  {tx('深度分布', 'Depth Distribution')}
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  {depthDistribution.length === 0 && <div className="text-xs text-slate-500">-</div>}
+                  {depthDistribution.map(row => {
+                    const maxCount = Math.max(1, ...depthDistribution.map(item => item.count));
+                    const pct = Math.round((row.count / maxCount) * 100);
+                    return (
+                      <div key={`depth-dist-${row.depth}`} className="text-xs">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>D{row.depth}</span>
+                          <span>{row.count}</span>
+                        </div>
+                        <div className="mt-0.5 h-1.5 overflow-hidden rounded bg-slate-100">
+                          <div className="h-full rounded bg-blue-500" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              {insightPanel === 'frontier' && (
-                <div className="space-y-2">
-                  {frontierRanking.length === 0 && <div className="text-xs text-slate-500">{tx('暂无节点。', 'No nodes.')}</div>}
-                  {frontierRanking.map((item, idx) => (
-                    <div
-                      key={`rank-${item.node.nodeId}`}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 hover:bg-blue-50"
-                    >
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>#{idx + 1}</span>
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusBadgeClass(item.node.status)}`}>{item.node.status}</span>
-                      </div>
-                      <div className="mt-1 text-sm font-semibold text-slate-800">{item.node.title || item.node.nodeId}</div>
-                      <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                        <span>UCT {Math.round(item.score * 100)}</span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedNodeId(item.node.nodeId);
-                              centerNodeInViewport(item.node.nodeId, 'smooth');
-                            }}
-                            className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
-                          >
-                            {tx('聚焦', 'Focus')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openNodeEvidence(item.node.nodeId)}
-                            className="inline-flex items-center rounded border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-[11px] text-blue-700 hover:bg-blue-100"
-                          >
-                            {tx('证据', 'Evidence')} <ArrowRight className="ml-1 h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
+              <div>
+                <div className="inline-flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <GitBranch className="mr-1 h-3.5 w-3.5" />
+                  {tx('变更分布', 'Mutation Distribution')}
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  {mutationDistribution.length === 0 && <div className="text-xs text-slate-500">-</div>}
+                  {mutationDistribution.slice(0, 8).map(row => (
+                    <div key={`mutation-dist-${row.kind}`} className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs">
+                      <span className="font-medium text-slate-700">{row.kind.toUpperCase()}</span>
+                      <span className="text-slate-600">{row.count}</span>
                     </div>
                   ))}
                 </div>
-              )}
+              </div>
 
-              {insightPanel === 'focus' && (
-                !focusedNode ? (
-                  <div className="mt-2 text-xs text-slate-500">{tx('暂无可聚焦节点。', 'No focus node available.')}</div>
-                ) : (
-                  <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>{focusedNode.nodeId}</span>
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusBadgeClass(focusedNode.status)}`}>{focusedNode.status}</span>
+              <div className="sm:col-span-2">
+                <div className="inline-flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <Gauge className="mr-1 h-3.5 w-3.5" />
+                  {tx('LLM 角色负载', 'LLM Role Load')}
+                </div>
+                <div className="mt-2 grid gap-1.5">
+                  {llmSummary.topRoles.length === 0 && <div className="text-xs text-slate-500">-</div>}
+                  {llmSummary.topRoles.map(row => (
+                    <div key={`llm-role-${row.role}`} className="flex items-center justify-between rounded border border-violet-200 bg-violet-50 px-2 py-1 text-xs">
+                      <span className="truncate text-violet-800" title={row.role}>{row.role}</span>
+                      <span className="font-semibold text-violet-700">{row.total} / {row.failed}</span>
                     </div>
-                    <div className="mt-1 text-sm font-semibold text-slate-800">{focusedNode.title || focusedNode.nodeId}</div>
-                    <div className="mt-1 line-clamp-2 text-xs text-slate-600">{focusedNode.hypothesis || '-'}</div>
-                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                      <span>UCT {focusedNodeScore}</span>
-                      <button
-                        type="button"
-                        onClick={() => openNodeEvidence(focusedNode.nodeId)}
-                        className="inline-flex items-center rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-blue-700 hover:bg-blue-100"
-                      >
-                        {tx('打开证据', 'Open Evidence')} <ArrowRight className="ml-1 h-3 w-3" />
-                      </button>
-                    </div>
-                    <div className="mt-1 text-[11px] text-slate-500">{tx('键盘 ↑/↓ 可切换前沿候选。', 'Use keyboard ↑/↓ to switch frontier nodes.')}</div>
-                  </div>
-                )
-              )}
-
-              {insightPanel === 'minimap' && (
-                <>
-                  <svg
-                    width={miniMapLayout.width}
-                    height={miniMapLayout.height}
-                    viewBox={`0 0 ${miniMapLayout.width} ${miniMapLayout.height}`}
-                    className="mt-2 w-full cursor-crosshair rounded-md border border-slate-200 bg-slate-50"
-                    onClick={handleMiniMapClick}
-                  >
-                    {graph.edges.map(edge => {
-                      const from = graph.layout.get(edge.from);
-                      const to = graph.layout.get(edge.to);
-                      if (!from || !to) return null;
-                      const x1 = miniMapLayout.offsetX + (from.x + graph.cardWidth) * miniMapLayout.scale;
-                      const y1 = miniMapLayout.offsetY + from.y * miniMapLayout.scale;
-                      const x2 = miniMapLayout.offsetX + to.x * miniMapLayout.scale;
-                      const y2 = miniMapLayout.offsetY + to.y * miniMapLayout.scale;
-                      const highlighted = edge.from === focusedNodeId || edge.to === focusedNodeId;
-                      return (
-                        <line
-                          key={`mini-edge-${edge.from}-${edge.to}`}
-                          x1={x1}
-                          y1={y1}
-                          x2={x2}
-                          y2={y2}
-                          stroke={highlighted ? '#2563eb' : '#cbd5e1'}
-                          strokeWidth={highlighted ? 1.2 : 0.8}
-                        />
-                      );
-                    })}
-                    {visibleNodes.map(node => {
-                      const point = graph.layout.get(node.nodeId);
-                      if (!point) return null;
-                      const x = miniMapLayout.offsetX + point.x * miniMapLayout.scale;
-                      const y = miniMapLayout.offsetY + (point.y - graph.cardHeight / 2) * miniMapLayout.scale;
-                      const w = Math.max(2, graph.cardWidth * miniMapLayout.scale);
-                      const h = Math.max(2, graph.cardHeight * miniMapLayout.scale);
-                      const focused = node.nodeId === focusedNodeId;
-                      const frontier = frontierTopSet.has(node.nodeId);
-                      return (
-                        <rect
-                          key={`mini-node-${node.nodeId}`}
-                          x={x}
-                          y={y}
-                          width={w}
-                          height={h}
-                          rx={2}
-                          fill={focused ? 'rgba(37,99,235,.38)' : frontier ? 'rgba(59,130,246,.22)' : 'rgba(148,163,184,.24)'}
-                          stroke={focused ? '#1d4ed8' : '#94a3b8'}
-                          strokeWidth={focused ? 1.1 : 0.7}
-                        />
-                      );
-                    })}
-                    <rect
-                      x={miniMapLayout.offsetX + graphViewportBox.x * miniMapLayout.scale}
-                      y={miniMapLayout.offsetY + graphViewportBox.y * miniMapLayout.scale}
-                      width={Math.max(6, graphViewportBox.width * miniMapLayout.scale)}
-                      height={Math.max(6, graphViewportBox.height * miniMapLayout.scale)}
-                      fill="rgba(37,99,235,.09)"
-                      stroke="#2563eb"
-                      strokeWidth={1}
-                    />
-                  </svg>
-                  <div className="mt-2 text-[11px] text-slate-500">
-                    <div>{tx('点击小地图快速定位。', 'Click minimap to pan quickly.')}</div>
-                    <div>{tx('视口', 'Viewport')}: {Math.round(graphViewportBox.x)} / {Math.round(graphViewportBox.y)}</div>
-                  </div>
-                </>
-              )}
-            </section>
-          </aside>
-        )}
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       {message && (

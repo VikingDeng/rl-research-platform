@@ -150,6 +150,47 @@ class AgenticOSService:
     APPROVER_ROLES: Tuple[str, ...] = ("admin", "ops", "security")
     APPROVAL_MODES: Tuple[str, ...] = ("strict", "balanced", "permissive")
     MAX_SUB_AGENT_DEPTH: int = 2
+    CODE_MUTATION_EXTENSIONS: Tuple[str, ...] = (
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".go",
+        ".rs",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".java",
+    )
+    DISALLOWED_MUTATION_KINDS: Tuple[str, ...] = (
+        "hyperparameter",
+        "hyper_parameter",
+        "hparam",
+        "hparams",
+        "config",
+        "config_tuning",
+        "sweep",
+    )
+    CODE_CHANGE_KEYWORDS: Tuple[str, ...] = (
+        "code",
+        "source",
+        "patch",
+        "diff",
+        "function",
+        "module",
+        "class",
+        "method",
+        "encoder",
+        "decoder",
+        "head",
+        "adapter",
+        "objective",
+        "loss",
+        "architecture",
+        "mutation",
+        "refactor",
+    )
 
     def __init__(self) -> None:
         run_root = Path(settings.local_run_root).expanduser()
@@ -2731,7 +2772,9 @@ PY
         system_prompt = (
             "You are the core planner for Agentic MARL Research OS. "
             "Return strictly valid JSON only. "
-            "Propose concrete code-edit mutation candidates for this ToT node."
+            "Propose concrete source-code edit mutation candidates for this ToT node. "
+            "Do not output hyperparameter-only sweeps (lr/batch-size/seed only). "
+            "Each candidate must modify executable source files."
         )
         user_prompt = json.dumps(
             {
@@ -2752,6 +2795,9 @@ PY
                     "mustBeCodeLevel": True,
                     "mustIncludeTargetFiles": True,
                     "preferFilesInsideWorkspace": True,
+                    "mustNotBeHyperparameterOnly": True,
+                    "requiredCodeFileExtensions": list(self.CODE_MUTATION_EXTENSIONS),
+                    "forbiddenMutationKinds": list(self.DISALLOWED_MUTATION_KINDS),
                     "maxCandidates": 4,
                 },
             },
@@ -2774,6 +2820,7 @@ PY
             raise RuntimeError(f"llm_required_empty_mutation_templates lane={lane}")
 
         normalized: List[Dict[str, Any]] = []
+        invalid_reasons: List[str] = []
         for item in rows:
             if not isinstance(item, dict):
                 continue
@@ -2783,22 +2830,26 @@ PY
             risk = str(item.get("risk") or "medium").strip().lower()
             if risk not in {"low", "medium", "high"}:
                 risk = "medium"
-            normalized.append(
-                {
-                    "strategy": str(item.get("strategy") or "llm_mutation").strip(),
-                    "mutationKind": str(item.get("mutationKind") or "code").strip(),
-                    "title": str(item.get("title") or f"{node_id} LLM Branch").strip(),
-                    "hypothesis": str(item.get("hypothesis") or f"Mutation can improve {metric_key}.").strip(),
-                    "executionPlan": str(item.get("executionPlan") or "Apply patch and validate.").strip(),
-                    "targetFiles": target_files,
-                    "changeSummary": str(item.get("changeSummary") or "LLM-proposed code mutation.").strip(),
-                    "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q").strip(),
-                    "risk": risk,
-                    "source": "llm",
-                }
-            )
+            candidate = {
+                "strategy": str(item.get("strategy") or "llm_mutation").strip(),
+                "mutationKind": str(item.get("mutationKind") or "code").strip(),
+                "title": str(item.get("title") or f"{node_id} LLM Branch").strip(),
+                "hypothesis": str(item.get("hypothesis") or f"Mutation can improve {metric_key}.").strip(),
+                "executionPlan": str(item.get("executionPlan") or "Apply patch and validate.").strip(),
+                "targetFiles": target_files,
+                "changeSummary": str(item.get("changeSummary") or "LLM-proposed code mutation.").strip(),
+                "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q").strip(),
+                "risk": risk,
+                "source": "llm",
+            }
+            valid, reason = self._validate_mutation_candidate(candidate, lane=lane)
+            if not valid:
+                invalid_reasons.append(str(reason or "invalid_mutation_candidate"))
+                continue
+            normalized.append(candidate)
         if not normalized:
-            raise RuntimeError(f"llm_required_invalid_mutation_templates lane={lane}")
+            reason = ";".join(invalid_reasons[:4]) if invalid_reasons else "empty_after_validation"
+            raise RuntimeError(f"llm_required_invalid_mutation_templates lane={lane} reason={reason}")
         return normalized
 
     def _runtime_code_mutation_templates(self, state: Dict[str, Any], node: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -2843,6 +2894,50 @@ PY
             normalized.append(candidate)
             seen.add(candidate)
         return normalized
+
+    def _is_code_target_file(self, path: str) -> bool:
+        ext = Path(str(path or "")).suffix.lower()
+        return bool(ext) and ext in set(self.CODE_MUTATION_EXTENSIONS)
+
+    def _is_mutation_kind_allowed(self, mutation_kind: str) -> bool:
+        normalized = str(mutation_kind or "").strip().lower().replace("-", "_")
+        return normalized not in set(self.DISALLOWED_MUTATION_KINDS)
+
+    def _looks_like_code_change_plan(self, candidate: Dict[str, Any]) -> bool:
+        blob = " ".join(
+            [
+                str(candidate.get("strategy") or ""),
+                str(candidate.get("mutationKind") or ""),
+                str(candidate.get("changeSummary") or ""),
+                str(candidate.get("title") or ""),
+                str(candidate.get("hypothesis") or ""),
+                str(candidate.get("executionPlan") or ""),
+            ]
+        ).lower()
+        return any(keyword in blob for keyword in self.CODE_CHANGE_KEYWORDS)
+
+    def _validate_mutation_candidate(self, candidate: Dict[str, Any], lane: str) -> Tuple[bool, str]:
+        mutation_kind = str(candidate.get("mutationKind") or "").strip()
+        if not mutation_kind:
+            return False, "missing_mutation_kind"
+        if not self._is_mutation_kind_allowed(mutation_kind):
+            return False, f"disallowed_mutation_kind:{mutation_kind}"
+
+        target_files = self._normalize_target_files(candidate.get("targetFiles") or [])
+        if not target_files:
+            return False, "missing_target_files"
+        if not any(self._is_code_target_file(path) for path in target_files):
+            return False, "target_files_not_code"
+
+        if not self._looks_like_code_change_plan(candidate):
+            return False, "mutation_plan_not_code_like"
+
+        # Evaluation lane may touch protocol files, but at least one executable file keeps it code-level.
+        if str(lane or "").strip().lower() == "evaluation":
+            if not any(self._is_code_target_file(path) for path in target_files):
+                return False, "evaluation_lane_requires_code_targets"
+
+        return True, ""
 
     def _is_within_workspace(self, path: Path) -> bool:
         try:
@@ -3309,6 +3404,76 @@ PY
         patch_paths.append(str(workspace_dir.relative_to(run_dir)))
         return list(dict.fromkeys(patch_paths)), manifest
 
+    def _preview_diff_excerpt(self, diff_text: str, *, max_lines: int = 24, max_chars: int = 2400) -> str:
+        rows: List[str] = []
+        for line in str(diff_text).splitlines():
+            if line.startswith("--- ") or line.startswith("+++ "):
+                continue
+            if line.startswith("@@") or line.startswith("+") or line.startswith("-"):
+                rows.append(line)
+            if len(rows) >= max_lines:
+                break
+        if not rows:
+            rows = str(diff_text).splitlines()[:max_lines]
+        excerpt = "\n".join(rows).strip()
+        if len(excerpt) > max_chars:
+            excerpt = excerpt[: max_chars - 3] + "..."
+        return excerpt
+
+    def _build_node_run_artifact_evidence(
+        self,
+        *,
+        node_run: Dict[str, Any],
+        workspace_manifest: Dict[str, Any],
+        run_dir: Path,
+    ) -> Dict[str, Any]:
+        files = workspace_manifest.get("files") if isinstance(workspace_manifest, dict) else []
+        patch_rows = workspace_manifest.get("patches") if isinstance(workspace_manifest, dict) else []
+        file_mutations: List[Dict[str, Any]] = []
+        diff_previews: List[Dict[str, Any]] = []
+        patch_plan = [item for item in (node_run.get("patchPlan") or []) if isinstance(item, dict)]
+
+        for item in list(files or [])[:16]:
+            if not isinstance(item, dict):
+                continue
+            file_mutations.append(
+                {
+                    "target": str(item.get("target") or ""),
+                    "mutationMode": str(item.get("mutationMode") or ""),
+                    "syntaxValid": item.get("syntaxValid"),
+                    "syntaxError": str(item.get("syntaxError") or ""),
+                }
+            )
+
+        for idx, item in enumerate(list(patch_rows or [])[:8]):
+            if not isinstance(item, dict):
+                continue
+            patch_rel = str(item.get("patchFile") or "")
+            patch_path = run_dir / patch_rel if patch_rel else None
+            preview = ""
+            if patch_path is not None and patch_path.exists():
+                try:
+                    preview = self._preview_diff_excerpt(patch_path.read_text(encoding="utf-8"))
+                except Exception:
+                    preview = ""
+            plan = patch_plan[idx] if idx < len(patch_plan) else {}
+            diff_previews.append(
+                {
+                    "patchFile": patch_rel,
+                    "targets": list(item.get("resolvedTargets") or []),
+                    "mutationKind": str(plan.get("mutationKind") or item.get("mutationKind") or ""),
+                    "strategy": str(plan.get("strategy") or ""),
+                    "changeSummary": str(plan.get("changeSummary") or ""),
+                    "validationCommand": str(plan.get("validationCommand") or ""),
+                    "preview": preview,
+                }
+            )
+
+        return {
+            "fileMutations": file_mutations,
+            "diffPreviews": diff_previews,
+        }
+
     def _start_node_run(self, state: Dict[str, Any], node: Dict[str, Any]) -> Dict[str, Any]:
         run_id = str(state.get("run_id") or "")
         node_id = str(node.get("node_id") or "")
@@ -3413,6 +3578,13 @@ PY
             "unresolvedTargets": int(mutation_summary.get("unresolvedTargets") or 0),
             "pythonSyntaxFailed": int(mutation_summary.get("pythonSyntaxFailed") or 0),
         }
+        metrics["nodeRunArtifacts"].update(
+            self._build_node_run_artifact_evidence(
+                node_run=node_run,
+                workspace_manifest=workspace_manifest if isinstance(workspace_manifest, dict) else {},
+                run_dir=run_dir,
+            )
+        )
         node_run["metrics"] = metrics
 
         result_payload = {
@@ -6407,10 +6579,12 @@ PY
             return
 
         created_ids: List[str] = []
+        created_mutations: List[Dict[str, Any]] = []
         for idx, candidate in enumerate(candidates, start=1):
             if len(state.get("tot_tree") or []) >= int(plan.get("maxNodes") or 32):
                 break
             new_id = self._next_node_id(state)
+            mutation_plan = candidate.get("mutation_plan") if isinstance(candidate.get("mutation_plan"), dict) else {}
             child = {
                 "node_id": new_id,
                 "parent_id": node.get("node_id"),
@@ -6433,8 +6607,8 @@ PY
                         "generatedFrom": str(node.get("node_id") or ""),
                     },
                     "expansion": {
-                        "strategy": candidate.get("strategy") or "rule_driven_branch",
-                        "mutationPlan": candidate.get("mutation_plan") or {},
+                        "strategy": candidate.get("strategy") or "llm_code_branch",
+                        "mutationPlan": mutation_plan,
                         "createdAt": _now_iso(),
                     },
                 },
@@ -6445,6 +6619,14 @@ PY
             state.setdefault("tot_tree", []).append(child)
             node.setdefault("children", []).append(new_id)
             created_ids.append(new_id)
+            created_mutations.append(
+                {
+                    "nodeId": new_id,
+                    "strategy": str(mutation_plan.get("strategy") or ""),
+                    "mutationKind": str(mutation_plan.get("mutationKind") or ""),
+                    "targetFiles": self._normalize_target_files(mutation_plan.get("targetFiles") or []),
+                }
+            )
 
         search["expanded"] = True
         search["expandedAt"] = _now_iso()
@@ -6459,6 +6641,7 @@ PY
                     "created_node_ids": created_ids,
                     "createdNodeIds": created_ids,
                     "childIds": created_ids,
+                    "mutations": created_mutations,
                     "depth": depth + 1,
                     "branch_factor": int(plan.get("branchFactor") or 2),
                 },
