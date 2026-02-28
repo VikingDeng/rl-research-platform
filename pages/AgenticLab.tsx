@@ -39,6 +39,10 @@ type FrontierRow = {
   scoreEvidence: number;
   scoreUrgency: number;
   score: number;
+  patchStrategy: string;
+  patchSummary: string;
+  patchFiles: string[];
+  validationCommand: string;
 };
 
 type NodeRunEvidence = {
@@ -48,6 +52,14 @@ type NodeRunEvidence = {
   resolvedTargets: number;
   unresolvedTargets: number;
   syntaxFailed: number;
+};
+
+type NodePatchPlan = {
+  strategy: string;
+  mutationKind: string;
+  changeSummary: string;
+  targetFiles: string[];
+  validationCommand: string;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -111,12 +123,27 @@ const getSearchMeta = (node: AgenticNode): SearchMeta => {
 };
 
 const getNodeMutationKind = (node: AgenticNode): string => {
+  const plan = extractNodePatchPlan(node);
+  if (plan?.mutationKind) return String(plan.mutationKind).toLowerCase();
+  return 'code';
+};
+
+const extractNodePatchPlan = (node: AgenticNode): NodePatchPlan | null => {
   const evidence = asRecord(node.evidence);
   const expansion = asRecord(evidence.expansion);
   const mutationPlan = expansion.mutationPlan;
   const first = Array.isArray(mutationPlan) ? asRecord(mutationPlan[0]) : asRecord(mutationPlan);
-  const raw = String(first.mutationKind || '').trim().toLowerCase();
-  return raw || 'code';
+  if (Object.keys(first).length === 0) return null;
+  const targetFiles = Array.isArray(first.targetFiles)
+    ? first.targetFiles.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
+  return {
+    strategy: String(first.strategy || '').trim(),
+    mutationKind: String(first.mutationKind || 'code').trim().toLowerCase() || 'code',
+    changeSummary: String(first.changeSummary || '').trim(),
+    targetFiles,
+    validationCommand: String(first.validationCommand || '').trim(),
+  };
 };
 
 const extractNodeRunEvidence = (run: AgenticNodeRunRecord): NodeRunEvidence => {
@@ -328,6 +355,7 @@ export const AgenticLab: React.FC = () => {
       .map(node => {
         const search = getSearchMeta(node);
         const runEvidence = nodeRunEvidenceByNode.get(node.nodeId);
+        const plan = extractNodePatchPlan(node);
         const evidenceSignal = runEvidence
           ? clamp01((runEvidence.diffFiles * 0.28 + runEvidence.resolvedTargets * 0.35 - runEvidence.unresolvedTargets * 0.18 - runEvidence.syntaxFailed * 0.2) / 3)
           : 0;
@@ -346,12 +374,16 @@ export const AgenticLab: React.FC = () => {
           frontier: clamp01(Number(search.frontierScore || 0)),
           value: clamp01(Number(search.value || 0)),
           evidence: evidenceSignal,
-          mutationKind: getNodeMutationKind(node),
+          mutationKind: String(plan?.mutationKind || getNodeMutationKind(node) || 'code').toLowerCase(),
           scoreFrontier,
           scoreValue,
           scoreEvidence,
           scoreUrgency,
           score: scoreFrontier + scoreValue + scoreEvidence + scoreUrgency,
+          patchStrategy: String(plan?.strategy || ''),
+          patchSummary: String(plan?.changeSummary || ''),
+          patchFiles: Array.isArray(plan?.targetFiles) ? plan.targetFiles : [],
+          validationCommand: String(plan?.validationCommand || ''),
         } as FrontierRow;
       })
       .sort((a, b) => b.score - a.score || b.frontier - a.frontier || a.depth - b.depth || a.nodeId.localeCompare(b.nodeId));
@@ -599,6 +631,9 @@ export const AgenticLab: React.FC = () => {
                   <span className="rounded bg-white px-2 py-1">{tx('深度', 'Depth')} {selectedFrontier.depth}</span>
                   <span className="rounded bg-white px-2 py-1">{tx('访问', 'Visits')} {selectedFrontier.visits}</span>
                   <span className="rounded bg-white px-2 py-1">{tx('变更', 'Mutation')} {selectedFrontier.mutationKind.toUpperCase()}</span>
+                  {selectedFrontier.patchStrategy && (
+                    <span className="rounded bg-white px-2 py-1">{tx('策略', 'Strategy')} {selectedFrontier.patchStrategy}</span>
+                  )}
                   <span className="rounded bg-sky-100 px-2 py-1 font-semibold text-sky-700">{tx('总分', 'Score')} {selectedFrontier.score.toFixed(2)}</span>
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-4">
@@ -619,6 +654,28 @@ export const AgenticLab: React.FC = () => {
                     <div className="mt-0.5 text-xs text-slate-700">+{selectedFrontier.scoreUrgency.toFixed(2)}</div>
                   </div>
                 </div>
+                {selectedFrontier.patchSummary && (
+                  <div className="mt-2 text-xs text-slate-800">
+                    <span className="font-semibold">{tx('代码改动摘要', 'Code change summary')}: </span>
+                    {selectedFrontier.patchSummary}
+                  </div>
+                )}
+                {selectedFrontier.patchFiles.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <span className="rounded bg-sky-100 px-2 py-0.5 text-sky-700">{tx('目标文件', 'Target files')}</span>
+                    {selectedFrontier.patchFiles.slice(0, 4).map((path, idx) => (
+                      <span key={`frontier-patch-file-${idx}-${path}`} className="rounded border border-sky-200 bg-white px-2 py-0.5 text-sky-700" title={path}>
+                        {path}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {selectedFrontier.validationCommand && (
+                  <div className="mt-1 text-[11px] text-slate-700">
+                    <span className="font-semibold">{tx('校验命令', 'Validation command')}: </span>
+                    <code className="rounded bg-white px-1.5 py-0.5 text-slate-900">{selectedFrontier.validationCommand}</code>
+                  </div>
+                )}
                 {selectedNode?.hypothesis && (
                   <div className="mt-2 text-xs text-slate-700">
                     <span className="font-semibold">{tx('假设', 'Hypothesis')}: </span>
@@ -639,6 +696,7 @@ export const AgenticLab: React.FC = () => {
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
                       <th className="px-2 py-1 text-left">Node</th>
+                      <th className="px-2 py-1 text-left">{tx('变更', 'Mutation')}</th>
                       <th className="px-2 py-1 text-left">Status</th>
                       <th className="px-2 py-1 text-right">F</th>
                       <th className="px-2 py-1 text-right">V</th>
@@ -656,6 +714,12 @@ export const AgenticLab: React.FC = () => {
                           onClick={() => setSelectedFrontierNodeId(row.nodeId)}
                         >
                           <td className="px-2 py-1.5 font-medium text-slate-800">{row.nodeId}</td>
+                          <td className="px-2 py-1.5 text-slate-600">
+                            <span title={row.patchSummary || row.mutationKind}>
+                              {row.mutationKind.toUpperCase()}
+                              {row.patchFiles[0] ? ` · ${String(row.patchFiles[0]).split('/').pop()}` : ''}
+                            </span>
+                          </td>
                           <td className="px-2 py-1.5">
                             <span className={`rounded px-1.5 py-0.5 ${statusBadgeClass(row.status)}`}>{row.status}</span>
                           </td>

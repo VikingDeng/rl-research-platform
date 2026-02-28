@@ -889,7 +889,17 @@ export const AgenticTotCanvas: React.FC = () => {
       })
       .map(node => {
         const search = getSearchMeta(node);
-        const mutationKind = String((mutationPlansByNode.get(node.nodeId) || [])[0]?.mutationKind || '').toLowerCase();
+        const primaryPlan = (mutationPlansByNode.get(node.nodeId) || [])[0] || null;
+        const runSummary = latestNodeRunByNode.get(node.nodeId) || null;
+        const mutationKind = String(primaryPlan?.mutationKind || runSummary?.mutationKind || '').toLowerCase();
+        const changeSummary = String(primaryPlan?.changeSummary || runSummary?.changeSummary || '').trim();
+        const targetFiles = (primaryPlan?.targetFiles && primaryPlan.targetFiles.length > 0
+          ? primaryPlan.targetFiles
+          : runSummary?.targetFiles || [])
+          .map(path => String(path || '').trim())
+          .filter(Boolean);
+        const validationCommand = String(primaryPlan?.validationCommand || '').trim();
+        const strategy = String(primaryPlan?.strategy || '').trim();
         const status = String(node.status || '').toUpperCase();
         const frontier = Number.isFinite(Number(search.frontierScore)) ? Number(search.frontierScore) : 0;
         const value = Number.isFinite(Number(search.value)) ? Number(search.value) : 0;
@@ -908,6 +918,10 @@ export const AgenticTotCanvas: React.FC = () => {
           value,
           evidence,
           mutationKind: mutationKind || 'code',
+          changeSummary,
+          targetFiles,
+          validationCommand,
+          strategy,
           scoreFrontier,
           scoreValue,
           scoreEvidence,
@@ -917,7 +931,7 @@ export const AgenticTotCanvas: React.FC = () => {
       })
       .sort((a, b) => b.score - a.score || b.frontier - a.frontier || a.depth - b.depth || a.nodeId.localeCompare(b.nodeId));
     return rows.slice(0, 8);
-  }, [visibleNodes, mutationPlansByNode, evidenceScoreByNode]);
+  }, [visibleNodes, mutationPlansByNode, evidenceScoreByNode, latestNodeRunByNode]);
   const spotlightNodeId = useMemo(() => {
     if (!spotlightMode) return '';
     if (replayActiveEvent?.nodeId && visibleNodeMap.has(replayActiveEvent.nodeId) && replayRevealedNodeIds.has(replayActiveEvent.nodeId)) {
@@ -1675,7 +1689,7 @@ export const AgenticTotCanvas: React.FC = () => {
                     centerNodeInViewport(row.nodeId, 'smooth');
                   }}
                   className={`rounded border px-2 py-1 ${statusTone} ${active ? 'ring-1 ring-blue-300' : 'hover:bg-slate-50'}`}
-                  title={`${row.nodeId} | frontier=${Math.round(row.frontier * 100)} | depth=${row.depth} | mutation=${String(row.mutationKind || '').toUpperCase()}`}
+                  title={`${row.nodeId} | frontier=${Math.round(row.frontier * 100)} | depth=${row.depth} | mutation=${String(row.mutationKind || '').toUpperCase()}${row.targetFiles.length > 0 ? ` | files=${row.targetFiles.slice(0, 3).join(',')}` : ''}${row.changeSummary ? ` | ${row.changeSummary}` : ''}`}
                 >
                   <span className="font-semibold">{row.nodeId}</span>
                   {' '}
@@ -1717,6 +1731,38 @@ export const AgenticTotCanvas: React.FC = () => {
                 U +{spotlightReason.scoreUrgency.toFixed(2)} · {tx('总分', 'Total')} {spotlightReason.score.toFixed(2)}
               </div>
             </div>
+            {spotlightReason.changeSummary && (
+              <div className="mt-1.5 text-[11px] text-sky-900">
+                <span className="font-semibold">{tx('代码改动摘要', 'Code change summary')}: </span>
+                {spotlightReason.changeSummary}
+              </div>
+            )}
+            {spotlightReason.targetFiles.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="rounded bg-sky-100 px-2 py-0.5 text-sky-700">{tx('目标文件', 'Target files')}</span>
+                {spotlightReason.targetFiles.slice(0, 4).map((path, idx) => (
+                  <span
+                    key={`spotlight-target-${idx}-${path}`}
+                    className="rounded border border-sky-200 bg-white px-2 py-0.5 text-sky-700"
+                    title={path}
+                  >
+                    {path}
+                  </span>
+                ))}
+              </div>
+            )}
+            {spotlightReason.validationCommand && (
+              <div className="mt-1 text-[11px] text-sky-800">
+                <span className="font-semibold">{tx('校验命令', 'Validation command')}: </span>
+                <code className="rounded bg-white px-1.5 py-0.5 text-sky-900">{spotlightReason.validationCommand}</code>
+              </div>
+            )}
+            {spotlightReason.strategy && (
+              <div className="mt-1 text-[11px] text-sky-700">
+                <span className="font-semibold">{tx('策略', 'Strategy')}: </span>
+                {spotlightReason.strategy}
+              </div>
+            )}
           </div>
         )}
 
