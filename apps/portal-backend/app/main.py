@@ -152,7 +152,11 @@ print(f"[System] Frontend Dist Path: {FRONTEND_DIST}")
 print(f"[System] Assets Path: {FRONTEND_DIST / 'assets'}")
 
 if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    if (FRONTEND_DIST / "_next").exists():
+        app.mount("/_next", StaticFiles(directory=FRONTEND_DIST / "_next"), name="_next")
+    elif (FRONTEND_DIST / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+        
     spa_headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
     @app.get("/")

@@ -185,6 +185,7 @@ class TrainJobRequest(APIModel):
     git: Optional[GitConfig] = None
     group_id: Optional[str] = None
     dataset_id: Optional[str] = None
+    webhook_url: Optional[str] = None
 
 
 class TrainJobResponse(APIModel):

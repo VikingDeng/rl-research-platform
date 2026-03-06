@@ -1,8 +1,70 @@
 'use client';
 
-import { Activity, Cpu, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Activity, Cpu, CheckCircle2, AlertCircle, X, Terminal } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+
+const LogModal = ({ runId, onClose }: { runId: string, onClose: () => void }) => {
+  const [logs, setLogs] = useState<string[]>([]);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Assuming backend is at localhost:8000 for local dev
+    // In production, might need to dynamically get WS URL based on window.location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname === 'localhost' ? 'localhost:8000' : window.location.host;
+    const wsUrl = `${protocol}//${host}/api/v1/runs/${runId}/logs/stream`;
+    
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onmessage = (event) => {
+      setLogs((prev) => [...prev, event.data]);
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [runId]);
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-[#1e1e1e] w-full max-w-4xl h-[80vh] rounded-xl shadow-2xl flex flex-col overflow-hidden border border-gray-800">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-[#252526]">
+          <div className="flex items-center gap-3 text-gray-300">
+            <Terminal className="w-5 h-5 text-blue-400" />
+            <h2 className="font-medium font-mono text-sm">Real-time Logs: {runId}</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        {/* Log Content */}
+        <div className="flex-1 overflow-y-auto p-4 font-mono text-xs md:text-sm text-green-400/90 leading-relaxed bg-[#1e1e1e]">
+          {logs.length === 0 ? (
+            <div className="text-gray-500 flex items-center gap-2">
+              <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+              Waiting for log stream...
+            </div>
+          ) : (
+            logs.map((log, i) => (
+              <div key={i} className="hover:bg-white/5 px-2 py-0.5 rounded transition-colors break-all">
+                {log}
+              </div>
+            ))
+          )}
+          <div ref={logsEndRef} />
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function Dashboard() {
   const { data: runs = [], isLoading: runsLoading } = useQuery({
@@ -15,12 +77,14 @@ export default function Dashboard() {
     queryFn: () => api.getModels(),
   });
 
+  const [activeLogRunId, setActiveLogRunId] = useState<string | null>(null);
+
   const activeRuns = runs.filter((r: any) => r.status === 'RUNNING');
   const completedRuns = runs.filter((r: any) => r.status === 'COMPLETED');
   const failedRuns = runs.filter((r: any) => r.status === 'FAILED');
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 relative">
       
       {/* Header */}
       <div className="flex flex-col gap-2">
@@ -71,7 +135,9 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="px-3 py-1.5 bg-white border border-gray-200 rounded text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm">
+                    <button 
+                      onClick={() => setActiveLogRunId(run.id)}
+                      className="px-3 py-1.5 bg-white border border-gray-200 rounded text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm">
                       日志
                     </button>
                     <button className="px-3 py-1.5 bg-white border border-gray-200 rounded text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm">
@@ -110,8 +176,14 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-
       </div>
+
+      {activeLogRunId && (
+        <LogModal 
+          runId={activeLogRunId} 
+          onClose={() => setActiveLogRunId(null)} 
+        />
+      )}
     </div>
   );
 }

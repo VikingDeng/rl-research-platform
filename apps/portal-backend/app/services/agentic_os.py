@@ -454,6 +454,7 @@ class AgenticOSService:
         nodes = self._build_tot_tree(validation.normalized_spec)
         state: Dict[str, Any] = {
             "run_id": run_id,
+            "webhook_url": payload.webhook_url,
             "created_at": now_iso,
             "updated_at": now_iso,
             "status": "PENDING",
@@ -714,6 +715,25 @@ class AgenticOSService:
             self._mark_idempotent_done(state, scope="execute", key=key, status=str(state.get("status")))
         self._persist_state(run_id, state)
         self._sync_contract_and_registry(run_id)
+        
+        # Fire dynamic webhook if status reached terminal state
+        if state["status"] in {"SUCCEEDED", "FAILED", "BLOCKED"} and state.get("webhook_url"):
+            from app.services.webhook_service import send_dynamic_webhook
+            import threading
+            
+            metrics = {}
+            if state["status"] == "SUCCEEDED":
+                # Collect metrics from contract or search stats
+                metrics = state.get("search_stats", {})
+            
+            payload = {
+                "run_id": run_id,
+                "status": "COMPLETED" if state["status"] == "SUCCEEDED" else state["status"],
+                "metrics": metrics,
+                "error_message": state.get("failure_reason") or ""
+            }
+            # Fire in background to not block the request
+            threading.Thread(target=send_dynamic_webhook, args=(state["webhook_url"], payload), daemon=True).start()
         return state
 
     def approve_actions(self, run_id: str, payload: AgenticApproveRequest) -> Dict[str, Any]:
@@ -3151,6 +3171,9 @@ PY
                 reason = ";".join(invalid_reasons[:4]) if invalid_reasons else "empty_after_validation"
                 raise RuntimeError(f"llm_required_invalid_mutation_templates lane={lane} reason={reason}")
             return normalized
+        except RuntimeError:
+            # Re-raise runtime errors (like validation failures) so they can be caught by tests/callers
+            raise
         except Exception as exc:
             self._append_event(
                 state,

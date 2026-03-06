@@ -41,3 +41,16 @@ def dispatch_webhooks(db: Session, event: str, payload: Dict[str, Any]) -> None:
                     
     except Exception as exc:
         logger.error(f"Error in webhook dispatch: {exc}")
+
+def send_dynamic_webhook(webhook_url: str, payload: Dict[str, Any]) -> None:
+    """
+    Sends a POST request to a dynamically provided webhook_url.
+    Used for Orchestrator delegation callbacks.
+    """
+    if not webhook_url:
+        return
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            client.post(webhook_url, json=payload)
+    except Exception as exc:
+        logger.warning(f"Failed to send dynamic webhook to {webhook_url}: {exc}")

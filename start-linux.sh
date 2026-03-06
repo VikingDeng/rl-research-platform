@@ -4,7 +4,7 @@ set -e
 # === RL Platform: User-Space Launcher ===
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/apps/portal-backend"
-export FRONTEND_DIST="$ROOT_DIR/dist"
+export FRONTEND_DIST="$ROOT_DIR/web/out"
 export DISABLE_CSP="1"
 export LOCAL_EXECUTOR_MODE="real"
 export DETERMINED_MOCK="0"
@@ -41,19 +41,8 @@ echo -e "${GREEN}=== Starting RL Research Platform ===${NC}"
 # 0. Ensure Frontend Build (User-Space Node)
 # Check for index.html AND referenced assets to ensure valid build
 NEEDS_BUILD=0
-if [ ! -f "$FRONTEND_DIST/index.html" ] || [ -z "$(ls -A $FRONTEND_DIST/assets 2>/dev/null)" ]; then
+if [ ! -f "$FRONTEND_DIST/index.html" ] || [ ! -d "$FRONTEND_DIST/_next" ]; then
     NEEDS_BUILD=1
-else
-    MISSING_ASSETS=0
-    for asset in $(grep -o '/assets/[^"]*' "$FRONTEND_DIST/index.html"); do
-        if [ ! -f "$FRONTEND_DIST${asset}" ]; then
-            MISSING_ASSETS=1
-            break
-        fi
-    done
-    if [ "$MISSING_ASSETS" -eq 1 ]; then
-        NEEDS_BUILD=1
-    fi
 fi
 
 if [ "$NEEDS_BUILD" -eq 1 ]; then
@@ -72,7 +61,7 @@ if [ "$NEEDS_BUILD" -eq 1 ]; then
     echo "NPM version: $(npm -v)"
 
     echo "Building Frontend..."
-    cd "$ROOT_DIR"
+    cd "$ROOT_DIR/web"
     # Clean install to avoid version conflicts
     rm -rf node_modules
     
@@ -83,18 +72,19 @@ if [ "$NEEDS_BUILD" -eq 1 ]; then
         npm install
     fi
 
-    echo "Generating OpenAPI client..."
-    npx openapi-typescript docs/openapi_v1.yaml -o apps/portal-frontend/src/api/generated/types.ts
-    npx openapi-typescript-codegen --input docs/openapi_v1.yaml --output apps/portal-frontend/src/api/generated --client fetch
+    # Ignore openapi generation for now as it's legacy
+    # npx openapi-typescript docs/openapi_v1.yaml -o apps/portal-frontend/src/api/generated/types.ts
+    # npx openapi-typescript-codegen --input docs/openapi_v1.yaml --output apps/portal-frontend/src/api/generated --client fetch
     
     npm run build
     
     if [ ! -d "$FRONTEND_DIST" ]; then
-        echo "Error: Build failed, dist directory not found."
+        echo "Error: Build failed, dist directory not found at $FRONTEND_DIST."
         exit 1
     fi
     
     echo "Frontend built successfully at $FRONTEND_DIST"
+    cd "$ROOT_DIR"
 else
     echo -e "${GREEN}[0/4] Frontend build found at $FRONTEND_DIST. Skipping build.${NC}"
 fi

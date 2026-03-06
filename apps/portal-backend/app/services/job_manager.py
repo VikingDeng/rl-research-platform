@@ -947,6 +947,7 @@ class JobManager:
             
             # Dispatch Webhook
             try:
+                from app.services.webhook_service import send_dynamic_webhook
                 dispatch_webhooks(db, "job.finished", {
                     "job_id": job.id,
                     "run_id": run.id,
@@ -954,8 +955,24 @@ class JobManager:
                     "exit_code": exit_code,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 })
-            except Exception:
-                pass
+                
+                # Check for dynamic webhook_url in run config
+                if isinstance(run.config, dict) and run.config.get("webhook_url"):
+                    metrics_payload = run.metrics or {}
+                    if run.type == "EVAL":
+                        result = db.query(models.EvalResult).filter(models.EvalResult.run_id == run.id).first()
+                        if result:
+                            metrics_payload = result.metrics or metrics_payload
+                    
+                    send_dynamic_webhook(run.config["webhook_url"], {
+                        "run_id": run.id,
+                        "status": final_status,
+                        "metrics": metrics_payload,
+                        "error_message": job.message if final_status == "FAILED" else ""
+                    })
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Error dispatching webhooks: {e}")
 
             db.commit()
         finally:

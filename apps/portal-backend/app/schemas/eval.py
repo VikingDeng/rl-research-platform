@@ -131,6 +131,7 @@ class EvalJobRequest(APIModel):
     policy_snapshot_id: str
     protocol_id: str
     resources: Optional[ResourceSpec] = None
+    webhook_url: Optional[str] = None
 
 
 class EvalJobResponse(APIModel):
@@ -146,6 +147,7 @@ class MatrixJobRequest(APIModel):
     games_per_pair: Optional[int] = None
     metric: Optional[str] = None
     resources: Optional[ResourceSpec] = None
+    webhook_url: Optional[str] = None
 
 
 class MatrixJobResponse(APIModel):

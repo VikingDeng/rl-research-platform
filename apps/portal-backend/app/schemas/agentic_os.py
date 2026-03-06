@@ -53,6 +53,12 @@ class AgenticLlmNodePolicy(APIModel):
     safety: bool = True
 
 
+class MutationTemplate(APIModel):
+    diff: str
+    instruction: str
+    target_files: List[str] = Field(default_factory=list)
+    mutation_kind: str = "code"
+
 class AgenticIdeaInput(APIModel):
     title: str
     task_goal: str
@@ -65,6 +71,7 @@ class AgenticIdeaInput(APIModel):
     local_command: Optional[str] = None
     git: Optional[AgenticGitContext] = None
     requested_actions: List[str] = Field(default_factory=list)
+    mutation_template: Optional[MutationTemplate] = None
     sub_agent_policy: AgenticSubAgentPolicy = Field(default_factory=AgenticSubAgentPolicy)
     approval_policy: AgenticApprovalPolicy = Field(default_factory=AgenticApprovalPolicy)
     llm_policy: AgenticLlmNodePolicy = Field(default_factory=AgenticLlmNodePolicy)
@@ -136,6 +143,7 @@ class AgenticRunCreateRequest(APIModel):
     idea: AgenticIdeaInput
     auto_execute: bool = False
     induce_failure: bool = False
+    webhook_url: Optional[str] = None
 
 
 class AgenticExecuteRequest(APIModel):

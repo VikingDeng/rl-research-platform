@@ -35,4 +35,9 @@ export const api = {
   
   // --- Jobs ---
   getJobs: () => authFetch(`${apiBaseUrl}/jobs`).catch(() => []), // Fallback if endpoint varies
+  submitDemoJob: (data: { env: string, algo: string, gpu: string }) => authFetch(`${apiBaseUrl}/runs/demo-submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  }),
 };

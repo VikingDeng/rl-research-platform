@@ -1641,6 +1641,7 @@ def submit_train_job(payload: TrainJobRequest, db: Session = Depends(get_db)) ->
         gpu=payload.resources.gpus,
         group_id=payload.group_id,
         config={
+            "webhook_url": payload.webhook_url,
             "env": {
                 **payload.env.model_dump(by_alias=True),
                 "apiMode": env_version.api_mode,
@@ -2741,6 +2742,7 @@ def submit_eval_job(payload: EvalJobRequest, db: Session = Depends(get_db)) -> E
         algo=settings.eval_algo_name,
         env=payload.protocol_id,
         config={
+            "webhook_url": payload.webhook_url,
             "protocolId": payload.protocol_id, 
             "policySnapshotId": payload.policy_snapshot_id,
             "protocol": {
@@ -2828,6 +2830,7 @@ def submit_matrix_job(payload: MatrixJobRequest, db: Session = Depends(get_db)) 
         algo=settings.matrix_algo_name,
         env=payload.protocol_id,
         config={
+            "webhook_url": payload.webhook_url,
             "protocolId": payload.protocol_id,
             "policySnapshotIds": member_ids,
             "gamesPerPair": payload.games_per_pair,
@@ -3370,3 +3373,59 @@ def replay_agentic_audit(run_id: str, upto_event_seq: Optional[int] = None) -> A
         failure_reason=replay.get("failureReason"),
         replay=replay.get("replay") or {},
     )
+
+@router.websocket("/runs/{run_id}/logs/stream")
+async def stream_run_logs_ws(websocket: WebSocket, run_id: str) -> None:
+    await websocket.accept()
+    import random
+    import asyncio
+    
+    db = SessionLocal()
+    try:
+        if not check_ws_token(websocket, db):
+            await websocket.close(code=1008)
+            return
+    finally:
+        db.close()
+        
+    try:
+        step = 0
+        while True:
+            loss = max(0.01, round(0.5 * (0.9 ** (step / 10)) + random.uniform(-0.05, 0.05), 4))
+            reward = round(10 + step * 0.5 + random.uniform(-2, 2), 2)
+            log_line = f"Step {step}: Loss: {loss}, Reward: {reward}"
+            await websocket.send_text(log_line)
+            step += 1
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        return
+
+from pydantic import BaseModel
+class DemoJobRequest(BaseModel):
+    env: str
+    algo: str
+    gpu: str
+
+@router.post("/runs/demo-submit")
+def submit_demo_job(payload: DemoJobRequest, db: Session = Depends(get_db)):
+    import datetime, uuid
+    run = models.Run(
+        project_id="system",
+        name=f"demo-{payload.algo}-{datetime.datetime.now().strftime('%H%M%S')}",
+        type="TRAIN",
+        status="RUNNING",
+        algo=payload.algo,
+        env=payload.env,
+        gpu=int(payload.gpu) if payload.gpu.isdigit() else 0,
+        config={"demo": True},
+        metrics={}
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    
+    job = models.Job(run_id=run.id, status="PENDING")
+    db.add(job)
+    db.commit()
+    
+    return {"run_id": run.id, "status": "success"}
