@@ -135,6 +135,13 @@ export type AgenticIdeaInput = {
     requireDistinctRoles?: boolean;
     approvalTtlMinutes?: number;
   };
+  llmPolicy?: {
+    planning: boolean;
+    coding: boolean;
+    experiment: boolean;
+    review: boolean;
+    safety: boolean;
+  };
 };
 
 export type AgenticNode = {
@@ -146,6 +153,8 @@ export type AgenticNode = {
   executionPlan: string;
   expectedMetrics: Record<string, unknown>;
   budget: Record<string, unknown>;
+  nodeFunction?: string | null;
+  llmEnabled?: boolean | null;
   risk: string;
   status: string;
   rationale?: string | null;
@@ -221,6 +230,8 @@ export type AgenticLlmTraceRecord = {
   model: string;
   attempt: number;
   latencyMs: number;
+  promptTokens: number;
+  completionTokens: number;
   nodeId?: string | null;
   role?: string | null;
   promptHash: string;

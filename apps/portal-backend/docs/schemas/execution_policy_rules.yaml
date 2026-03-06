@@ -1,0 +1,54 @@
+version: '1.0'
+localShell:
+  enabled: true
+  allowedCommands:
+  - python
+  - python3
+  - echo
+  blockedTokens:
+  - ;
+  - '&&'
+  - '||'
+  - '|'
+  - '>'
+  - <
+  - $(
+  - '`'
+  - ..
+  blockedCommandNames:
+  - rm
+  - curl
+  - wget
+  - nc
+  - ncat
+  - ssh
+  - scp
+  - bash
+  - sh
+  - zsh
+  - fish
+  - powershell
+  - pwsh
+  maxArgs: 20
+  maxCommandLength: 280
+  maxArgLength: 160
+  defaultTimeoutSeconds: 30
+  minTimeoutSeconds: 5
+  maxTimeoutSeconds: 120
+  maxOutputChars: 2400
+mleRunner:
+  enabled: true
+  pythonBinary: python
+  modulePath: toto.run
+  mode: search
+  task: tabular
+  dataPath: examples/tabular
+  recipesPath: examples/recipes/tabular.yaml
+  maxBudget: 2
+  launcher: local
+  dryRunOnly: true
+  disableLlm: true
+  defaultTimeoutSeconds: 90
+  minTimeoutSeconds: 20
+  maxTimeoutSeconds: 300
+  maxOutputChars: 4000

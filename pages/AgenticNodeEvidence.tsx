@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, GitBranchPlus, Play, RefreshCcw, WandSparkles } from 'lucide-react';
+import { ArrowLeft, GitBranchPlus, Play, RefreshCcw, WandSparkles } from 'lucide-react';
 import { api } from '../services/api';
 import { useI18n } from '../services/i18n';
 import type { AgenticLlmTraceRecord, AgenticNode, AgenticNodeRunRecord, AgenticRunDetail, AgenticSubAgentRecord } from '../types';
@@ -700,15 +700,7 @@ export const AgenticNodeEvidence: React.FC = () => {
               className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
             >
               <ArrowLeft className="mr-1.5 h-4 w-4" />
-              {tx('返回树搜索', 'Back to Tree')}
-            </button>
-            <button
-              type="button"
-              onClick={() => runId && navigate(`/agentic/runs/${encodeURIComponent(runId)}/agents`)}
-              className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100"
-            >
-              <Bot className="mr-1.5 h-4 w-4" />
-              {tx('Agent 面板', 'Agent Panel')}
+              {tx('返回探索主页', 'Back to Explorer')}
             </button>
             <button
               type="button"

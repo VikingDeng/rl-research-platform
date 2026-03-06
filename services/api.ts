@@ -103,10 +103,6 @@ const resolveDemoMode = () => {
   if (localFlag === '1') return true;
   if (localFlag === '0') return false;
 
-  if (savedPreference === null && (import.meta as any)?.env?.DEV) {
-    return true;
-  }
-
   return envDemo;
 };
 
@@ -680,7 +676,6 @@ const markRuntimeFallbackToMock = () => {
   runtimeFallbackToMock = true;
   backendReachable = false;
   if (typeof window !== 'undefined') {
-    localStorage.setItem(DEMO_STORAGE_KEY, '1');
     console.warn('[api] Backend unavailable, switched to demo fallback.');
   }
 };

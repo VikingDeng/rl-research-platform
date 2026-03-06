@@ -15,7 +15,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const headerLabel = useMemo(() => {
     const path = location.pathname || '/';
     if (path === '/') return t('layout.header.dashboard', 'Dashboard');
-    if (path.startsWith('/agentic')) return t('layout.header.agentic', 'ToT Canvas');
+    if (path.startsWith('/agentic')) return t('layout.header.agentic', 'Agentic Explorer');
     if (path.startsWith('/projects/')) return t('layout.header.project', 'Project Workspace');
     if (path.startsWith('/registries/')) return t('layout.header.registries', 'Registries');
     if (path.startsWith('/matrix')) return t('layout.header.matrix', 'Matrix');

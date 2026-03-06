@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResearchSpec",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "specId",
+    "title",
+    "taskGoal",
+    "environment",
+    "successMetrics",
+    "budget",
+    "constraints"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string"
+    },
+    "specId": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "taskGoal": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "name",
+        "dataSources"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dataSources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "successMetrics": {
+      "type": "object"
+    },
+    "budget": {
+      "type": "object",
+      "required": [
+        "gpuHours",
+        "wallclockMinutes"
+      ],
+      "properties": {
+        "gpuHours": {
+          "type": "number",
+          "minimum": 0
+        },
+        "wallclockMinutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "properties": {
+        "compliance": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "forbiddenActions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowNetwork": {
+          "type": "boolean"
+        },
+        "allowDependencyInstall": {
+          "type": "boolean"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "offline_stub",
+            "local_shell",
+            "mle_runner"
+          ]
+        },
+        "localCommand": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "subAgentPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxPerNode": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "maxTotal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 10000
+        }
+      }
+    },
+    "approvalPolicy": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "balanced",
+            "permissive"
+          ]
+        },
+        "highRiskActions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "blockedActionRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "highRiskActionRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requireApprovalForUnknownActions": {
+          "type": "boolean"
+        },
+        "minApprovals": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "requireDistinctRoles": {
+          "type": "boolean"
+        },
+        "approvalTtlMinutes": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 10080
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "requestedActions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "offlineMode": {
+      "type": "boolean"
+    }
+  }
+}

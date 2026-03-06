@@ -1,0 +1,131 @@
+version: '1.0'
+stepHeuristics:
+  stepsPerMinute: 150
+  minTotalEnvSteps: 1000
+  maxTotalEnvSteps: 50000
+  gpuThresholdToEnable: 0.25
+  defaultRolloutLen: 128
+  defaultBatchSize: 2048
+  defaultLr: 0.0003
+profiles:
+  offline_safe:
+    priority: 90
+    match:
+      executionModes:
+      - offline_stub
+      allowNetwork: false
+      allowDependencyInstall: false
+    rootConfig:
+      algo:
+        family: mappo
+        entrypoint: algorithms.simple_train:train
+      train:
+        stepsPerMinute: 140
+        rolloutLen: 128
+        batchSize: 2048
+        lr: 0.0003
+      resources:
+        gpuThresholdToEnable: 0.5
+    evalProtocol:
+      gamesPerPair: 8
+      seeds:
+      - 1
+      - 2
+      - 3
+      confidenceLevel: 0.95
+      matrixPlan:
+        mode: NxN
+        checkpointSelection: best_k
+        k: 4
+    riskHints:
+    - offline_first
+    - dependency_install_disabled
+  online_guarded:
+    priority: 80
+    match:
+      allowNetwork: true
+    rootConfig:
+      algo:
+        family: mappo
+        entrypoint: algorithms.simple_train:train
+      train:
+        stepsPerMinute: 160
+        rolloutLen: 128
+        batchSize: 2048
+        lr: 0.00025
+      resources:
+        gpuThresholdToEnable: 0.1
+    evalProtocol:
+      gamesPerPair: 10
+      seeds:
+      - 1
+      - 2
+      - 3
+      - 4
+      confidenceLevel: 0.95
+      matrixPlan:
+        mode: NxN
+        checkpointSelection: best_k
+        k: 5
+    riskHints:
+    - network_enabled_requires_gate
+  high_budget_search:
+    priority: 70
+    match:
+      minGpuHours: 4
+      minWallclockMinutes: 180
+      minMetricCount: 2
+    rootConfig:
+      algo:
+        family: mappo
+        entrypoint: algorithms.simple_train:train
+      train:
+        stepsPerMinute: 200
+        rolloutLen: 256
+        batchSize: 4096
+        lr: 0.0002
+      resources:
+        gpuThresholdToEnable: 0.0
+        minGpus: 1
+        maxGpus: 1
+    evalProtocol:
+      gamesPerPair: 12
+      seeds:
+      - 1
+      - 2
+      - 3
+      - 4
+      confidenceLevel: 0.97
+      matrixPlan:
+        mode: NxN
+        checkpointSelection: best_k
+        k: 6
+    riskHints:
+    - high_budget_observability_required
+  balanced_default:
+    priority: 10
+    match: {}
+    rootConfig:
+      algo:
+        family: mappo
+        entrypoint: algorithms.simple_train:train
+      train:
+        stepsPerMinute: 150
+        rolloutLen: 128
+        batchSize: 2048
+        lr: 0.0003
+      resources:
+        gpuThresholdToEnable: 0.25
+    evalProtocol:
+      gamesPerPair: 8
+      seeds:
+      - 1
+      - 2
+      - 3
+      confidenceLevel: 0.95
+      matrixPlan:
+        mode: NxN
+        checkpointSelection: best_k
+        k: 4
+    riskHints:
+    - balanced_default_profile

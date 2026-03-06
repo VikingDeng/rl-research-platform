@@ -30,7 +30,6 @@ const AgenticIdeaBuilder = lazy(() => import('./pages/AgenticIdeaBuilder').then(
 const AgenticLab = lazy(() => import('./pages/AgenticLab').then(mod => ({ default: mod.AgenticLab })));
 const AgenticLabClassic = lazy(() => import('./pages/AgenticLabClassic').then(mod => ({ default: mod.AgenticLab })));
 const AgenticNodeEvidence = lazy(() => import('./pages/AgenticNodeEvidence').then(mod => ({ default: mod.AgenticNodeEvidence })));
-const AgenticAgents = lazy(() => import('./pages/AgenticAgents').then(mod => ({ default: mod.AgenticAgents })));
 const CommandPalette = lazy(() => import('./components/CommandPalette').then(mod => ({ default: mod.CommandPalette })));
 
 const RouteFallback: React.FC = () => {
@@ -88,6 +87,14 @@ const App: React.FC = () => {
                         <Route
                           path="/agentic"
                           element={(
+                            <RouteErrorBoundary title="Agentic explorer render failed">
+                              <AgenticLab />
+                            </RouteErrorBoundary>
+                          )}
+                        />
+                        <Route
+                          path="/agentic/canvas"
+                          element={(
                             <RouteErrorBoundary title="ToT page render failed">
                               <AgenticTotCanvas />
                             </RouteErrorBoundary>
@@ -97,7 +104,7 @@ const App: React.FC = () => {
                         <Route path="/agentic/workbench" element={<AgenticLab />} />
                         <Route path="/agentic/classic" element={<AgenticLabClassic />} />
                         <Route path="/agentic/runs/:runId/nodes/:nodeId" element={<AgenticNodeEvidence />} />
-                        <Route path="/agentic/runs/:runId/agents" element={<AgenticAgents />} />
+                        <Route path="/agentic/runs/:runId/agents" element={<Navigate to="/agentic" replace />} />
                         
                         {/* Analysis */}
                         <Route path="/matrix" element={<MatrixView />} />

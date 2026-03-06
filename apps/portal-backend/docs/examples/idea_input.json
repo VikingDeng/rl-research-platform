@@ -1,0 +1,59 @@
+{
+  "title": "SMAC win-rate lift under budget",
+  "taskGoal": "Improve SMAC 3s5z win rate by at least 5% while keeping GPU cost bounded.",
+  "environment": "pettingzoo.smac_v2:3s5z",
+  "dataSources": [
+    "registry://baseline_runs",
+    "s3://marl-datasets/smac/3s5z"
+  ],
+  "successMetrics": {
+    "winRate": ">=0.62",
+    "eloLift": ">=35"
+  },
+  "budget": {
+    "gpuHours": 4,
+    "wallclockMinutes": 180
+  },
+  "constraints": {
+    "compliance": [
+      "no_pii",
+      "no_external_data_push"
+    ],
+    "forbiddenActions": [
+      "data_exfiltration"
+    ],
+    "allowNetwork": false,
+    "allowDependencyInstall": false
+  },
+  "executionMode": "offline_stub",
+  "localCommand": null,
+  "subAgentPolicy": {
+    "enabled": true,
+    "maxDepth": 2,
+    "maxPerNode": 3,
+    "maxTotal": 24,
+    "timeoutMs": 1500
+  },
+  "approvalPolicy": {
+    "mode": "balanced",
+    "highRiskActions": [
+      "unknown_script_execution"
+    ],
+    "blockedActionRoles": [
+      "admin",
+      "security"
+    ],
+    "highRiskActionRoles": [
+      "admin",
+      "ops",
+      "security"
+    ],
+    "requireApprovalForUnknownActions": true,
+    "minApprovals": 1,
+    "requireDistinctRoles": false,
+    "approvalTtlMinutes": 120
+  },
+  "requestedActions": [
+    "unknown_script_execution"
+  ]
+}

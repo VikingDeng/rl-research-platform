@@ -48,8 +48,10 @@ const parseTimestamp = (value: unknown): number => {
 const flattenFallbackSubAgents = (detail: AgenticRunDetail | null): AgenticSubAgentRecord[] => {
   if (!detail) return [];
   const rows: AgenticSubAgentRecord[] = [];
-  (detail.totTree || []).forEach(node => {
-    (node.subAgents || []).forEach((item, idx) => {
+  const treeRows = Array.isArray(detail.totTree) ? detail.totTree : [];
+  treeRows.forEach(node => {
+    const subRows = Array.isArray(node.subAgents) ? node.subAgents : [];
+    subRows.forEach((item, idx) => {
       const record = item as Record<string, unknown>;
       const subAgentId = String(record.subAgentId || record.sub_agent_id || `${node.nodeId}-sub-${idx + 1}`);
       rows.push({
@@ -73,7 +75,8 @@ const flattenFallbackSubAgents = (detail: AgenticRunDetail | null): AgenticSubAg
 
 const parseApprovalRows = (detail: AgenticRunDetail | null): ApprovalRow[] => {
   if (!detail) return [];
-  return (detail.pendingApprovals || []).map(item => {
+  const rows = Array.isArray(detail.pendingApprovals) ? detail.pendingApprovals : [];
+  return rows.map(item => {
     const row = item as Record<string, unknown>;
     const id = String(row.approvalId || row.approval_id || row.id || row.actionId || row.action_id || '');
     const action = String(row.action || row.actionName || row.action_name || 'unknown_action');
@@ -311,7 +314,7 @@ export const AgenticAgents: React.FC = () => {
               className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
             >
               <ArrowLeft className="mr-1.5 h-4 w-4" />
-              {tx('返回树搜索', 'Back to Tree')}
+              {tx('返回探索主页', 'Back to Explorer')}
             </button>
             <button
               type="button"

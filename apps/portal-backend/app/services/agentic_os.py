@@ -295,6 +295,16 @@ class AgenticOSService:
                         "approvalTtlMinutes": {"type": "integer", "minimum": 5, "maximum": 10080},
                     },
                 },
+                "llmPolicy": {
+                    "type": "object",
+                    "properties": {
+                        "planning": {"type": "boolean"},
+                        "coding": {"type": "boolean"},
+                        "experiment": {"type": "boolean"},
+                        "review": {"type": "boolean"},
+                        "safety": {"type": "boolean"},
+                    },
+                },
                 "git": {
                     "type": "object",
                     "properties": {
@@ -333,6 +343,13 @@ class AgenticOSService:
                     "maxPerNode": 3,
                     "maxTotal": 24,
                     "timeoutMs": 1500,
+                },
+                "llmPolicy": {
+                    "planning": True,
+                    "coding": True,
+                    "experiment": True,
+                    "review": True,
+                    "safety": True,
                 },
                 "approvalPolicy": {
                     "mode": "balanced",
@@ -980,6 +997,8 @@ class AgenticOSService:
             "execution_plan": payload.execution_plan,
             "expected_metrics": payload.expected_metrics,
             "budget": payload.budget,
+            "node_function": "coding",
+            "llm_enabled": bool(self._is_node_llm_enabled(state, parent)),
             "risk": payload.risk,
             "status": "PENDING",
             "rationale": "User-inserted branch",
@@ -1730,6 +1749,13 @@ PY
                 "maxTotal": int(max(1, min(64, idea.sub_agent_policy.max_total))),
                 "timeoutMs": int(max(50, min(10000, idea.sub_agent_policy.timeout_ms))),
             },
+            "llmPolicy": {
+                "planning": bool(idea.llm_policy.planning),
+                "coding": bool(idea.llm_policy.coding),
+                "experiment": bool(idea.llm_policy.experiment),
+                "review": bool(idea.llm_policy.review),
+                "safety": bool(idea.llm_policy.safety),
+            },
             "approvalPolicy": approval_policy,
             "approvalPolicyMeta": approval_policy_meta,
             "git": idea.git.model_dump(by_alias=True) if idea.git else None,
@@ -1880,6 +1906,7 @@ PY
         execution = spec.get("execution") or {}
         execution_mode = self._normalize_execution_mode(execution.get("mode"))
         sub_agent_policy = spec.get("subAgentPolicy") or {}
+        llm_policy = self._normalize_llm_policy(spec.get("llmPolicy") or {})
         approval_policy = self._normalize_approval_policy(spec.get("approvalPolicy") or {})
         selection = self._select_spec_generation_profile(spec)
         profile = selection.get("profile") or {}
@@ -1968,7 +1995,8 @@ PY
                     "maxPerNode": int(sub_agent_policy.get("maxPerNode", 3)),
                     "maxTotal": int(sub_agent_policy.get("maxTotal", 24)),
                     "timeoutMs": int(sub_agent_policy.get("timeoutMs", 1500)),
-                }
+                },
+                "llmPolicy": llm_policy,
             },
             "generation": {
                 "profileId": selection.get("profileId"),
@@ -2015,6 +2043,7 @@ PY
         execution_mode = self._normalize_execution_mode(execution.get("mode"))
         approval_policy = self._normalize_approval_policy(spec.get("approvalPolicy") or {})
         approval_policy_meta = spec.get("approvalPolicyMeta") or self._approval_policy_snapshot(policy=approval_policy)
+        llm_policy = self._normalize_llm_policy(spec.get("llmPolicy") or {})
         selection = self._select_spec_generation_profile(spec)
         profile = selection.get("profile") or {}
         risk_hints = [str(v).strip() for v in (profile.get("riskHints") or []) if str(v).strip()]
@@ -2042,15 +2071,67 @@ PY
             f"- Approval rules hash: {approval_policy_meta.get('rulesHash')}",
             f"- Approval policy hash: {approval_policy_meta.get('policyHash')}",
             f"- Approval template candidates: {', '.join(approval_policy_meta.get('matchedTemplates') or []) or 'none'}",
+            f"- Node LLM toggles: planning={llm_policy.get('planning')}, coding={llm_policy.get('coding')}, experiment={llm_policy.get('experiment')}, review={llm_policy.get('review')}, safety={llm_policy.get('safety')}",
         ]
         if risk_hints:
             lines.append(f"- Rule hints: {', '.join(risk_hints)}")
         return "\n".join(lines)
 
+    def _normalize_llm_policy(self, raw_policy: Dict[str, Any]) -> Dict[str, bool]:
+        defaults = {
+            "planning": True,
+            "coding": True,
+            "experiment": True,
+            "review": True,
+            "safety": True,
+        }
+        if not isinstance(raw_policy, dict):
+            return defaults
+        normalized: Dict[str, bool] = {}
+        for key, default_value in defaults.items():
+            value = raw_policy.get(key)
+            normalized[key] = default_value if value is None else bool(value)
+        return normalized
+
+    def _llm_policy(self, state: Dict[str, Any]) -> Dict[str, bool]:
+        spec = state.get("research_spec") or {}
+        raw = spec.get("llmPolicy") or {}
+        return self._normalize_llm_policy(raw if isinstance(raw, dict) else {})
+
+    def _node_function(self, node: Dict[str, Any]) -> str:
+        explicit = str(node.get("node_function") or node.get("nodeFunction") or "").strip().lower()
+        if explicit in {"planning", "coding", "experiment", "review", "safety"}:
+            return explicit
+
+        agent = str(node.get("agent") or "").lower()
+        title = str(node.get("title") or "").lower()
+        if "safety" in agent or "safety" in title:
+            return "safety"
+        if "eval" in agent or "review" in title:
+            return "review"
+        if "execute candidate run" in title or "experiment" in title or "runner" in agent:
+            return "experiment"
+        if "research" in agent or "integration" in agent or "repair" in title:
+            return "coding"
+        return "planning"
+
+    def _is_node_llm_enabled(self, state: Dict[str, Any], node: Dict[str, Any]) -> bool:
+        explicit = node.get("llm_enabled")
+        if explicit is not None:
+            return bool(explicit)
+        policy = self._llm_policy(state)
+        node_function = self._node_function(node)
+        return bool(policy.get(node_function, True))
+
     def _build_tot_tree(self, spec: Dict[str, Any]) -> List[Dict[str, Any]]:
         budget = spec.get("budget") or {}
         execution_mode = self._normalize_execution_mode((spec.get("execution") or {}).get("mode"))
-        metric = next(iter((spec.get("successMetrics") or {"winRate": ">=0.55"}).keys()))
+        metric_targets = spec.get("successMetrics") if isinstance(spec.get("successMetrics"), dict) else {}
+        metric = next(iter((metric_targets or {"winRate": ">=0.55"}).keys()))
+        goal = str(spec.get("taskGoal") or "Improve target metric with reproducible evidence.")
+        env_name = str(((spec.get("environment") or {}).get("name") or "environment"))
+        llm_policy = self._normalize_llm_policy(spec.get("llmPolicy") or {})
+        metric_target = str(metric_targets.get(metric) or "improve")
 
         nodes: List[Dict[str, Any]] = [
             {
@@ -2058,10 +2139,12 @@ PY
                 "parent_id": None,
                 "agent": "ResearchAgent",
                 "title": "Root Spec",
-                "hypothesis": "The idea can be transformed into an executable MARL plan.",
-                "execution_plan": "Normalize research specification and enforce constraints.",
+                "hypothesis": f"Task '{goal}' can be transformed into an executable plan for {env_name}.",
+                "execution_plan": "Normalize research specification, define lane ownership, and lock execution boundaries.",
                 "expected_metrics": {metric: "baseline"},
                 "budget": {"gpuHours": budget.get("gpuHours", 0), "wallclockMinutes": budget.get("wallclockMinutes", 60)},
+                "node_function": "planning",
+                "llm_enabled": bool(llm_policy.get("planning", True)),
                 "risk": "low",
                 "status": "SUCCEEDED",
                 "rationale": "Root context is initialized at run creation.",
@@ -2077,8 +2160,10 @@ PY
                 "title": "Model/Loss Mutation Proposal",
                 "hypothesis": "Architecture and objective-level code mutations can improve target metric with bounded cost.",
                 "execution_plan": "Generate code-level mutation candidates (architecture/loss/objective) and expected uplift.",
-                "expected_metrics": {metric: "improve"},
+                "expected_metrics": {metric: metric_target},
                 "budget": {"gpuHours": 0.7, "wallclockMinutes": 25},
+                "node_function": "coding",
+                "llm_enabled": bool(llm_policy.get("coding", True)),
                 "risk": "medium",
                 "status": "PENDING",
                 "rationale": "Research lane generates code-level hypotheses rather than only hyper-parameter sweeps.",
@@ -2096,6 +2181,8 @@ PY
                 "execution_plan": "Pick native adapter or fallback offline adapter from retrieved templates.",
                 "expected_metrics": {"adapterSuccessRate": ">=0.85"},
                 "budget": {"gpuHours": 0.3, "wallclockMinutes": 20},
+                "node_function": "coding",
+                "llm_enabled": bool(llm_policy.get("coding", True)),
                 "risk": "high",
                 "status": "PENDING",
                 "rationale": "Integration lane bridges external code and platform runner contract.",
@@ -2113,6 +2200,8 @@ PY
                 "execution_plan": "Allocate runtime budget, set fallback mode, and emit ops hints.",
                 "expected_metrics": {"runtimeStability": ">=0.95"},
                 "budget": {"gpuHours": 0.2, "wallclockMinutes": 15},
+                "node_function": "planning",
+                "llm_enabled": bool(llm_policy.get("planning", True)),
                 "risk": "medium",
                 "status": "PENDING",
                 "rationale": "Ops lane controls execution economics and retries.",
@@ -2130,6 +2219,8 @@ PY
                 "execution_plan": "Draft matrix evaluation protocol and confidence computation.",
                 "expected_metrics": {"matrixCoverage": ">=0.9"},
                 "budget": {"gpuHours": 0.4, "wallclockMinutes": 20},
+                "node_function": "review",
+                "llm_enabled": bool(llm_policy.get("review", True)),
                 "risk": "low",
                 "status": "PENDING",
                 "rationale": "Eval lane produces judge-ready league evidence.",
@@ -2147,6 +2238,8 @@ PY
                 "execution_plan": "Check requested actions against forbidden list and approval policy.",
                 "expected_metrics": {"policyViolations": "0"},
                 "budget": {"gpuHours": 0.0, "wallclockMinutes": 5},
+                "node_function": "safety",
+                "llm_enabled": bool(llm_policy.get("safety", True)),
                 "risk": "high",
                 "status": "PENDING",
                 "rationale": "Safety lane enforces approval for high-risk operations.",
@@ -2164,6 +2257,8 @@ PY
                 "execution_plan": f"Run execution adapter ({execution_mode}) and generate per-node run artifacts/checkpoints/metrics.",
                 "expected_metrics": {metric: spec.get("successMetrics", {}).get(metric)},
                 "budget": {"gpuHours": 1.8, "wallclockMinutes": 50},
+                "node_function": "experiment",
+                "llm_enabled": bool(llm_policy.get("experiment", True)),
                 "risk": "medium",
                 "status": "PENDING",
                 "rationale": "Execution lane materializes artifacts and observability evidence.",
@@ -2420,18 +2515,6 @@ PY
             encoding="utf-8",
         )
 
-        for idx in range(3):
-            ckpt_payload = {
-                "checkpointId": f"ckpt_{idx}",
-                "step": (idx + 1) * 1000,
-                "winRate": round(0.45 + idx * 0.07, 4),
-                "createdAt": _now_iso(),
-            }
-            (run_dir / "artifacts" / "ckpt" / f"ckpt_{idx}.json").write_text(
-                json.dumps(ckpt_payload, indent=2),
-                encoding="utf-8",
-            )
-
         (run_dir / "manifest" / "git_info.json").write_text(
             json.dumps(state.get("git_info", {}), indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -2472,33 +2555,97 @@ PY
                     return text
         return "winRate"
 
+    def _env_first(self, *keys: str, default: str = "") -> str:
+        for key in keys:
+            value = os.getenv(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return str(default or "").strip()
+
     def _llm_provider(self) -> str:
-        return str(os.getenv("AGENTIC_LLM_PROVIDER") or "openai").strip().lower()
+        provider = self._env_first(
+            "AGENTIC_LLM_PROVIDER",
+            "LLM_PROVIDER",
+            default=str(getattr(settings, "llm_provider", "openai_compat") or "openai_compat"),
+        ).lower()
+        # Keep backwards compatibility with old naming while honoring openai-compatible gateways.
+        if provider in {"openai", "openai_compat", "openai-compatible"}:
+            return "openai_compat"
+        return provider
 
     def _llm_model(self) -> str:
-        return str(os.getenv("AGENTIC_LLM_MODEL") or "gpt-4.1-mini").strip()
+        return self._env_first(
+            "AGENTIC_LLM_MODEL",
+            "LLM_MODEL",
+            default=str(getattr(settings, "llm_model", "gpt-4.1-mini") or "gpt-4.1-mini"),
+        )
 
     def _llm_api_key(self) -> str:
-        return str(os.getenv("AGENTIC_LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
+        return self._env_first(
+            "AGENTIC_LLM_API_KEY",
+            "LLM_API_KEY",
+            "MODEL_API_KEY",
+            "OPENAI_API_KEY",
+            default=str(getattr(settings, "llm_api_key", "") or ""),
+        )
 
     def _llm_base_url(self) -> str:
-        return str(os.getenv("AGENTIC_LLM_BASE_URL") or "https://api.openai.com/v1").strip().rstrip("/")
+        return self._env_first(
+            "AGENTIC_LLM_BASE_URL",
+            "LLM_BASE_URL",
+            default=str(getattr(settings, "llm_base_url", "https://api.openai.com/v1") or "https://api.openai.com/v1"),
+        ).rstrip("/")
+
+    def _llm_temperature(self) -> float:
+        raw = self._env_first(
+            "AGENTIC_LLM_TEMPERATURE",
+            "LLM_TEMPERATURE",
+            default=str(getattr(settings, "llm_temperature", 0.2)),
+        )
+        try:
+            return max(0.0, min(1.0, float(raw)))
+        except Exception:
+            return 0.2
+
+    def _llm_max_tokens(self) -> int:
+        raw = self._env_first(
+            "AGENTIC_LLM_MAX_TOKENS",
+            "LLM_MAX_TOKENS",
+            default=str(getattr(settings, "llm_max_tokens", 1200)),
+        )
+        try:
+            return max(128, min(32768, int(raw)))
+        except Exception:
+            return 1200
 
     def _llm_timeout_seconds(self) -> int:
         try:
-            return max(5, min(300, int(os.getenv("AGENTIC_LLM_TIMEOUT_SECONDS") or 45)))
+            raw = self._env_first(
+                "AGENTIC_LLM_TIMEOUT_SECONDS",
+                "LLM_TIMEOUT_S",
+                default=str(getattr(settings, "llm_timeout_s", 60)),
+            )
+            return max(5, min(300, int(raw)))
         except Exception:
-            return 45
+            return 60
 
     def _llm_max_retries(self) -> int:
         try:
-            return max(1, min(5, int(os.getenv("AGENTIC_LLM_MAX_RETRIES") or 2)))
+            raw = self._env_first(
+                "AGENTIC_LLM_MAX_RETRIES",
+                "LLM_MAX_RETRIES",
+                default=str(getattr(settings, "llm_max_retries", 3)),
+            )
+            return max(1, min(5, int(raw)))
         except Exception:
-            return 2
+            return 3
 
     def _assert_llm_ready(self) -> None:
         provider = self._llm_provider()
-        if provider != "openai":
+        if provider != "openai_compat":
             raise RuntimeError(f"llm_required_provider_not_supported:{provider}")
         if not self._llm_model():
             raise RuntimeError("llm_required_missing_model")
@@ -2600,34 +2747,56 @@ PY
         max_retries = self._llm_max_retries()
         provider = self._llm_provider()
         model = self._llm_model()
-        if provider != "openai":
+        if provider != "openai_compat":
             raise RuntimeError(f"llm_required_provider_not_supported:{provider}")
 
         prompt_user = str(user_prompt or "")
         last_error = "unknown"
         for attempt in range(1, max_retries + 1):
+            temp = float(max(0.0, min(1.0, temperature if isinstance(temperature, (int, float)) else self._llm_temperature())))
             payload = {
                 "model": model,
-                "temperature": float(max(0.0, min(1.0, temperature))),
+                "temperature": temp,
+                "max_tokens": self._llm_max_tokens(),
                 "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "system", "content": str(system_prompt or "").strip()},
                     {"role": "user", "content": prompt_user},
                 ],
             }
-            req = urllib.request.Request(
-                f"{self._llm_base_url()}/chat/completions",
-                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                headers={
+            started_at = _now()
+            try:
+                base_url = self._llm_base_url()
+                url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
+                headers = {
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {self._llm_api_key()}",
-                },
-                method="POST",
-            )
-            try:
-                started_at = _now()
-                with urllib.request.urlopen(req, timeout=self._llm_timeout_seconds()) as resp:
-                    raw = resp.read().decode("utf-8")
+                }
+
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=self._llm_timeout_seconds()) as resp:
+                        raw = resp.read().decode("utf-8")
+                except urllib.error.HTTPError as exc:
+                    # Some OpenAI-compatible providers reject response_format for certain models.
+                    if int(exc.code) not in {400, 422}:
+                        raise
+                    retry_payload = dict(payload)
+                    retry_payload.pop("response_format", None)
+                    req_retry = urllib.request.Request(
+                        url,
+                        data=json.dumps(retry_payload, ensure_ascii=False).encode("utf-8"),
+                        headers=headers,
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req_retry, timeout=self._llm_timeout_seconds()) as resp:
+                        raw = resp.read().decode("utf-8")
+
                 body = json.loads(raw)
                 choices = body.get("choices") or []
                 if not choices:
@@ -2635,14 +2804,28 @@ PY
                 message = (choices[0] or {}).get("message") or {}
                 content = message.get("content")
                 if isinstance(content, list):
-                    text = ""
+                    parts: List[str] = []
                     for row in content:
-                        if isinstance(row, dict) and str(row.get("type") or "") == "text":
-                            text += str(row.get("text") or "")
+                        if isinstance(row, str):
+                            cleaned = row.strip()
+                            if cleaned:
+                                parts.append(cleaned)
+                            continue
+                        if not isinstance(row, dict):
+                            continue
+                        cleaned = str(row.get("text") or row.get("content") or "").strip()
+                        if cleaned:
+                            parts.append(cleaned)
+                    text = "\n".join(parts)
+                elif isinstance(content, dict):
+                    text = str(content.get("text") or content.get("content") or "")
                 else:
                     text = str(content or "")
                 result = self._extract_first_json_object(text)
                 self._validate_json_schema(result, schema)
+                usage = body.get("usage") or {}
+                prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                completion_tokens = int(usage.get("completion_tokens") or 0)
                 latency_ms = max(0, int((_now() - started_at).total_seconds() * 1000))
                 self._append_llm_trace(
                     str(run_id or ""),
@@ -2653,6 +2836,8 @@ PY
                         "model": model,
                         "attempt": int(attempt),
                         "latency_ms": latency_ms,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
                         "node_id": str(node_id or "") or None,
                         "role": str(role or "") or None,
                         "prompt_hash": _stable_hash(
@@ -2686,6 +2871,8 @@ PY
                         "model": model,
                         "attempt": int(attempt),
                         "latency_ms": latency_ms,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
                         "node_id": str(node_id or "") or None,
                         "role": str(role or "") or None,
                         "prompt_hash": _stable_hash(
@@ -2716,6 +2903,77 @@ PY
         for key, raw in context.items():
             text = text.replace(f"{{{key}}}", str(raw))
         return text
+
+    def _append_llm_call_event(
+        self,
+        state: Dict[str, Any],
+        node: Optional[Dict[str, Any]],
+        *,
+        task: str,
+        status: str,
+        role: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        run_id = str(state.get("run_id") or "")
+        node_id = str((node or {}).get("node_id") or "")
+        payload: Dict[str, Any] = {
+            "run_id": run_id,
+            "node_id": node_id or None,
+            "task": str(task or ""),
+            "status": str(status or "").lower(),
+            "role": str(role or (node or {}).get("agent") or "LLM"),
+            "llmEnabled": self._is_node_llm_enabled(state, node or {}),
+        }
+
+        traces = self._load_llm_traces(run_id, limit=1) if run_id and str(status).lower() != "started" else []
+        if traces:
+            last = traces[-1]
+            payload["model"] = str(last.get("model") or "")
+            payload["latencyMs"] = int(last.get("latency_ms") or 0)
+            payload["promptTokens"] = int(last.get("prompt_tokens") or 0)
+            payload["completionTokens"] = int(last.get("completion_tokens") or 0)
+            payload["attempt"] = int(last.get("attempt") or 0)
+        if error:
+            payload["error"] = _short(str(error), limit=240)
+
+        message = f"LLM {status}: {task}"
+        self._append_event(
+            state,
+            event="llm_called",
+            message=message,
+            payload=payload,
+            actor=str(role or (node or {}).get("agent") or "LLM"),
+        )
+
+    def _invoke_llm_json(
+        self,
+        *,
+        state: Dict[str, Any],
+        node: Optional[Dict[str, Any]],
+        task: str,
+        system_prompt: str,
+        user_prompt: str,
+        schema: Dict[str, Any],
+        temperature: float,
+        role: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._append_llm_call_event(state, node, task=task, status="started", role=role)
+        try:
+            result = self._llm_complete_json(
+                task=task,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                schema=schema,
+                temperature=temperature,
+                run_id=str(state.get("run_id") or ""),
+                node_id=str((node or {}).get("node_id") or "") or None,
+                role=role,
+            )
+            self._append_llm_call_event(state, node, task=task, status="succeeded", role=role)
+            return result
+        except Exception as exc:
+            self._append_llm_call_event(state, node, task=task, status="failed", role=role, error=str(exc))
+            raise
 
     def _llm_mutation_template_schema(self) -> Dict[str, Any]:
         return {
@@ -2755,6 +3013,31 @@ PY
             },
         }
 
+    def _fallback_mutation_templates(self, state: Dict[str, Any], node: Dict[str, Any], lane: str) -> List[Dict[str, Any]]:
+        metric_key = self._primary_metric_key(state)
+        node_id = str(node.get("node_id") or "")
+        defaults = {
+            "research": ["apps/portal-backend/runner/algorithms/simple_train.py"],
+            "integration": ["apps/portal-backend/app/services/agentic_os.py"],
+            "evaluation": ["apps/portal-backend/app/services/eval_matrix.py"],
+            "execution": ["apps/portal-backend/app/services/agentic_os.py"],
+        }
+        target_files = self._normalize_target_files(defaults.get(lane) or defaults["research"])
+        return [
+            {
+                "strategy": f"rule_{lane}_mutation",
+                "mutationKind": "code",
+                "title": f"{node_id} {lane.title()} Branch",
+                "hypothesis": f"Rule-based mutation can improve {metric_key}.",
+                "executionPlan": "Apply deterministic patch template and validate.",
+                "targetFiles": target_files,
+                "changeSummary": "Rule-based fallback mutation template (LLM disabled for this node).",
+                "validationCommand": "python -m pytest apps/portal-backend/tests -k agentic -q",
+                "risk": "medium",
+                "source": "rule_fallback",
+            }
+        ]
+
     def _llm_generate_code_mutation_templates(self, state: Dict[str, Any], node: Dict[str, Any], lane: str) -> List[Dict[str, Any]]:
         run_id = str(state.get("run_id") or "")
         node_id = str(node.get("node_id") or "")
@@ -2764,6 +3047,22 @@ PY
         env_name = str(((spec.get("environment") or {}).get("name") or "env"))
         budget = spec.get("budget") or {}
         constraints = spec.get("constraints") or {}
+
+        if not self._is_node_llm_enabled(state, node):
+            self._append_event(
+                state,
+                event="llm_skipped",
+                message=f"LLM disabled for node {node_id}; using fallback mutation templates",
+                payload={
+                    "node_id": node_id,
+                    "task": f"mutation_templates_{lane}",
+                    "lane": lane,
+                    "reason": "node_llm_disabled",
+                },
+                actor=agent,
+            )
+            return self._fallback_mutation_templates(state, node, lane)
+
         retrieval = self.retrieve_context(
             query=f"code mutation plan lane={lane} node={node_id} metric={metric_key} env={env_name}",
             k=3,
@@ -2804,53 +3103,68 @@ PY
             ensure_ascii=False,
         )
 
-        result = self._llm_complete_json(
-            task=f"mutation_templates_{lane}",
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            schema=self._llm_mutation_template_schema(),
-            temperature=0.2,
-            run_id=run_id,
-            node_id=node_id,
-            role=agent,
-        )
+        try:
+            result = self._invoke_llm_json(
+                state=state,
+                node=node,
+                task=f"mutation_templates_{lane}",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                schema=self._llm_mutation_template_schema(),
+                temperature=0.2,
+                role=agent,
+            )
 
-        rows = result.get("items") or []
-        if not isinstance(rows, list) or not rows:
-            raise RuntimeError(f"llm_required_empty_mutation_templates lane={lane}")
+            rows = result.get("items") or []
+            if not isinstance(rows, list) or not rows:
+                raise RuntimeError(f"llm_required_empty_mutation_templates lane={lane}")
 
-        normalized: List[Dict[str, Any]] = []
-        invalid_reasons: List[str] = []
-        for item in rows:
-            if not isinstance(item, dict):
-                continue
-            target_files = self._normalize_target_files(item.get("targetFiles") or [])
-            if not target_files:
-                continue
-            risk = str(item.get("risk") or "medium").strip().lower()
-            if risk not in {"low", "medium", "high"}:
-                risk = "medium"
-            candidate = {
-                "strategy": str(item.get("strategy") or "llm_mutation").strip(),
-                "mutationKind": str(item.get("mutationKind") or "code").strip(),
-                "title": str(item.get("title") or f"{node_id} LLM Branch").strip(),
-                "hypothesis": str(item.get("hypothesis") or f"Mutation can improve {metric_key}.").strip(),
-                "executionPlan": str(item.get("executionPlan") or "Apply patch and validate.").strip(),
-                "targetFiles": target_files,
-                "changeSummary": str(item.get("changeSummary") or "LLM-proposed code mutation.").strip(),
-                "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q").strip(),
-                "risk": risk,
-                "source": "llm",
-            }
-            valid, reason = self._validate_mutation_candidate(candidate, lane=lane)
-            if not valid:
-                invalid_reasons.append(str(reason or "invalid_mutation_candidate"))
-                continue
-            normalized.append(candidate)
-        if not normalized:
-            reason = ";".join(invalid_reasons[:4]) if invalid_reasons else "empty_after_validation"
-            raise RuntimeError(f"llm_required_invalid_mutation_templates lane={lane} reason={reason}")
-        return normalized
+            normalized: List[Dict[str, Any]] = []
+            invalid_reasons: List[str] = []
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                target_files = self._normalize_target_files(item.get("targetFiles") or [])
+                if not target_files:
+                    continue
+                risk = str(item.get("risk") or "medium").strip().lower()
+                if risk not in {"low", "medium", "high"}:
+                    risk = "medium"
+                candidate = {
+                    "strategy": str(item.get("strategy") or "llm_mutation").strip(),
+                    "mutationKind": str(item.get("mutationKind") or "code").strip(),
+                    "title": str(item.get("title") or f"{node_id} LLM Branch").strip(),
+                    "hypothesis": str(item.get("hypothesis") or f"Mutation can improve {metric_key}.").strip(),
+                    "executionPlan": str(item.get("executionPlan") or "Apply patch and validate.").strip(),
+                    "targetFiles": target_files,
+                    "changeSummary": str(item.get("changeSummary") or "LLM-proposed code mutation.").strip(),
+                    "validationCommand": str(item.get("validationCommand") or "python -m pytest apps/portal-backend/tests -q").strip(),
+                    "risk": risk,
+                    "source": "llm",
+                }
+                valid, reason = self._validate_mutation_candidate(candidate, lane=lane)
+                if not valid:
+                    invalid_reasons.append(str(reason or "invalid_mutation_candidate"))
+                    continue
+                normalized.append(candidate)
+            if not normalized:
+                reason = ";".join(invalid_reasons[:4]) if invalid_reasons else "empty_after_validation"
+                raise RuntimeError(f"llm_required_invalid_mutation_templates lane={lane} reason={reason}")
+            return normalized
+        except Exception as exc:
+            self._append_event(
+                state,
+                event="llm_fallback",
+                message=f"LLM mutation template generation failed for node {node_id}; fallback templates applied",
+                payload={
+                    "node_id": node_id,
+                    "task": f"mutation_templates_{lane}",
+                    "lane": lane,
+                    "reason": str(exc),
+                },
+                actor=agent,
+            )
+            return self._fallback_mutation_templates(state, node, lane)
 
     def _runtime_code_mutation_templates(self, state: Dict[str, Any], node: Dict[str, Any]) -> List[Dict[str, Any]]:
         agent = str(node.get("agent") or "ResearchAgent")
@@ -3587,6 +3901,21 @@ PY
         )
         node_run["metrics"] = metrics
 
+        diff_files = int((metrics.get("nodeRunArtifacts") or {}).get("diffFiles") or 0)
+        if diff_files > 0:
+            self._append_event(
+                state,
+                event="code_changed",
+                message=f"{node.get('node_id')} produced {diff_files} diff artifact(s)",
+                payload={
+                    "node_id": node.get("node_id"),
+                    "nodeRunId": node_run_id,
+                    "diffFiles": diff_files,
+                    "resolvedTargets": int((metrics.get("nodeRunArtifacts") or {}).get("resolvedTargets") or 0),
+                },
+                actor=str(node.get("agent") or "Agent"),
+            )
+
         result_payload = {
             "nodeRunId": node_run_id,
             "runId": run_id,
@@ -3623,6 +3952,29 @@ PY
         evidence["latestNodeRunStatus"] = node_run.get("status")
         evidence["latestNodeRunArtifacts"] = list(node_run.get("artifactPaths") or [])
         evidence["latestNodeRunWorkspaceSummary"] = workspace_manifest.get("summary") if isinstance(workspace_manifest, dict) else {}
+
+    def _set_node_story(
+        self,
+        node: Dict[str, Any],
+        *,
+        why: str,
+        analysis: Dict[str, Any],
+        changes: Dict[str, Any],
+        run: Dict[str, Any],
+        decision: Dict[str, Any],
+    ) -> None:
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+            node["evidence"] = evidence
+        evidence["story"] = {
+            "whyThisStep": _short(why, limit=360),
+            "analysis": analysis if isinstance(analysis, dict) else {"summary": str(analysis)},
+            "changes": changes if isinstance(changes, dict) else {"summary": str(changes)},
+            "run": run if isinstance(run, dict) else {"summary": str(run)},
+            "decision": decision if isinstance(decision, dict) else {"summary": str(decision)},
+            "updatedAt": _now_iso(),
+        }
 
     def _execute_node(self, state: Dict[str, Any], node: Dict[str, Any]) -> None:
         run_id = str(state.get("run_id"))
@@ -3671,6 +4023,12 @@ PY
                 message=f"{node_id} failed: {failure['reason']}",
                 payload={"node_id": node_id, "reason": failure["reason"]},
             )
+            self._append_event(
+                state,
+                event="node_completed",
+                message=f"{node_id} completed",
+                payload={"node_id": node_id, "agent": agent, "status": "FAILED", "reason": failure["reason"]},
+            )
             self._finalize_node_run(state, node, node_run, status="FAILED", error=str(failure["reason"]))
             self._append_log(state, f"[{node_id}] FAILED {failure['reason']}")
             self._record_search_result(state, node, succeeded=False, failure=failure)
@@ -3698,6 +4056,24 @@ PY
                         self._run_integration_lane(state, node, retry=True)
             return
 
+        if str(node.get("status") or "").upper() == "BLOCKED":
+            self._record_search_result(state, node, succeeded=False, failure={"reason": "blocked"})
+            self._append_event(
+                state,
+                event="node_blocked",
+                message=f"{node_id} blocked",
+                payload={"node_id": node_id, "agent": agent},
+            )
+            self._append_event(
+                state,
+                event="node_completed",
+                message=f"{node_id} completed",
+                payload={"node_id": node_id, "agent": agent, "status": "BLOCKED"},
+            )
+            self._finalize_node_run(state, node, node_run, status="BLOCKED", error="blocked")
+            self._append_log(state, f"[{node_id}] BLOCKED")
+            return
+
         self._record_search_result(state, node, succeeded=True, failure=None)
         self._maybe_expand_search_frontier(state, node)
         self._append_event(
@@ -3706,13 +4082,20 @@ PY
             message=f"{node_id} succeeded",
             payload={"node_id": node_id, "agent": agent},
         )
+        self._append_event(
+            state,
+            event="node_completed",
+            message=f"{node_id} completed",
+            payload={"node_id": node_id, "agent": agent, "status": "SUCCEEDED"},
+        )
         self._finalize_node_run(state, node, node_run, status="SUCCEEDED")
 
     def _run_research_lane(self, state: Dict[str, Any], node: Dict[str, Any]) -> None:
-        plans = self._runtime_lane_plans(state, lane="research")
+        plans = self._runtime_lane_plans(state, lane="research", node=node)
         sub_agents = self._spawn_sub_agents(state, node, plans=plans, depth=1)
         metric_key = next(iter((state.get("research_spec", {}).get("successMetrics") or {"winRate": ">=0.55"}).keys()))
         mutation_templates = self._runtime_code_mutation_templates(state, node)[:3]
+        retrieval = self.retrieve_context(f"research hypothesis {state.get('research_spec', {}).get('taskGoal')}", k=3)
         mutation_candidates = [
             {
                 "strategy": str(item.get("strategy") or "mutation"),
@@ -3725,15 +4108,45 @@ PY
         ]
         node["status"] = "SUCCEEDED"
         node["sub_agents"] = sub_agents
-        node["evidence"] = {
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        evidence.update(
+            {
             "candidateAlgorithms": ["mappo", "qmix"],
             "selected": "mappo",
             "expectedLift": {metric_key: 0.05},
             "mutationFocus": ["architecture", "loss", "objective"],
-            "retrieval": self.retrieve_context(f"research hypothesis {state.get('research_spec', {}).get('taskGoal')}", k=3),
+            "retrieval": retrieval,
             "codeMutationCandidates": mutation_candidates,
             "subAgents": sub_agents,
-        }
+            }
+        )
+        node["evidence"] = evidence
+        self._set_node_story(
+            node,
+            why=str(node.get("rationale") or "Generate executable code-mutation hypotheses before running experiments."),
+            analysis={
+                "metric": metric_key,
+                "retrievalContext": retrieval,
+                "lanePlans": plans,
+                "subAgentCount": len(sub_agents),
+                "llmEnabled": self._is_node_llm_enabled(state, node),
+            },
+            changes={
+                "mutationCandidates": mutation_candidates,
+                "candidateCount": len(mutation_candidates),
+            },
+            run={
+                "status": "not_executed",
+                "notExecuted": True,
+                "reason": "planning_lane_only",
+            },
+            decision={
+                "nextStep": "integration_check",
+                "reason": "Validate adapter compatibility before launching execution node.",
+            },
+        )
         node["next_suggestions"] = [
             "Run integration compatibility check",
             "Preserve baseline control arm",
@@ -3746,30 +4159,62 @@ PY
             state["failure_injected"] = True
             raise ModuleNotFoundError("No module named 'pettingzoo'")
 
-        plans = self._runtime_lane_plans(state, lane="integration_base")
+        plans = self._runtime_lane_plans(state, lane="integration_base", node=node)
         if not retry:
-            plans.extend(self._runtime_lane_plans(state, lane="integration_fresh_only"))
+            plans.extend(self._runtime_lane_plans(state, lane="integration_fresh_only", node=node))
         sub_agents = self._spawn_sub_agents(state, node, plans=plans, depth=1)
         adapter_mode = self._execution_adapter_mode(state)
         mutation_templates = self._runtime_code_mutation_templates(state, node)[:2]
+        retrieval = self.retrieve_context("adapter generation runner contract", k=3)
         node["status"] = "SUCCEEDED"
         node["sub_agents"] = sub_agents
-        node["evidence"] = {
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        adapter_candidates = [
+            {
+                "strategy": str(item.get("strategy") or "adapter_patch"),
+                "changeSummary": str(item.get("changeSummary") or ""),
+                "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
+                "validationCommand": str(item.get("validationCommand") or ""),
+            }
+            for item in mutation_templates
+        ]
+        evidence.update(
+            {
             "adapterMode": adapter_mode,
             "runnerContract": "train(config, metrics_path, checkpoint_dir, run_id)",
-            "retrieval": self.retrieve_context("adapter generation runner contract", k=3),
+            "retrieval": retrieval,
             "retry": retry,
-            "adapterPatchCandidates": [
-                {
-                    "strategy": str(item.get("strategy") or "adapter_patch"),
-                    "changeSummary": str(item.get("changeSummary") or ""),
-                    "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
-                    "validationCommand": str(item.get("validationCommand") or ""),
-                }
-                for item in mutation_templates
-            ],
+            "adapterPatchCandidates": adapter_candidates,
             "subAgents": sub_agents,
-        }
+            }
+        )
+        node["evidence"] = evidence
+        self._set_node_story(
+            node,
+            why=str(node.get("rationale") or "Integration lane must ensure executable adapter compatibility."),
+            analysis={
+                "adapterMode": adapter_mode,
+                "retrievalContext": retrieval,
+                "lanePlans": plans,
+                "retry": retry,
+                "llmEnabled": self._is_node_llm_enabled(state, node),
+            },
+            changes={
+                "adapterPatchCandidates": adapter_candidates,
+                "candidateCount": len(adapter_candidates),
+            },
+            run={
+                "status": "not_executed",
+                "notExecuted": True,
+                "reason": "integration_validation_only",
+            },
+            decision={
+                "nextStep": "execute_candidate_run",
+                "reason": "Adapter contract is ready, continue to experiment execution.",
+            },
+        )
         node["next_suggestions"] = ["Proceed to execution node", "Record adapter provenance"]
         self._append_timeline(state, node, "integration_completed", cost=0.6)
         self._append_log(state, f"[{node['node_id']}] Integration lane completed (retry={retry})")
@@ -3780,19 +4225,49 @@ PY
             self._run_execution_lane(state, node)
             return
 
-        plans = self._runtime_lane_plans(state, lane="ops_budget_guard")
+        plans = self._runtime_lane_plans(state, lane="ops_budget_guard", node=node)
         sub_agents = self._spawn_sub_agents(state, node, plans=plans, depth=1) if plans else []
+        budget_used = {
+            "gpuHours": min(1.5, float(state.get("research_spec", {}).get("budget", {}).get("gpuHours") or 0)),
+            "wallclockMinutes": min(45, int(state.get("research_spec", {}).get("budget", {}).get("wallclockMinutes") or 60)),
+        }
         node["status"] = "SUCCEEDED"
         node["sub_agents"] = sub_agents
-        node["evidence"] = {
-            "budgetUsed": {
-                "gpuHours": min(1.5, float(state.get("research_spec", {}).get("budget", {}).get("gpuHours") or 0)),
-                "wallclockMinutes": min(45, int(state.get("research_spec", {}).get("budget", {}).get("wallclockMinutes") or 60)),
-            },
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        evidence.update(
+            {
+            "budgetUsed": budget_used,
             "fallback": "offline_stub",
             "resourceHints": ["limit totalEnvSteps on low budget", "prefer local executor"],
             "subAgents": sub_agents,
-        }
+            }
+        )
+        node["evidence"] = evidence
+        self._set_node_story(
+            node,
+            why=str(node.get("rationale") or "Budget guard sets safe runtime bounds before experiments."),
+            analysis={
+                "budgetUsed": budget_used,
+                "lanePlans": plans,
+                "subAgentCount": len(sub_agents),
+                "llmEnabled": self._is_node_llm_enabled(state, node),
+            },
+            changes={
+                "resourceHints": ["limit totalEnvSteps on low budget", "prefer local executor"],
+                "fallback": "offline_stub",
+            },
+            run={
+                "status": "not_executed",
+                "notExecuted": True,
+                "reason": "ops_planning_lane_only",
+            },
+            decision={
+                "nextStep": "execute_candidate_run",
+                "reason": "Budget and fallback policy set; experiment run can start.",
+            },
+        )
         self._append_timeline(state, node, "ops_completed", cost=0.3)
         self._append_log(state, f"[{node['node_id']}] Ops lane applied budgets and fallback")
 
@@ -3805,6 +4280,18 @@ PY
         constraints = (state.get("research_spec") or {}).get("constraints") or {}
         approval_policy = self._approval_policy(state)
         approved = set(state.get("approved_actions") or [])
+
+        self._append_event(
+            state,
+            event="experiment_started",
+            message=f"{node.get('node_id')} experiment started",
+            payload={
+                "node_id": node.get("node_id"),
+                "mode": adapter_mode,
+                "executionMode": adapter_mode,
+            },
+            actor=str(node.get("agent") or "OpsAgent"),
+        )
 
         if adapter_mode == "local_shell":
             gate = self._evaluate_action_policy(
@@ -3826,12 +4313,18 @@ PY
                     ttl_minutes=int(gate.get("approvalTtlMinutes") or 120),
                 )
                 node["status"] = "BLOCKED"
-                node["evidence"] = {
+                evidence = node.get("evidence")
+                if not isinstance(evidence, dict):
+                    evidence = {}
+                evidence.update(
+                    {
                     "execution": {"mode": adapter_mode, "status": "blocked"},
                     "blockedActions": ["unknown_script_execution"] if gate.get("blockedByPolicy") else [],
                     "requiredApprovals": ["unknown_script_execution"],
                     "actionPolicy": gate,
-                }
+                    }
+                )
+                node["evidence"] = evidence
                 runtime_path.parent.mkdir(parents=True, exist_ok=True)
                 _atomic_write_text(
                     runtime_path,
@@ -3846,6 +4339,40 @@ PY
                         ensure_ascii=False,
                     ),
                     encoding="utf-8",
+                )
+                self._set_node_story(
+                    node,
+                    why="Execution node requires approval before local shell command can run.",
+                    analysis={
+                        "adapterMode": adapter_mode,
+                        "actionPolicy": gate,
+                        "approvedActions": sorted(approved),
+                    },
+                    changes={
+                        "mutationApplied": False,
+                    },
+                    run={
+                        "status": "blocked",
+                        "mode": adapter_mode,
+                        "notExecuted": True,
+                        "reason": str(gate.get("reasonCode") or "approval_required"),
+                    },
+                    decision={
+                        "nextStep": "wait_for_approval",
+                        "reason": "Approval required before command execution.",
+                    },
+                )
+                self._append_event(
+                    state,
+                    event="experiment_finished",
+                    message=f"{node.get('node_id')} experiment blocked",
+                    payload={
+                        "node_id": node.get("node_id"),
+                        "mode": adapter_mode,
+                        "status": "BLOCKED",
+                        "notExecuted": True,
+                    },
+                    actor=str(node.get("agent") or "OpsAgent"),
                 )
                 self._append_timeline(state, node, "execution_blocked", cost=0.05)
                 self._append_log(state, f"[{node['node_id']}] Execution blocked by approval policy")
@@ -3909,10 +4436,12 @@ PY
             }
             runtime_report = {
                 "mode": adapter_mode,
-                "status": "SUCCEEDED",
+                "status": "NOT_EXECUTED",
                 "simulated": True,
+                "notExecuted": True,
                 "metrics": synthetic,
                 "commandHash": None,
+                "reason": "offline_stub",
                 "generatedAt": _now_iso(),
             }
             runtime_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3920,8 +4449,22 @@ PY
             outcome = {
                 "mode": adapter_mode,
                 "runtime": runtime_report,
-                "newCheckpoint": self._emit_runtime_checkpoint(run_dir, state, source="offline_stub"),
+                "newCheckpoint": self._emit_runtime_checkpoint(run_dir, state, source="offline_stub", not_executed=True),
             }
+
+        self._append_event(
+            state,
+            event="experiment_finished",
+            message=f"{node.get('node_id')} experiment finished",
+            payload={
+                "node_id": node.get("node_id"),
+                "mode": adapter_mode,
+                "status": str((runtime_report or {}).get("status") or "UNKNOWN"),
+                "returnCode": int((runtime_report or {}).get("returnCode") or 0),
+                "notExecuted": bool((runtime_report or {}).get("notExecuted") or False),
+            },
+            actor=str(node.get("agent") or "OpsAgent"),
+        )
 
         expansion = ((node.get("evidence") or {}).get("expansion") or {}) if isinstance(node.get("evidence"), dict) else {}
         mutation_plan = expansion.get("mutationPlan") if isinstance(expansion, dict) else None
@@ -3940,39 +4483,104 @@ PY
                 mutation_plan = {}
 
         node["status"] = "SUCCEEDED"
-        node["evidence"] = {
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        evidence.update(
+            {
             "execution": outcome,
             "adapterMode": adapter_mode,
             "approvedActions": sorted(approved),
             "appliedMutationPlan": mutation_plan,
             "runtimeArtifact": "artifacts/runtime_execution.json",
-        }
+            }
+        )
+        node["evidence"] = evidence
+        self._set_node_story(
+            node,
+            why=str(node.get("rationale") or "Execution lane validates whether selected branch works in runtime."),
+            analysis={
+                "adapterMode": adapter_mode,
+                "approvedActions": sorted(approved),
+                "llmEnabled": self._is_node_llm_enabled(state, node),
+            },
+            changes={
+                "appliedMutationPlan": mutation_plan,
+            },
+            run={
+                "status": str((runtime_report or {}).get("status") or "UNKNOWN"),
+                "mode": adapter_mode,
+                "command": (runtime_report or {}).get("command"),
+                "returnCode": int((runtime_report or {}).get("returnCode") or 0),
+                "stdoutTail": str((runtime_report or {}).get("stdoutTail") or ""),
+                "stderrTail": str((runtime_report or {}).get("stderrTail") or ""),
+                "startedAt": str((runtime_report or {}).get("startedAt") or (runtime_report or {}).get("generatedAt") or ""),
+                "finishedAt": str((runtime_report or {}).get("finishedAt") or (runtime_report or {}).get("generatedAt") or ""),
+                "notExecuted": bool((runtime_report or {}).get("notExecuted") or False),
+                "checkpoint": (outcome or {}).get("newCheckpoint") if isinstance(outcome, dict) else None,
+            },
+            decision={
+                "nextStep": "build_matrix_or_export_repro",
+                "reason": "Execution completed; move to comparison and reporting.",
+            },
+        )
         node["next_suggestions"] = ["Generate matrix league", "Export reproducibility bundle"]
         self._append_timeline(state, node, "execution_completed", cost=0.9)
         self._append_log(state, f"[{node['node_id']}] Execution lane completed mode={adapter_mode}")
 
     def _run_eval_lane(self, state: Dict[str, Any], node: Dict[str, Any]) -> None:
         protocol = state.get("eval_protocol_draft") or {}
-        plans = self._runtime_lane_plans(state, lane="eval")
+        plans = self._runtime_lane_plans(state, lane="eval", node=node)
         sub_agents = self._spawn_sub_agents(state, node, plans=plans, depth=1)
         mutation_templates = self._runtime_code_mutation_templates(state, node)[:2]
+        retrieval = self.retrieve_context("evaluation protocol matrix confidence", k=3)
+        eval_mutations = [
+            {
+                "strategy": str(item.get("strategy") or "eval_mutation"),
+                "changeSummary": str(item.get("changeSummary") or ""),
+                "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
+                "validationCommand": str(item.get("validationCommand") or ""),
+            }
+            for item in mutation_templates
+        ]
         node["status"] = "SUCCEEDED"
         node["sub_agents"] = sub_agents
-        node["evidence"] = {
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        evidence.update(
+            {
             "protocol": protocol,
             "matrixPlan": protocol.get("matrixPlan", {}),
-            "retrieval": self.retrieve_context("evaluation protocol matrix confidence", k=3),
-            "evalMutationCandidates": [
-                {
-                    "strategy": str(item.get("strategy") or "eval_mutation"),
-                    "changeSummary": str(item.get("changeSummary") or ""),
-                    "targetFiles": self._normalize_target_files(item.get("targetFiles") or []),
-                    "validationCommand": str(item.get("validationCommand") or ""),
-                }
-                for item in mutation_templates
-            ],
+            "retrieval": retrieval,
+            "evalMutationCandidates": eval_mutations,
             "subAgents": sub_agents,
-        }
+            }
+        )
+        node["evidence"] = evidence
+        self._set_node_story(
+            node,
+            why=str(node.get("rationale") or "Evaluation lane defines how to judge branch outcomes reliably."),
+            analysis={
+                "protocol": protocol,
+                "retrievalContext": retrieval,
+                "lanePlans": plans,
+                "llmEnabled": self._is_node_llm_enabled(state, node),
+            },
+            changes={
+                "evalMutationCandidates": eval_mutations,
+                "candidateCount": len(eval_mutations),
+            },
+            run={
+                "status": "not_executed",
+                "notExecuted": True,
+                "reason": "evaluation_planning_only",
+            },
+            decision={
+                "nextStep": "execute_or_matrix",
+                "reason": "Protocol ready for experiment outputs and matrix generation.",
+            },
+        )
         self._append_timeline(state, node, "eval_protocol_ready", cost=0.2)
         self._append_log(state, f"[{node['node_id']}] Eval protocol prepared")
 
@@ -4004,7 +4612,11 @@ PY
                     ttl_minutes=int(item.get("approvalTtlMinutes") or 120),
                 )
 
-            node["evidence"] = {
+            evidence = node.get("evidence")
+            if not isinstance(evidence, dict):
+                evidence = {}
+            evidence.update(
+                {
                 "blockedActions": blocked_actions,
                 "requiredApprovals": required_approvals,
                 "approvedActions": sorted(approved),
@@ -4020,13 +4632,41 @@ PY
                     "approvalTtlMinutes": int(approval_policy.get("approvalTtlMinutes") or 120),
                 },
                 "actionPolicy": decisions,
-            }
+                }
+            )
+            node["evidence"] = evidence
+            self._set_node_story(
+                node,
+                why=str(node.get("rationale") or "Safety gate evaluates requested actions before execution."),
+                analysis={
+                    "requestedActions": requested,
+                    "policyDecisions": decisions,
+                    "approvalMode": approval_policy.get("mode"),
+                },
+                changes={
+                    "blockedActions": blocked_actions,
+                    "requiredApprovals": required_approvals,
+                },
+                run={
+                    "status": "blocked",
+                    "notExecuted": True,
+                    "reason": "approval_required",
+                },
+                decision={
+                    "nextStep": "wait_for_approval",
+                    "reason": "Pending approvals must be resolved before execution continues.",
+                },
+            )
             self._append_timeline(state, node, "safety_blocked", cost=0.1)
             self._append_log(state, f"[{node['node_id']}] Safety blocked actions: {pending_actions}")
             return
 
         node["status"] = "SUCCEEDED"
-        node["evidence"] = {
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        evidence.update(
+            {
             "blockedActions": [],
             "requiredApprovals": [],
             "approvedActions": sorted(approved),
@@ -4042,7 +4682,31 @@ PY
                 "approvalTtlMinutes": int(approval_policy.get("approvalTtlMinutes") or 120),
             },
             "actionPolicy": decisions,
-        }
+            }
+        )
+        node["evidence"] = evidence
+        self._set_node_story(
+            node,
+            why=str(node.get("rationale") or "Safety checks must pass before autonomous execution."),
+            analysis={
+                "requestedActions": requested,
+                "policyDecisions": decisions,
+                "approvalMode": approval_policy.get("mode"),
+            },
+            changes={
+                "blockedActions": [],
+                "requiredApprovals": [],
+            },
+            run={
+                "status": "not_executed",
+                "notExecuted": True,
+                "reason": "safety_validation_only",
+            },
+            decision={
+                "nextStep": "continue_execution",
+                "reason": "No pending approvals; run can proceed.",
+            },
+        )
         self._append_timeline(state, node, "safety_passed", cost=0.1)
         self._append_log(state, f"[{node['node_id']}] Safety gate passed")
 
@@ -4066,25 +4730,77 @@ PY
                 ttl_minutes=int(decision.get("approvalTtlMinutes") or 120),
             )
             node["status"] = "BLOCKED"
-            node["evidence"] = {
-                **(node.get("evidence") or {}),
+            evidence = node.get("evidence")
+            if not isinstance(evidence, dict):
+                evidence = {}
+            evidence.update(
+                {
                 "blockedActions": [action] if decision["blockedByPolicy"] else [],
                 "requiredApprovals": [action],
                 "actionPolicy": decision,
-            }
+                }
+            )
+            node["evidence"] = evidence
+            self._set_node_story(
+                node,
+                why="Repair action requires explicit approval before it can be applied.",
+                analysis={
+                    "repairAction": action,
+                    "policyDecision": decision,
+                },
+                changes={
+                    "repairApplied": False,
+                },
+                run={
+                    "status": "blocked",
+                    "notExecuted": True,
+                    "reason": str(decision.get("reasonCode") or "approval_required"),
+                },
+                decision={
+                    "nextStep": "wait_for_approval",
+                    "reason": "Repair action is gated by approval policy.",
+                },
+            )
             self._append_timeline(state, node, "repair_blocked", cost=0.05)
             self._append_log(state, f"[{node['node_id']}] Repair blocked for action {action}")
             return
 
         node["status"] = "SUCCEEDED"
-        sub_agents = self._spawn_sub_agents(state, node, plans=self._runtime_lane_plans(state, lane="repair"), depth=1)
+        sub_agents = self._spawn_sub_agents(state, node, plans=self._runtime_lane_plans(state, lane="repair", node=node), depth=1)
         node["sub_agents"] = sub_agents
-        node["evidence"] = {
-            **(node.get("evidence") or {}),
+        evidence = node.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        evidence.update(
+            {
             "applied": True,
             "appliedAt": _now_iso(),
             "subAgents": sub_agents,
-        }
+            }
+        )
+        node["evidence"] = evidence
+        self._set_node_story(
+            node,
+            why="Repair lane applies the selected mitigation to recover failed branch execution.",
+            analysis={
+                "repairAction": action,
+                "policyDecision": decision,
+                "subAgentCount": len(sub_agents),
+            },
+            changes={
+                "repairApplied": True,
+                "action": action,
+            },
+            run={
+                "status": "not_executed",
+                "notExecuted": True,
+                "reason": "repair_preparation_only",
+            },
+            decision={
+                "nextStep": "retry_parent_node",
+                "reason": "Repair action applied; upstream branch can retry.",
+            },
+        )
         self._append_timeline(state, node, "repair_applied", cost=0.15)
         self._append_log(state, f"[{node['node_id']}] Repair action applied: {action}")
 
@@ -5456,7 +6172,13 @@ PY
             raise RuntimeError(f"mle_runner_command_failed rc={proc.returncode}")
         return runtime_report
 
-    def _emit_runtime_checkpoint(self, run_dir: Path, state: Dict[str, Any], source: str) -> Dict[str, Any]:
+    def _emit_runtime_checkpoint(
+        self,
+        run_dir: Path,
+        state: Dict[str, Any],
+        source: str,
+        not_executed: bool = False,
+    ) -> Dict[str, Any]:
         ckpt_dir = run_dir / "artifacts" / "ckpt"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         existing = sorted(ckpt_dir.glob("ckpt_runtime_*.json"))
@@ -5468,6 +6190,7 @@ PY
             "createdAt": _now_iso(),
             "runId": str(state.get("run_id") or ""),
             "status": str(state.get("status") or "RUNNING"),
+            "notExecuted": bool(not_executed),
         }
         (ckpt_dir / f"{checkpoint_id}.json").write_text(
             json.dumps(payload, indent=2, ensure_ascii=False),
@@ -5616,51 +6339,110 @@ PY
             },
         }
 
-    def _runtime_lane_plans(self, state: Dict[str, Any], lane: str) -> List[Dict[str, str]]:
+    def _fallback_lane_plans(self, lane: str) -> List[Dict[str, str]]:
+        mapping: Dict[str, List[Dict[str, str]]] = {
+            "research": [
+                {"role": "BaselineScoutSubAgent", "objective": "Review baseline traces and identify bottlenecks."},
+                {"role": "MutationCriticSubAgent", "objective": "Stress-test planned code mutations against target metrics."},
+            ],
+            "integration_base": [
+                {"role": "ContractProbeSubAgent", "objective": "Verify adapter and runner contract compatibility."},
+            ],
+            "integration_fresh_only": [
+                {"role": "DependencyProbeSubAgent", "objective": "Check missing package and import risks before execution."},
+            ],
+            "ops_budget_guard": [
+                {"role": "BudgetGuardSubAgent", "objective": "Clamp runtime budget and suggest rollback triggers."},
+            ],
+            "eval": [
+                {"role": "EvalProtocolSubAgent", "objective": "Validate protocol fairness and confidence settings."},
+            ],
+            "repair": [
+                {"role": "RootCauseSubAgent", "objective": "Summarize failure root cause and validate repair path."},
+            ],
+        }
+        return mapping.get(lane) or [{"role": "GeneralSubAgent", "objective": "Analyze current node and propose next action."}]
+
+    def _runtime_lane_plans(
+        self,
+        state: Dict[str, Any],
+        lane: str,
+        node: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, str]]:
+        if isinstance(node, dict) and not self._is_node_llm_enabled(state, node):
+            self._append_event(
+                state,
+                event="llm_skipped",
+                message=f"LLM disabled for node {node.get('node_id')} lane planner",
+                payload={
+                    "node_id": node.get("node_id"),
+                    "task": f"lane_plans_{lane}",
+                    "lane": lane,
+                    "reason": "node_llm_disabled",
+                },
+                actor=str(node.get("agent") or "Agent"),
+            )
+            return self._fallback_lane_plans(lane)
+
         spec = state.get("research_spec") or {}
         retrieval = self.retrieve_context(query=f"sub-agent planning lane={lane} {spec.get('taskGoal')}", k=3)
-        payload = self._llm_complete_json(
-            task=f"lane_plans_{lane}",
-            system_prompt=(
-                "You are the sub-agent planner for Agentic MARL Research OS. "
-                "Return strict JSON with specialized sub-agent roles and objectives only."
-            ),
-            user_prompt=json.dumps(
-                {
-                    "task": "lane_sub_agent_plans",
+        try:
+            payload = self._invoke_llm_json(
+                state=state,
+                node=node,
+                task=f"lane_plans_{lane}",
+                system_prompt=(
+                    "You are the sub-agent planner for Agentic MARL Research OS. "
+                    "Return strict JSON with specialized sub-agent roles and objectives only."
+                ),
+                user_prompt=json.dumps(
+                    {
+                        "task": "lane_sub_agent_plans",
+                        "lane": lane,
+                        "runId": str(state.get("run_id") or ""),
+                        "executionMode": self._execution_adapter_mode(state),
+                        "taskGoal": spec.get("taskGoal"),
+                        "environment": (spec.get("environment") or {}).get("name"),
+                        "successMetrics": list((spec.get("successMetrics") or {}).keys()),
+                        "budget": spec.get("budget") or {},
+                        "constraints": spec.get("constraints") or {},
+                        "retrieval": retrieval,
+                    },
+                    ensure_ascii=False,
+                ),
+                schema=self._llm_lane_plan_schema(),
+                temperature=0.25,
+                role=f"lane_planner:{lane}",
+            )
+            rows = payload.get("plans") or []
+            if not isinstance(rows, list):
+                raise RuntimeError(f"llm_required_invalid_lane_plans lane={lane}")
+            plans: List[Dict[str, str]] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                role = str(row.get("role") or "").strip()
+                objective = str(row.get("objective") or "").strip()
+                if not role or not objective:
+                    continue
+                plans.append({"role": role, "objective": objective})
+            if not plans:
+                raise RuntimeError(f"llm_required_empty_lane_plans lane={lane}")
+            return plans
+        except Exception as exc:
+            self._append_event(
+                state,
+                event="llm_fallback",
+                message=f"LLM lane planner failed for lane={lane}; using fallback plans",
+                payload={
+                    "node_id": (node or {}).get("node_id") if isinstance(node, dict) else None,
+                    "task": f"lane_plans_{lane}",
                     "lane": lane,
-                    "runId": str(state.get("run_id") or ""),
-                    "executionMode": self._execution_adapter_mode(state),
-                    "taskGoal": spec.get("taskGoal"),
-                    "environment": (spec.get("environment") or {}).get("name"),
-                    "successMetrics": list((spec.get("successMetrics") or {}).keys()),
-                    "budget": spec.get("budget") or {},
-                    "constraints": spec.get("constraints") or {},
-                    "retrieval": retrieval,
+                    "reason": str(exc),
                 },
-                ensure_ascii=False,
-            ),
-            schema=self._llm_lane_plan_schema(),
-            temperature=0.25,
-            run_id=str(state.get("run_id") or ""),
-            node_id=None,
-            role=f"lane_planner:{lane}",
-        )
-        rows = payload.get("plans") or []
-        if not isinstance(rows, list):
-            raise RuntimeError(f"llm_required_invalid_lane_plans lane={lane}")
-        plans: List[Dict[str, str]] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            role = str(row.get("role") or "").strip()
-            objective = str(row.get("objective") or "").strip()
-            if not role or not objective:
-                continue
-            plans.append({"role": role, "objective": objective})
-        if not plans:
-            raise RuntimeError(f"llm_required_empty_lane_plans lane={lane}")
-        return plans
+                actor=str((node or {}).get("agent") or "lane_planner"),
+            )
+            return self._fallback_lane_plans(lane)
 
     def _lane_condition_matches(self, state: Dict[str, Any], condition: str) -> bool:
         tag = str(condition or "always").strip().lower()
@@ -5820,64 +6602,128 @@ PY
     ) -> Dict[str, Any]:
         role = str(plan.get("role") or "GenericSubAgent")
         context = self._sub_agent_strategy_context(state, node, sub_agent, plan)
+
+        if not self._is_node_llm_enabled(state, node):
+            self._append_event(
+                state,
+                event="llm_skipped",
+                message=f"LLM disabled for node {node.get('node_id')} sub-agent {role}",
+                payload={
+                    "node_id": node.get("node_id"),
+                    "task": "sub_agent_execution",
+                    "role": role,
+                    "reason": "node_llm_disabled",
+                },
+                actor=str(node.get("agent") or "Agent"),
+            )
+            actions = [
+                f"rule::{role}::collect_context",
+                f"rule::{role}::propose_next_step",
+            ]
+            evidence: Dict[str, Any] = {
+                "analysis": str(context.get("defaultNote") or f"Rule-based execution for role {role}."),
+                "actions": actions,
+                "confidence": 0.58,
+                "estimatedLatencyMs": 120,
+                "strategySource": "rule_fallback",
+                "strategyRole": role,
+            }
+            if int(context.get("dataSourceCount") or 0) > 1 and int(context.get("depth") or 1) < int(context.get("maxDepth") or 1):
+                evidence["__spawn_plans__"] = [
+                    {"role": "SchemaProbeSubAgent", "objective": "Probe schema consistency across multiple data sources."}
+                ]
+            return evidence
+
         retrieval = self.retrieve_context(
             query=f"sub-agent execution role={role} objective={plan.get('objective')} node={node.get('node_id')}",
             k=3,
         )
-        payload = self._llm_complete_json(
-            task="sub_agent_execution",
-            system_prompt=(
-                "You are a specialized sub-agent executor in Agentic MARL Research OS. "
-                "Return strict JSON with analysis, actions, confidence, latency estimate, and optional child spawn plans."
-            ),
-            user_prompt=json.dumps(
-                {
+        try:
+            payload = self._invoke_llm_json(
+                state=state,
+                node=node,
+                task="sub_agent_execution",
+                system_prompt=(
+                    "You are a specialized sub-agent executor in Agentic MARL Research OS. "
+                    "Return strict JSON with analysis, actions, confidence, latency estimate, and optional child spawn plans."
+                ),
+                user_prompt=json.dumps(
+                    {
+                        "task": "sub_agent_execution",
+                        "runId": str(state.get("run_id") or ""),
+                        "nodeId": str(node.get("node_id") or ""),
+                        "role": role,
+                        "objective": str(plan.get("objective") or ""),
+                        "context": context,
+                        "retrieval": retrieval,
+                    },
+                    ensure_ascii=False,
+                ),
+                schema=self._llm_sub_agent_execution_schema(),
+                temperature=0.25,
+                role=role,
+            )
+            confidence = float(payload.get("confidence") or 0.0)
+            confidence = max(0.0, min(1.0, confidence))
+            estimated_latency_ms = int(payload.get("estimatedLatencyMs") or 120)
+            estimated_latency_ms = max(1, min(10000, estimated_latency_ms))
+            actions = [str(item).strip() for item in (payload.get("actions") or []) if str(item).strip()]
+            if not actions:
+                raise RuntimeError(f"llm_required_invalid_sub_agent_actions role={role}")
+
+            spawn_rows = payload.get("spawnPlans") or []
+            normalized_spawns: List[Dict[str, str]] = []
+            for row in spawn_rows:
+                if not isinstance(row, dict):
+                    continue
+                spawn_role = str(row.get("role") or "").strip()
+                spawn_objective = str(row.get("objective") or "").strip()
+                if not spawn_role or not spawn_objective:
+                    continue
+                normalized_spawns.append({"role": spawn_role, "objective": spawn_objective})
+
+            evidence: Dict[str, Any] = {
+                "analysis": str(payload.get("analysis") or "").strip(),
+                "actions": actions,
+                "confidence": round(confidence, 4),
+                "estimatedLatencyMs": estimated_latency_ms,
+                "strategySource": "llm",
+                "strategyRole": role,
+            }
+            if normalized_spawns:
+                evidence["__spawn_plans__"] = normalized_spawns
+            return evidence
+        except Exception as exc:
+            self._append_event(
+                state,
+                event="llm_fallback",
+                message=f"LLM sub-agent execution failed for role={role}; using fallback actions",
+                payload={
+                    "node_id": node.get("node_id"),
                     "task": "sub_agent_execution",
-                    "runId": str(state.get("run_id") or ""),
-                    "nodeId": str(node.get("node_id") or ""),
                     "role": role,
-                    "objective": str(plan.get("objective") or ""),
-                    "context": context,
-                    "retrieval": retrieval,
+                    "reason": str(exc),
                 },
-                ensure_ascii=False,
-            ),
-            schema=self._llm_sub_agent_execution_schema(),
-            temperature=0.25,
-            run_id=str(state.get("run_id") or ""),
-            node_id=str(node.get("node_id") or ""),
-            role=role,
-        )
-        confidence = float(payload.get("confidence") or 0.0)
-        confidence = max(0.0, min(1.0, confidence))
-        estimated_latency_ms = int(payload.get("estimatedLatencyMs") or 120)
-        estimated_latency_ms = max(1, min(10000, estimated_latency_ms))
-        actions = [str(item).strip() for item in (payload.get("actions") or []) if str(item).strip()]
-        if not actions:
-            raise RuntimeError(f"llm_required_invalid_sub_agent_actions role={role}")
-
-        spawn_rows = payload.get("spawnPlans") or []
-        normalized_spawns: List[Dict[str, str]] = []
-        for row in spawn_rows:
-            if not isinstance(row, dict):
-                continue
-            spawn_role = str(row.get("role") or "").strip()
-            spawn_objective = str(row.get("objective") or "").strip()
-            if not spawn_role or not spawn_objective:
-                continue
-            normalized_spawns.append({"role": spawn_role, "objective": spawn_objective})
-
-        evidence: Dict[str, Any] = {
-            "analysis": str(payload.get("analysis") or "").strip(),
-            "actions": actions,
-            "confidence": round(confidence, 4),
-            "estimatedLatencyMs": estimated_latency_ms,
-            "strategySource": "llm",
-            "strategyRole": role,
-        }
-        if normalized_spawns:
-            evidence["__spawn_plans__"] = normalized_spawns
-        return evidence
+                actor=str(node.get("agent") or "Agent"),
+            )
+            actions = [
+                f"rule::{role}::collect_context",
+                f"rule::{role}::propose_next_step",
+            ]
+            evidence: Dict[str, Any] = {
+                "analysis": str(context.get("defaultNote") or f"Rule-based execution for role {role}."),
+                "actions": actions,
+                "confidence": 0.52,
+                "estimatedLatencyMs": 120,
+                "strategySource": "rule_fallback_llm_error",
+                "strategyRole": role,
+                "fallbackReason": str(exc),
+            }
+            if int(context.get("dataSourceCount") or 0) > 1 and int(context.get("depth") or 1) < int(context.get("maxDepth") or 1):
+                evidence["__spawn_plans__"] = [
+                    {"role": "SchemaProbeSubAgent", "objective": "Probe schema consistency across multiple data sources."}
+                ]
+            return evidence
 
     def _build_failure_report(
         self,
@@ -5947,6 +6793,8 @@ PY
             "execution_plan": f"Apply fix action {fix.get('action')} and retry upstream node.",
             "expected_metrics": {"recoveryRate": ">=0.8"},
             "budget": {"gpuHours": 0.1, "wallclockMinutes": 10},
+            "node_function": "coding",
+            "llm_enabled": bool(self._llm_policy(state).get("coding", True)),
             "risk": "medium",
             "status": "PENDING",
             "rationale": str(fix.get("rationale") or "Auto-generated repair branch"),
@@ -6594,6 +7442,12 @@ PY
                 "execution_plan": candidate.get("execution_plan") or "Execute branch hypothesis and collect evidence.",
                 "expected_metrics": candidate.get("expected_metrics") or node.get("expected_metrics") or {},
                 "budget": candidate.get("budget") or self._child_budget_from_parent(node=node, branch_index=idx),
+                "node_function": str(candidate.get("node_function") or "coding"),
+                "llm_enabled": bool(
+                    candidate.get("llm_enabled")
+                    if candidate.get("llm_enabled") is not None
+                    else self._is_node_llm_enabled(state, node)
+                ),
                 "risk": candidate.get("risk") or "medium",
                 "status": "PENDING",
                 "rationale": f"Search expansion from {node.get('node_id')}",

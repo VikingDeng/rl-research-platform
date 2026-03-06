@@ -1,0 +1,60 @@
+version: '1.0'
+baselineHighRiskActions:
+- external_dependency_install
+- unknown_script_execution
+- data_exfiltration
+riskWeights:
+  forbiddenAction: 2
+  blockedRequestedAction: 4
+  requestedHighRiskAction: 3
+  requestedUnknownAction: 2
+  complianceNoExternalPush: 3
+  complianceNoPII: 1
+  allowNetwork: 2
+  allowDependencyInstall: 1
+templates:
+  strict:
+    label: Strict
+    description: Unknown actions and blocked actions require stricter approval gates.
+    mode: strict
+    minRiskScore: 8
+    minApprovals: 1
+    requireDistinctRoles: true
+    approvalTtlMinutes: 120
+    blockedActionRoles:
+    - security
+    highRiskActionRoles:
+    - admin
+    - security
+    requireApprovalForUnknownActions: true
+  balanced:
+    label: Balanced
+    description: Default production profile balancing safety and execution throughput.
+    mode: balanced
+    minRiskScore: 3
+    minApprovals: 1
+    requireDistinctRoles: false
+    approvalTtlMinutes: 120
+    blockedActionRoles:
+    - admin
+    - security
+    highRiskActionRoles:
+    - admin
+    - ops
+    - security
+    requireApprovalForUnknownActions: true
+  permissive:
+    label: Permissive
+    description: Allows faster local iteration while keeping explicit high-risk approvals.
+    mode: permissive
+    minRiskScore: 0
+    minApprovals: 1
+    requireDistinctRoles: false
+    approvalTtlMinutes: 180
+    blockedActionRoles:
+    - admin
+    highRiskActionRoles:
+    - admin
+    - ops
+    - security
+    requireApprovalForUnknownActions: false

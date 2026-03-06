@@ -45,6 +45,14 @@ class AgenticApprovalPolicy(APIModel):
     approval_ttl_minutes: int = 120
 
 
+class AgenticLlmNodePolicy(APIModel):
+    planning: bool = True
+    coding: bool = True
+    experiment: bool = True
+    review: bool = True
+    safety: bool = True
+
+
 class AgenticIdeaInput(APIModel):
     title: str
     task_goal: str
@@ -59,6 +67,7 @@ class AgenticIdeaInput(APIModel):
     requested_actions: List[str] = Field(default_factory=list)
     sub_agent_policy: AgenticSubAgentPolicy = Field(default_factory=AgenticSubAgentPolicy)
     approval_policy: AgenticApprovalPolicy = Field(default_factory=AgenticApprovalPolicy)
+    llm_policy: AgenticLlmNodePolicy = Field(default_factory=AgenticLlmNodePolicy)
 
 
 class AgenticNode(APIModel):
@@ -70,6 +79,8 @@ class AgenticNode(APIModel):
     execution_plan: str
     expected_metrics: Dict[str, Any] = Field(default_factory=dict)
     budget: Dict[str, Any] = Field(default_factory=dict)
+    node_function: Optional[str] = None
+    llm_enabled: Optional[bool] = None
     risk: str = "low"
     status: str = "PENDING"
     rationale: Optional[str] = None
@@ -104,6 +115,8 @@ class AgenticLlmTraceRecord(APIModel):
     model: str
     attempt: int
     latency_ms: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     node_id: Optional[str] = None
     role: Optional[str] = None
     prompt_hash: str = ""

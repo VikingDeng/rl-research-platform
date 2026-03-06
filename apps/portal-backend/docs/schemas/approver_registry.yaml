@@ -1,0 +1,135 @@
+version: '1.0'
+strictMode: true
+approvers:
+- actorId: ui:local_admin
+  roles:
+  - admin
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+  note: local UI default admin
+- actorId: ui:local_ops
+  roles:
+  - ops
+  scopes:
+  - '*'
+  actionAllowlist:
+  - switch_offline_stub
+  - reduce_scope
+  - retry_with_debug
+  active: true
+  note: local UI ops
+- actorId: ui:local_security
+  roles:
+  - security
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+  note: local UI security
+- actorId: cli:local_admin
+  roles:
+  - admin
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+  note: local CLI admin
+- actorId: ui:admin_reviewer
+  roles:
+  - admin
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: ui:ops_reviewer
+  roles:
+  - ops
+  scopes:
+  - '*'
+  actionAllowlist:
+  - switch_offline_stub
+  - reduce_scope
+  - retry_with_debug
+  active: true
+- actorId: ui:security_reviewer
+  roles:
+  - security
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: test_admin
+  roles:
+  - admin
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: admin_user
+  roles:
+  - admin
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: admin_1
+  roles:
+  - admin
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: admin_2
+  roles:
+  - admin
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: security_user
+  roles:
+  - security
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: security_1
+  roles:
+  - security
+  scopes:
+  - '*'
+  actionAllowlist:
+  - '*'
+  active: true
+- actorId: ops_user
+  roles:
+  - ops
+  scopes:
+  - '*'
+  actionAllowlist:
+  - switch_offline_stub
+  - reduce_scope
+  - retry_with_debug
+  active: true
+- actorId: test_ops
+  roles:
+  - ops
+  scopes:
+  - '*'
+  actionAllowlist:
+  - switch_offline_stub
+  - reduce_scope
+  - retry_with_debug
+  active: true

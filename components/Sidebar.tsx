@@ -148,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ className = '', onNavigate }) 
               </NavLink>
               <NavLink to="/agentic" className={navClass} onClick={handleNavItemClick}>
                 <WandSparkles className="w-4 h-4 mr-3" />
-                {t('sidebar.agenticLab', 'ToT Canvas')}
+                {t('sidebar.agenticLab', 'Agentic Explorer')}
               </NavLink>
               <NavLink to="/tuning" className={navClass} onClick={handleNavItemClick}>
                 <Sliders className="w-4 h-4 mr-3" />

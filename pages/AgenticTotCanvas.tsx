@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Bot, ChevronDown, ChevronUp, Pause, Play, RefreshCcw, ShieldAlert, SlidersHorizontal, Sparkles, WandSparkles } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronUp, Pause, Play, RefreshCcw, ShieldAlert, SlidersHorizontal, Sparkles, WandSparkles } from 'lucide-react';
 import { api, isDemoMode } from '../services/api';
 import { useI18n } from '../services/i18n';
 import type { AgenticIdeaInput, AgenticLlmTraceRecord, AgenticNode, AgenticNodeRunRecord, AgenticRunDetail, AgenticRunSummary } from '../types';
@@ -1135,7 +1135,7 @@ export const AgenticTotCanvas: React.FC = () => {
       await refreshRuns();
       const finalStatus = String(current?.status || '').toUpperCase();
       if (finalStatus === 'BLOCKED') {
-        setMessage(tx('自动探索已暂停：遇到安全审批，请到 Agent 面板处理后继续。', 'Auto exploration paused: safety approval required. Approve in Agent Panel and continue.'));
+        setMessage(tx('自动探索已暂停：遇到安全审批，请先在当前页面处理后继续。', 'Auto exploration paused: safety approval required. Resolve it on this page and continue.'));
       } else {
         setMessage(tx('自动探索已完成一轮：你可以继续点击 Auto Explore 让树继续生长。', 'Auto exploration round complete. Click Auto Explore again to keep growing the tree.'));
       }
@@ -1322,15 +1322,6 @@ export const AgenticTotCanvas: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
-                disabled={!selectedRunId}
-                className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-              >
-                <Bot className="mr-1.5 h-4 w-4" />
-                {tx('Agent 面板', 'Agent Panel')}
-              </button>
-              <button
-                type="button"
                 onClick={() => navigate('/agentic/classic')}
                 className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
               >
@@ -1339,7 +1330,7 @@ export const AgenticTotCanvas: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => navigate('/agentic/workbench')}
+                onClick={() => navigate('/agentic')}
                 className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
               >
                 {tx('探索洞察', 'Exploration Insights')}
@@ -1379,16 +1370,7 @@ export const AgenticTotCanvas: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => selectedRunId && navigate(`/agentic/runs/${encodeURIComponent(selectedRunId)}/agents`)}
-              disabled={!selectedRunId}
-              className="inline-flex items-center rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-            >
-              <Bot className="mr-1.5 h-4 w-4" />
-              {tx('Agent 面板', 'Agent Panel')}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/agentic/workbench')}
+              onClick={() => navigate('/agentic')}
               className="inline-flex items-center rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-100"
             >
               {tx('探索洞察', 'Exploration Insights')}

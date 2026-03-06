@@ -1,0 +1,472 @@
+
+
+===== PAGE 1 =====
+NeurIPS 主会冲 SOTA 的最强研究方向提案：LLM 多
+智能体通信/协议学习 × MARL（截至 2026-02-27）
+Step Zero 子赛道选择
+我选 C) LLM 作为 agent 的通信/协议学习与泛化（可解释通信、ad-hoc teamwork），原因是它同时满
+足“顶会重要性 + 近期硬缺口 + 两到六周能做出强结果 + 有明确可冲 SOTA 的新基准”。
+Collab-Overcooked 的结果非常直接地说明：即便是当时最强的一批闭源/开源模型，在“必须协作”的烹饪式
+交互任务中，随着协作复杂度提升，SR/PC 出现断崖式下降；比如在 Level 6 上，最强模型的 Success Rate 仍
+只有几十个百分点，说明不是“再调 prompt”就能解决，而是存在结构性 coordination failure。 1
+更关键的是，这个子赛道正处在“benchmark 新、指标清晰、SOTA 还没被做满”的窗口期：Collab-
+Overcooked 提供了 process-oriented 的 TES/ITES 等指标，把“沟通是否真的推进任务”可量化；而现有工
+作更多停留在“协议手工设计/固定 pipeline”、或“episode 级 reward 的 RL 微调”，还没有干净地解决“通
+信动作的 credit assignment + 泛化”这一核心缺口。 2
+此外，多智能体在真实任务中普遍遭遇“协作诅咒（curse of coordination）”：例如 CooperBench 显示即使
+是更强的前沿模型，两 agent 协作成功率也显著低于单 agent，这说明通信/协议层面的学习问题是“现在就该
+攻”的主战场。 3
+Step One 现状快照
+Benchmark 选择与原因
+我选 两个互补 benchmark，但 主战场只押一个（Collab-Overcooked），第二个用于补“泛化叙事”与
+reviewer 关心的外推稳定性。
+第一基准是 Collab-Overcooked（EMNLP 2025 Highlight）：它基于 Overcooked-AI，扩展出“资源隔离 +
+知识不对称 + 强制协作”的双 agent 任务，包含 六个复杂度等级、三十个任务，并引入 TES/ITES/PC 等过程
+指标来评估协作过程质量，而不仅是最终成败。 4
+第二基准是 Overcooked-AI 的 ad-hoc teamwork / partner generalization 系列（以 UPD/OGC 线为代
+表）：它提供“未知队友/未知关卡”的零样本协作压力，适合作为“协议泛化/与未知伙伴协作”的外部证据
+链，避免论文看起来只是“对一个新基准过拟合”。 5
+Collab-Overcooked 上截至 2026-02-27 的强基线
+Collab-Overcooked 原论文给出了 13 个代表性 LLM 的系统评测，按 Level 汇报 Success Rate (SR) 与
+Progress Completeness (PC)。从表格可以直接抽出“最被认可的强 baseline”（至少五个）：
+最强闭源与一线闭源：Claude Sonnet 4、o4-mini、GPT-4o（以及同表中的其他闭源模型）。 6
+最强开源梯队：DeepSeek-R1、DeepSeek-V3、Qwen2.5-72B-Instruct、Llama-3.1-70B-Instruct（以及
+同表中的其他规模）。 6
+1
+
+===== PAGE 2 =====
+在这套评测里，Claude Sonnet 4 是整体最强（尤其复杂任务），而 DeepSeek-R1 是开源中最强之一；但即
+便它们在高复杂度仍明显掉点，给“学习通信协议”留下了很大可提升空间。 1
+为了避免 reviewer 说“你只是在比较 base model”，我们还需要把“系统/框架类 baseline”纳入对比（这
+些不一定出现在 Collab-Overcooked 原表，但在 Overcooked 实时协作范畴被广泛采用、且与你的方法同一问
+题域）：
+• DPT-Agent（ACL 2025）：Dual Process（System 1 FSM / code-as-policy + System 2 ToM + async
+reflection）用于实时协作。 7
+• CoWork-X（arXiv 2026-02）：把跨 episode 经验压缩为可执行 HTN skill library，在线 token 几乎为
+零，强调实时约束下的协作演化。 8
+• ProAgent（AAAI 2024）：显式做 teammate intent inference 与 belief correction，解决 zero-shot
+coordination。 9
+这些框架类 baseline 的存在意味着：你的贡献不能是“再做一个 prompting pipeline”，而必须是“让通信协
+议可学习 + 可泛化 + 可量化提升”。
+Overcooked ad-hoc teamwork / generalization 线的强基线
+用于补“泛化 + 不同 partner/布局”的第二基准，按当前主流强 baseline（至少五个）列出如下（它们对
+NeurIPS MARL reviewer 很熟）：
+• UPD（Unsupervised Partner Design, arXiv 2025）：learnability 驱动的 partner-space
+curriculum，强调在 Overcooked-AI 与 OGC 上稳定优于 population-based/free baselines。 10
+• ROTATE（arXiv/OpenReview 2025）：把 AHT 统一成 open-ended 学习过程，交替改进 AHT agent
+与 adversarial teammate generator。 11
+• E3T（NeurIPS 2023）：End-to-End 训练，partner policy 用 ego 与 random 的 mixture，降低对大
+population 的依赖。 12
+• COLE（arXiv 2023 / ICML 线）：open-ended 目标与 cooperative incompatibility 处理，在
+Overcooked 环境验证。 13
+• MEP（Maximum Entropy PBT，AAAI 2023）：population entropy 促进多样性，对 zero-shot
+human-AI coordination。 14
+• Fictitious Co-Play（FCP，arXiv 2021）：用 checkpoint population 做 best response，解决“无需
+人类数据也能协作”。 15
+这条线对你很重要：它给了“协议泛化/与未知伙伴协作”非常成熟的评价框架，你可以把它作为 Collab-
+Overcooked 之外的外推验证（哪怕只做一个小型补充实验，也能显著提升可信度）。
+十条内：已经很满的点 vs 还没干净解决的硬缺口
+• 大家已经把 “prompt 设计 + role specialization + 固定协作 pipeline” 玩得很满（如多 agent
+coding/写作系统、固定 critic/reviewer 回路等），但协议本身仍多是“人为指定”。 16
+• “用 RL 优化多 LLM 协作”的主线最近在补 variance / centralized critic（如 CoLLM-CC），但多数任
+务 reward 非常粗，且不直接针对“通信动作是否推进协作过程”。 17
+• Overcooked 实时协作系统在补“快慢脑/技能库/低延迟”，但更多是结构工程与后验纠错，通信协议
+仍然不可学习或不可控。 18
+• Collab-Overcooked 的关键价值在于它把协作拆成“发起协作/响应协作”，并给出 TES/ITES 等过程指
+标；但当前公开 work 主要停在“评测揭示缺陷”，缺少一个用这些指标来训练协议的标准方法。 4
+• 通信失败模式高度结构化（premature / repetitive / irrelevant initiation 等），说明“通信的时机与语
+义结构”比“语言更流畅”更关键。 19
+2
+
+===== PAGE 3 =====
+• ad-hoc teamwork 线（UPD/ROTATE/E3T/MEP/FCP）已经很强，但它们主要在 离散动作空间处理
+partner 多样性；如何把“partner 多样性/learnability”迁移到 LLM 的通信风格/协议空间，几乎没
+被干净解决。 20
+• “协议选择”层面已有讨论（JSON-RPC/A2A/ACP 等），但这更多是工程标准，并没有给出“可学习且
+可泛化”的协议优化目标。 21
+• 因为 Collab-Overcooked 有 RAT（Reference Action Templates）与 TES/ITES，存在一个难得的机
+会：把协议学习做成“可证明的 reward shaping / credit assignment”问题，这在 NeurIPS 叙事上
+非常干净。 22
+• 目前最缺的是：token/句子级通信动作 credit assignment（谁说错了什么导致失败？），以及在
+partner/model shift 下的稳定泛化。 23
+Step Two idea 发散
+下面给出 十六个可能成为 NeurIPS 贡献点的 idea（每个都绑定最小实验闭环：强基准 + 强指标）。
+Idea A：ITES 作为 potential-based shaping 的 MARL 通信训练
+缺口：Collab-Overcooked 有 ITES 可以衡量“某个协作动作是否推进任务”，但没人把它用于稳定训练通信策
+略。机制：把 TES 视为“轨迹势能”，ITES 视为势能差，构造 potential-based reward shaping 来训练
+（CTDE actor-critic / PPO 均可），目标直接优化 initiation/response 的时机与内容结构。最小实验：Collab-
+Overcooked，指标 SR/PC + initiate/respond_collaboration，重点看 Level 5–6。 24
+Idea B：把“说话”变成离散 Speech-Act DSL（请求/确认/交付/纠错）再自然语言落地
+缺口：自由文本的 action space 太大，导致 RL variance 高、也很难评估“说的哪一部分有用”。机制：学习
+一个小 DSL（含 slot：物品/位置/数量/时序），RL 在 DSL 空间做决策，LLM 只负责把 DSL 渲染成自然语言
+（可多风格）。最小实验：Collab-Overcooked，指标 ITES 的正贡献率（ITES>0 的比例）+ SR/PC。 24
+Idea C：RAT-Privileged Critic（训练时看 RAT，测试时不看）做“协议 credit assignment”
+缺口：多 agent LLM 的 critic 很难学到“当前对话是否对齐正确协作轨迹”。机制：训练阶段允许 critic 访问
+RAT 或 TES 对齐信号（privileged info），学习更低方差的 advantage；actor 仍只看局部观测与对话。最小实
+验：Collab-Overcooked，比较 vanilla critic vs RAT-privileged critic 的 sample efficiency（达到某 SR/PC 阈
+值所需 episodes）。 25
+Idea D：通信时机门控（When-to-speak）作为可学习的 option termination
+缺口：Collab-Overcooked 的主要失败是“过早/重复发起协作”，本质是时机错误。机制：引入一个可学习
+gate/termination（类似 option）决定何时发起 request/何时沉默执行，并用 ITES 直接监督门控策略。最小
+实验：Collab-Overcooked，指标 premature/repetitive initiation 错误率下降 + Level 6 SR 提升。 26
+Idea E：通信压缩 + token 预算约束的 Pareto 协议学习
+缺口：实时协作系统（如 CoWork-X）强调 token/latency，但 Collab-Overcooked 的评测仍主要面向协作正确
+性。机制：在训练目标中加入 token cost（或消息长度）正则，学习 “最小充分信息” 协议；同时报告 SR/PC
+与 token 作为 Pareto frontier。最小实验：Collab-Overcooked，复现强 baseline 后做 Pareto 曲线
+（performance vs tokens）。 27
+Idea F：对抗式“通信风格 domain randomization”提升 ad-hoc partner 泛化
+缺口：AHT/UPD 在动作空间做 partner curriculum，但 LLM 协作中 partner shift 主要来自“沟通风格/表达习
+惯/协议变体”。机制：训练时对 partner 的消息进行风格扰动（同义改写、顺序扰动、冗余插入）或用小
+generator 产生多风格协议，学习风格不变的语义解析器与对策。最小实验：Collab-Overcooked，做 cross-
+play：训练时只见到两种风格，测试在新风格上 SR/PC 保持率。 28
+3
+
+===== PAGE 4 =====
+Idea G：把“协作请求”建模为可验证的最小承诺（commitment）对象
+缺口：自然语言请求很难验证是否满足，导致 miscoordination 传播。机制：引入 commitment 对象（例如
+commit(deliver=chopped_tomato, by=t+3) ），环境侧可检查；RL 最小化 commitment violation，同时最
+大化 ITES。最小实验：Collab-Overcooked，指标 violation rate + SR/PC，外加“解释性”案例分析。 29
+Idea H：对话级 belief state 的显式学习（策略预测 partner 下一步需要什么）
+缺口：ProAgent 做 intent inference，但在 Collab-Overcooked 强制协作与 RAT 评价的设定下，仍缺少“可量
+化的 belief quality”。机制：训练一个 belief head 预测 partner 的下一关键协作动作类型（request/
+response + 物品），作为 auxiliary loss，主 loss 仍是 ITES-shaped RL。最小实验：Collab-Overcooked，指
+标：belieff1 + SR/PC，比较 w/wo belief head。 30
+Idea I：引入“反事实消息替换”的 message-COMA
+缺口：COMA 类反事实 credit assignment 在离散通信上成熟，但 LLM 消息可替换空间巨大。机制：用 DSL 或
+小候选集生成 K 个反事实消息，计算替换后 TES/ITES 的变化作为 message-level advantage（反事实基线）。
+最小实验：Collab-Overcooked，比较 message-COMA vs 常规 actor-critic 的方差与收敛速度。 31
+Idea J：把 Collab-Overcooked 的 TES/ITES 变成“可学习的 reward model”，做离线 RL + 少量在线校准
+缺口：在线跑 LLM 成本高，且 reward 稠密度有限。机制：用数据集收集轨迹，训练一个近似 TES/ITES 的
+differentiable reward model（用 RAT 对齐信号监督），先离线 RL，再少量在线微调。最小实验：Collab-
+Overcooked，指标：达到同等 SR/PC 所需在线 episodes 降低。 32
+Idea K：把“协作”拆成两个互补策略：Initiator policy + Responder policy 的可学习协议耦合
+缺口：现有方法混在一个 policy 里，导致 initiation 学不好拖垮 response（paper 也指出 initiation 是主要瓶
+颈）。机制：显式参数化两个 policy（或同模型两头），加一个 coordination constraint（例如 initiation 的
+语义必须可被 responder 解析成行动），用 ITES 拆分 credit。最小实验：Collab-Overcooked，指标
+initiate_collaboration 与 respond_collaboration 同时提升，且在后几步不崩。 33
+Idea L：把“对话历史”做可组合的事件图（event graph），而不是长上下文
+缺口：Collab-Overcooked 发现 attention distribution 与协作成败相关，但还缺少结构化记忆表征来避免注意
+力漂移。机制：把关键事件（请求、交付、确认、失败）写入 event graph，policy 只读图摘要；训练时用
+TES/ITES 指导哪些事件应被记录。最小实验：Collab-Overcooked，指标：长任务（Level 5–6）SR/PC 提升 +
+attention failure rate 降低。 4
+Idea M：用 learnability-guided “协议课程”模拟 UPD，但在语言协议空间而非动作空间
+缺口：UPD 在 partner policy 空间做 curriculum；语言协议也需要“难度自适应”的 partner 生成。机制：生
+成不同“协议难度”的 partner（从严格 DSL → 半自然语言 → 高噪声自然语言），以 learnability（回报方差/
+ITES 分布）选择训练 partner。最小实验：Collab-Overcooked + 少量自造 partner 风格集，指标：对新
+partner 协议的 zero-shot SR/PC。 34
+Idea N：把协作视作“分布式程序合成”：生成可执行协作脚本而不是逐步聊天
+缺口：逐步聊天难以控制一致性与可验证性。机制：一次性合成双方协作脚本（含条件与 handoff），再由执
+行器落地；用 TES 对齐来训练脚本生成。最小实验：Collab-Overcooked，指标：redundancy 降低 + SR 提
+升，尤其 Level 6。 35
+Idea O：把 CoLLM-CC 的 centralized critic 思路迁移到 Collab-Overcooked，但 critic 输入加入“TES 对
+齐特征”
+缺口：CoLLM-CC 对长时稀疏 reward 更好，但它没利用 Collab-Overcooked 独有的过程对齐信号。机制：复
+用 centralized critic 架构，同时额外输入 TES alignment features（例如当前 trajectory 与最优 RAT 的对齐长
+度/偏差位置）。最小实验：Collab-Overcooked，对比纯 centralized critic vs 加对齐特征的 critic。 36
+4
+
+===== PAGE 5 =====
+Idea P：用“最小信息充分性（minimal sufficient info）”理论刻画协作消息
+缺口：现有 MI 类方法多用于 lossy comm，但对自然语言协作缺少 clean 的形式化。机制：用 ITES 作为“任务
+推进”，最小化消息与环境状态的互信息同时保持 ITES，为协议学习提供可证明目标。最小实验：Collab-
+Overcooked，展示同 SR 下 token/MI 更低且泛化更强。 37
+Step Three reviewer 过滤
+我会非常狠地淘汰掉“看起来像把已有方法搬到新环境”的点子。被我直接否决的一类是：只做“prompt 更
+好/加 memory/加 reflection”但没有可学习的协议机制，因为这和既有 Overcooked 系统工作（DPT-Agent/
+HLA/CoWork-X 等）过于接近，且缺少可证明/可量化的新贡献。 38
+最终留下 四个候选（其余十二个我认为要么工程味太重、要么 novelty 不够干净、要么两到六周难出强结
+果）。
+SOTA Clean Theoretical
+候选 idea（保 Novelty Feasibility 总评（AC 口吻，尖
+Potential Story Cleanliness
+留） /10 /10 锐）
+/10 /10 /10
+这是最
+像“NeurIPS MARL
+正统贡献”的点：
+把 Collab-
+Overcooked 独有
+的 TES/ITES 变成可
+C1：ITES- 证明的 shaping 与
+Potential 低方差 credit
+Shaping + RAT- assignment。与
+9 9 9 8 9
+Privileged CoLLM-CC 的相似
+CTDE（训练通 点在于 centralized
+信协议） critic，但你的关键
+差异是“critic 直接
+对齐 RAT/TES”的
+privileged
+learning，以及把
+ITES 解释成潜函数
+差。 36
+能明显解决“自然
+语言 action space
+太大导致 RL 不稳
+C2：Speech- 定”的核心痛点；
+Act DSL（小动 但 reviewer 会问这
+作空间）+ 是否只是把 DPT-
+8 8 8 8 7
+message-level Agent/CoWork-X
+COMA（反事实 的“结构化技能/规
+信用分配） 则”换皮。你必须
+强调 DSL 是“可学
+习协议层”，不是
+手写技能库。 39
+5
+
+===== PAGE 6 =====
+SOTA Clean Theoretical
+候选 idea（保 Novelty Feasibility 总评（AC 口吻，尖
+Potential Story Cleanliness
+留） /10 /10 锐）
+/10 /10 /10
+概念漂亮，能带来
+强泛化叙事；但两
+C3： 到六周内做出
+Learnability- convincing 的“风
+guided 协议/风 格空间生成 + 课程
+8 7 7 6 8
+格课程（UPD- 优化 + 泛化评
+for-language- 测”有点冒险。更
+protocol） 像 ICML/AAMAS 的
+open-ended
+learning 线。 40
+叙事干净（可验证
+协议很吸引），但
+你需要证明它不
+是“换个消息格
+C4： 式”。必须把
+Commitment- violation 与 TES/
+based 可验证协 7 7 9 7 8 ITES 绑定，并展示
+议 + violation- commitment 机制
+minimizing RL 直接修复 Collab-
+Overcooked 的
+initiation/
+response 失败模
+式。 41
+结论（AC 总结）：C1 是最像 NeurIPS 主会风格且最可能冲 SOTA 的主攻方向；C2 可以作为 C1 的关键工程化
+支撑（降低 action space）；C3 更适合作为“补充泛化实验/附录”；C4 适合作为“叙事增强”（如果 C1 的
+纯 RL 叙事被质疑可解释性）。 42
+Step Four 迭代强化
+下面对评分最高的三个（C1/C2/C4）做两轮“审稿人攻击→作者修正”，最后淘汰到一到两个最终 idea。
+Round One
+C1：ITES-Potential Shaping + RAT-Privileged CTDE
+Reviewer Attack（致命质疑）
+- 这不就是“用 benchmark 的评测指标当 reward”吗？学术贡献在哪里？
+- 你用 RAT 做 privileged critic，会不会造成“训练作弊”，测试时不可用导致崩？
+- 如果你训练过全部 30 个任务，那 SR/PC 提升只是 memorization，和“协议泛化”无关。
+- CoLLM-CC/其他 actor-critic 已经在做 centralized critic，为什么你的会更好？ 17
+- 若你能 beat Claude Sonnet 4，这会被质疑为“评测不公平/实现细节偏差”。 6
+Author Fix（最小改动、最大增益）
+- 把贡献写成：“TES/ITES → potential-based reward shaping + credit assignment 定理（或命题）”，
+强调 policy invariance / variance reduction 的理论点，而不是“拿指标当奖励”。核心是你给出一个“为什
+6
+
+===== PAGE 7 =====
+么现在可行”的数学化训练原则：Collab-Overcooked 恰好提供可作为潜函数的过程对齐信号。 22
+- 将 RAT-privileged 设计成 critic-regularization 而非直接依赖：critic 输出同时预测（a）回报，（b）TES 对
+齐统计；测试时 actor 不需要 RAT，critic 也不参与。并做一个“去掉 privileged”消融证明不是作弊。
+- 强制加入 train/test split：例如用 Level 1–4 的任务/recipes 训练，Level 5–6 测试；并做“新 recipe / 新
+layout”小规模外推（软件层面改 layout 文件即可）。 43
+- 与 CoLLM-CC 的差异要写死：CoLLM-CC 面向写作/编码/Minecraft 的长期稀疏回报，且 critic 表征的是 joint
+history value；你这里是 “reference-aligned value”（用 TES/ITES 内生地定义价值形状），属于不同问题
+结构。 44
+- SOTA 声明改成两层：(i) beat best open-source baseline（DeepSeek-R1 等）；(ii) 在 Level 5–6 的 SR/
+PC 上追平或超过 Claude Sonnet 4（若做不到，也仍可作为强结果）。并严格复用官方评测脚本与报告 logs。
+45
+C2：Speech-Act DSL + message-COMA
+Reviewer Attack
+- DSL 是手工设计还是学习？如果是手工，那 novelty 很弱。
+- 你这像 DPT-Agent 的 code-as-policy 或 CoWork-X 的 HTN skill library，只是换了名字。 46
+- 反事实消息替换会不会太贵（每步要 rollout K 次）？两到六周做不完。
+- 如果 DSL 太小，可能丢信息，反而降低 SR。
+Author Fix
+- DSL 不是手工：用最小 DSL 做 bootstrap，然后引入“可扩展 slot / learned embedding of acts”，让 act-
+space 可学习扩张（但仍小于自由文本）。
+- 明确差异：DPT-Agent/CoWork-X 的结构化更多是“动作技能”，而你是“通信协议层”：目标是让 initiate/
+respond 的语义结构稳定可解析，直接对应 Collab-Overcooked 的过程指标。 47
+- 用 counterfactual scoring without full rollout：反事实消息的价值由 RAT-privileged critic 近似，不做真
+实环境 rollout（与 C1 合并）。
+- 把 DSL 作为“actor 输出的中间表示”，最终仍渲染为自然语言，保证不违反 benchmark 的自然语言通信设
+定。 43
+C4：Commitment-based 可验证协议
+Reviewer Attack
+- 这会不会只是“换个协议格式”（更严格的 JSON），贡献不够 ML。 21
+- commitment violation 怎么定义？会不会人为？
+- 你能证明 commitment 机制真的修复 Collab-Overcooked 的核心错误类型吗？
+Author Fix
+- 把 commitment 机制绑定到 Collab-Overcooked 的 initiation/response 错误 taxonomy：把 premature/
+repetitive/irrelevant 对应到可验证规则（例如重复承诺、无必要承诺、不可执行承诺）。这样 violation 自动
+化、可量化。 48
+- 让 commitment 成为 RL 的可证明约束：目标函数 = ITES-shaped reward − λ•violation，形成清晰的
+constrained RL 叙事。
+- 把 commitment 作为 C1 的“可解释层”，而不是独立路线：主贡献仍是 ITES credit assignment。
+Round Two
+这一轮我会更苛刻：目标是把最终路线收敛成“一个最强、叙事最干净”的 paper。
+7
+
+===== PAGE 8 =====
+对 C1 的第二轮 Attack（更尖锐）
+- 如果 ITES 是基于 RAT 的对齐差分，你的 shaping 是否会把 agent 推向“模仿 RAT”而不是“真正协作”？
+（尤其当存在多种有效协作路径时） 49
+- 你声称 potential-based shaping，但你的状态是“历史轨迹”而非 MDP state，会不会理论不成立？
+- 多 agent LLM 训练成本会不会过高？（跑 LLM rollout 太慢）
+对 C1 的第二轮 Fix（最小改动）
+- 把目标从“模仿某个 RAT”提升为“在多 RAT 集合上最大化 TES”：Collab-Overcooked 本身就是对所有
+RAT 取最大对齐（TES 定义里有 max over templates），所以你优化的是“最匹配的一条有效协作轨迹”，不
+是单一模板过拟合。 22
+- 理论表述改为：在“history-augmented MDP/Dec-POMDP”上做 potential shaping（把历史当作扩展状
+态），避免硬碰“只在 Markov state 才成立”的质疑；把证明写成命题：在扩展状态空间上，ITES 等价于潜函
+数差，因此不改变最优策略集合（给出条件）。
+- 工程上用两招降成本：
+1) 只微调小模型（如 Qwen2.5-7B / Llama-3.1-8B）做 LoRA；因为 benchmark 本身已显示小模型零样本很
+弱，你的提升会非常显著。 50
+2) 采用“批量离线采样 + 少量在线 on-policy 校准”的混合训练（类似 LTC 的迭代 buffer 思路，但你的 reward
+是自动可计算的 TES/ITES）。 51
+对 C2 的第二轮 Attack
+- DSL 依然像“人为结构”，可能被 reviewer 认为是工程 trick。
+- DSL 学得好不好，与 SR/PC 的因果关系是否清晰？
+对 C2 的第二轮 Fix
+- 把 DSL 改写成“information bottleneck 的可学习中间变量”：你不是规定语言，而是规定“最小可执行协
+作语义空间”，并证明它降低 policy gradient 方差（经验上给出 gradient variance/学习曲线）。
+- DSL 只作为 C1 的一个 ablation：你可以在最终 paper 的主线里，把“无 DSL 的 C1”作为基础版本，“有
+DSL 的 C1”作为性能/效率增强，避免主贡献跑偏。
+对 C4 的第二轮 Attack
+- commitment 机制可能增加系统复杂度，且不一定提升 SR/PC（可能只提升可解释性）。
+对 C4 的第二轮 Fix
+- 把 commitment 彻底降级为“诊断/评测指标”：不强行纳入训练主干，而是在实验里用它解释“为什么 ITES
+reward 修复了某些错误类型”，形成强分析段落。
+Round Two 结束后的淘汰：我建议最终只保留一个主 idea（C1），把 C2 作为关键增强/消融维度，把 C4 作
+为分析工具。这样叙事最干净、最 NeurIPS。
+Step Five 最终交付
+下面给出 一个最终最强 idea（可直接开干），并把 C2/C4 的精华以“增强/消融/分析”的形式融入其中，保证
+paper story 干净。
+Final Idea：PoSAC —— Potential-shaped, Reference-aligned CTDE for Learning LLM
+Communication Protocols
+一句话论文卖点（标题 + 摘要第一句风格）
+PoSAC：把 Collab-Overcooked 的 TES/ITES 视为“协作轨迹势能”，用潜函数 shaping + reference-
+8
+
+===== PAGE 9 =====
+aligned centralized critic，让 LLM 多智能体在可证明不改变最优解的前提下学会“何时说/说什么”，显著
+提升强制协作任务的高复杂度成功率与协作过程质量。 22
+你认为最关键的一个创新点
+“ITES = 协作势能差”的奖励塑形：把 TES 当作轨迹势函数 Φ(h)，把 ITES 当作 Φ(h∪a)−Φ(h)，从而将“协
+作动作是否推进任务”转化为低方差、可训练的 dense signal，并自然落入 CTDE actor-critic 的可证明/可分析
+框架。 52
+目标 SOTA（明确 benchmark/指标 + 当前最强方法）
+目标 benchmark：Collab-Overcooked（30 tasks / 6 levels，强制协作，含 TES/ITES/PC 等过程指标与评测
+脚本）。 4
+主指标：Success Rate (SR) 与 Progress Completeness (PC)（论文主表）；辅指标：
+initiate_collaboration / respond_collaboration、mean_f1(TES)、redundancy（官方脚本输出字段）。 53
+当前最强（截至 2026-02-27、以公开可追溯结果为准）：Collab-Overcooked 原论文中整体最强为 Claude
+Sonnet 4；例如 Level 6 上 SR≈58、PC≈60.69（同表可见其他 levels）。 6
+你的 SOTA 目标（更现实且更可发表）：
+- Open-source SOTA：在同一评测协议下超过 DeepSeek-R1 / DeepSeek-V3 / Qwen2.5-72B 等开源基线，尤
+其在 Level 5–6。 6
+- Overall SOTA（可选冲刺）：在 Level 6 的 SR/PC 上追平或超过 Claude Sonnet 4；如果做不到，至少在
+Level 5–6 的 initiate/respond 指标上显著领先，形成“协作过程 SOTA”。 45
+最小实验闭环（MVP）
+你要在 两到六周内打出“足够像 NeurIPS 的结果”，我建议 MVP 包含五个实验块：
+实验一：主结果（必须）
+- 设置：Collab-Overcooked 全任务评测（复用官方脚本）。 49
+- 报告：按 Level 的 SR/PC + initiate/respond + TES-F1/ redundancy。 35
+实验二：训练公平性（必须）
+- Train/test split：例如 Train on Level 1–4 tasks，Test on Level 5–6 tasks（或按 recipe/layout split）。强
+调“协议学习”而非记忆。 4
+实验三：sample efficiency（必须）
+- 横轴：在线交互 episodes 或 token budget；纵轴：Level 6 SR/PC。
+- 目的：证明 ITES shaping 与 reference-aligned critic 显著降低方差、加速收敛（这是 reviewer 最吃的点）。
+44
+实验四：cross-play/partner shift（强烈建议，能让 paper 更像 NeurIPS）
+- 固定你训练出的 agent，与不同 partner backbones 组合评测（例如 partner 分别是 prompt-only
+DeepSeek-R1 / Qwen2.5-72B / Llama-3.1-70B 的 agent 版本）。
+- 报告：cross-play SR/PC 的保持率。这个实验把你和 ad-hoc teamwork 的文献主线接上。 28
+实验五：机制验证（强烈建议）
+- 对照错误类型：premature / repetitive / irrelevant initiation 的比例变化（Collab-Overcooked 论文已有此
+类分析框架）。
+- 目的：证明你不是“泛泛更强”，而是精确修复“通信时机与语义结构”的核心 failure mode。 48
+Baselines（至少六个，且要“强且合理”）
+我建议至少对比以下八个（其中前六个为最低要求）：
+9
+
+===== PAGE 10 =====
+1) Claude Sonnet 4（Zero-shot）（论文表内最强 overall baseline，引用其公开数值）； 6
+2) o4-mini（Zero-shot）（强闭源 baseline）； 6
+3) DeepSeek-R1（Zero-shot）（强开源 baseline）； 6
+4) Qwen2.5-72B-Instruct（Zero-shot）（强开源 baseline）； 6
+5) 你的 backbone 的 prompt-only 版本（同模型不训练，控制变量）； 49
+6) SFT-on-RAT（行为克隆/监督模仿）：用 RAT 构建监督数据（你必须做，用来证明 RL shaping 的必要
+性）； 32
+7) Vanilla RL（无 ITES shaping）：例如 PPO/MAPPO 风格但只用 sparse 成功信号或 PC 末端信号（展示方
+差问题）； 54
+8) CoLLM-CC-style centralized critic baseline（迁移版）：即便是简化版，也能证明你超越“通用 MAAC 微
+调套路”。 17
+Ablation（至少四个，且每个都能回答一个 reviewer 问题）
+- 去掉 ITES shaping（只用 sparse SR/PC 终点）：验证“dense 协作势能信号”是核心。 22
+- 去掉 RAT-privileged critic（critic 不看对齐特征）：验证不是“训练作弊”，而是方差优化。 55
+- 去掉 CTDE（仅 decentralized critic）：验证 centralized critic 对长程协作/稀疏场景更关键（呼应 CoLLM 的
+结论但在你的环境上重现/增强）。 17
+- 去掉 Speech-Act/When-to-speak gating（如果你实现了）：验证“时机门控/协议结构化”确实修复
+premature/repetitive initiation。 33
+为什么它可能 SOTA（机制层面的三到五条理由）
+- 奖励信号结构改变：ITES 直接评估“协作动作的边际贡献”，把原本极稀疏的成功信号拆成 dense、方向正
+确的信用分配，从根上减少 policy gradient 方差。 52
+- 过程指标与训练目标对齐：Collab-Overcooked 的评测核心是 TES/PC/协作发起响应能力；PoSAC 训练目标
+就以这些过程推进为核心，而不是只追最终成败，因此更容易在高复杂度任务上显著领先。 56
+- initiation 是瓶颈，你直接打瓶颈：原论文明确暴露 initiation 错误随步骤累积；PoSAC 的 shaping 与门控直
+接把 initiation 变成可优化对象，因此提升会集中出现在最“值钱”的高复杂度层。 48
+- reference-aligned critic 带来 sample efficiency：与通用 MAAC 相比，你的 critic 有“对齐结构特
+征”（TES/RAT），更容易学到“什么对协作有用”，减少无效探索。 57
+- 自然可形式化：把历史轨迹当扩展状态后，ITES 近似潜函数差，可导出“在扩展状态空间上最优策略不
+变”的理论切入点（哪怕只给一个命题+讨论条件，也比纯系统论文更像 NeurIPS）。 58
+失败模式与 Plan B（不超过 SOTA 仍可发顶会）
+- 失败模式一：超过开源但追不上 Claude Sonnet 4。Plan B：把贡献聚焦为“首个在 Collab-Overcooked 上
+系统化训练通信协议的 MARL 方法 + 显著提升高复杂度协作过程指标”，强调过程级 SOTA 与 sample
+efficiency，并提供强消融与错误类型修复证据。 59
+- 失败模式二：训练提升来自过拟合任务模板。Plan B：强化 train/test split 与 cross-play（partner shift）实
+验，把论文定位为“协议泛化学习”而非“任务完成”；引用 ad-hoc teamwork 线（UPD/ROTATE/E3T/MEP/
+FCP）作为理论与实验支撑。 60
+- 失败模式三：RL 太慢/太贵。Plan B：改成“离线为主、在线校准为辅”（buffer + 少量 on-policy），叙事
+上接 LTC 的“通用反馈 buffer”思想，但你的关键不同点是 reward 完全自动化且过程对齐。 51
+- 失败模式四：理论不好写。Plan B：把理论收敛成一个清晰命题（扩展状态下的 shaping 不改变最优解集合）
++ 一个经验结论（方差/样本效率），不要尝试大而全的定理体系。 44
+1 2 4 6 19 22 24 26 33 37 42 45 48 50 52 53 56 58 59 https://aclanthology.org/2025.emnlp-
+main.249.pdf
+https://aclanthology.org/2025.emnlp-main.249.pdf
+10
+
+===== PAGE 11 =====
+3 https://arxiv.org/html/2601.13295v1
+https://arxiv.org/html/2601.13295v1
+5 10 20 28 34 40 60 https://arxiv.org/pdf/2508.06336
+https://arxiv.org/pdf/2508.06336
+7 18 38 39 46 https://aclanthology.org/2025.acl-long.206/
+https://aclanthology.org/2025.acl-long.206/
+8 27 https://arxiv.org/pdf/2602.05004
+https://arxiv.org/pdf/2602.05004
+9 30 https://arxiv.org/abs/2308.11339
+https://arxiv.org/abs/2308.11339
+11 ROTATE: Regret-driven Open-ended Training for Ad Hoc Teamwork
+https://arxiv.org/abs/2505.23686?utm_source=chatgpt.com
+12 An Efficient End-to-End Training Approach for Zero-Shot Human-AI ...
+https://proceedings.neurips.cc/paper_files/paper/2023/hash/07a363fd2263091c2063998e0034999c-Abstract-
+Conference.html?utm_source=chatgpt.com
+13 Cooperative Open-ended Learning Framework for Zero-shot Coordination
+https://arxiv.org/abs/2302.04831?utm_source=chatgpt.com
+14 Maximum Entropy Population-Based Training for Zero-Shot Human-AI ...
+https://ojs.aaai.org/index.php/AAAI/article/view/25758?utm_source=chatgpt.com
+15 https://arxiv.org/abs/2110.08176
+https://arxiv.org/abs/2110.08176
+16 https://arxiv.org/abs/2411.00053
+https://arxiv.org/abs/2411.00053
+17 23 36 44 54 57 https://arxiv.org/html/2601.21972
+https://arxiv.org/html/2601.21972
+21 https://openreview.net/forum?id=lqNqKUG2dn
+https://openreview.net/forum?id=lqNqKUG2dn
+25 29 31 32 35 41 43 47 49 55 https://github.com/YusaeMeow/Collab-Overcooked
+https://github.com/YusaeMeow/Collab-Overcooked
+51 https://arxiv.org/abs/2310.01444
+https://arxiv.org/abs/2310.01444
+11

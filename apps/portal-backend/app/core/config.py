@@ -45,10 +45,19 @@ class Settings(BaseSettings):
     eval_algo_name: str = "SB3 Evaluator"
     matrix_entrypoint: str = "algorithms.matrix_eval:run"
     matrix_algo_name: str = "Matrix Evaluator"
+    llm_provider: str = "openai_compat"
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4.1-mini"
+    llm_api_key: Optional[str] = None
+    llm_temperature: float = 0.2
+    llm_max_tokens: int = 1200
+    llm_timeout_s: int = 60
+    llm_max_retries: int = 3
 
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
+        extra="ignore",
     )
 
 

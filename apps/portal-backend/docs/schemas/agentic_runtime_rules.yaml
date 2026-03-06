@@ -1,0 +1,108 @@
+version: '1.0'
+lanes:
+  research:
+  - role: HypothesisCriticSubAgent
+    objective: Critique assumptions and identify weak hypotheses before expensive
+      execution.
+    when: always
+  - role: DataScoutSubAgent
+    objective: Inspect multi-source data readiness and integration risks.
+    when: multi_source
+  integration_base:
+  - role: ContractProbeSubAgent
+    objective: Validate adapter entrypoint and runner contract compatibility.
+    when: always
+  integration_fresh_only:
+  - role: DependencyProbeSubAgent
+    objective: Detect runtime dependency gaps and fallback necessity.
+    when: always
+  ops_budget_guard:
+  - role: BudgetGuardSubAgent
+    objective: Stress-check budget plan and fallback thresholds before execution.
+    when: budget_risky
+  eval:
+  - role: ConfidenceCheckSubAgent
+    objective: Verify confidence settings and matrix sampling adequacy.
+    when: always
+  repair:
+  - role: RootCauseSubAgent
+    objective: Summarize failure root cause and validate chosen repair action.
+    when: always
+fixStrategies:
+  missing_dependency:
+    preferredWhenInstallAllowed: external_dependency_install
+    preferredWhenInstallBlocked: switch_offline_stub
+    alternatives:
+    - switch_offline_stub
+    - external_dependency_install
+    rationaleInstallAllowed: Install missing dependency under controlled runtime package
+      policy.
+    rationaleInstallBlocked: Dependency install is blocked or disabled; switch to
+      offline adapter for deterministic fallback.
+  generic_failure:
+    action: reduce_scope
+    alternatives:
+    - reduce_scope
+    - retry_with_debug
+    rationale: Unknown failure type; reduce run scope and retry with verbose diagnostics.
+roleStrategies:
+  HypothesisCriticSubAgent:
+    template:
+      weakAssumptions:
+      - reward shaping sensitivity
+      recommendedControl: preserve baseline branch
+      metricCoverage: $metricKeys
+      estimatedLatencyMs: 210
+  DataScoutSubAgent:
+    template:
+      sourceCount: $dataSourceCount
+      sources: $dataSources
+      riskFlag: $dataRiskFlag
+      estimatedLatencyMs: 240
+    spawnWhen:
+      minDataSourceCount: 2
+      maxDepthExclusive: $maxDepth
+    spawnPlans:
+    - role: SchemaProbeSubAgent
+      objective: Probe schema compatibility across multiple data sources.
+  SchemaProbeSubAgent:
+    template:
+      compatibility: compatible
+      checkedFields:
+      - obs
+      - action
+      - reward
+      - done
+      estimatedLatencyMs: 180
+  ContractProbeSubAgent:
+    template:
+      runnerContract: train(config, metrics_path, checkpoint_dir, run_id)
+      contractCompatible: true
+      estimatedLatencyMs: 220
+  DependencyProbeSubAgent:
+    template:
+      dependencyInstallAllowed: $allowDependencyInstall
+      recommendedFallback: $dependencyFallback
+      estimatedLatencyMs: 260
+  BudgetGuardSubAgent:
+    template:
+      gpuHours: $gpuHours
+      wallclockMinutes: $wallclockMinutes
+      budgetRisk: $budgetRisk
+      estimatedLatencyMs: 180
+  ConfidenceCheckSubAgent:
+    template:
+      confidenceLevel: $confidenceLevel
+      gamesPerPair: $gamesPerPair
+      matrixMode: $matrixMode
+      estimatedLatencyMs: 170
+  RootCauseSubAgent:
+    template:
+      latestFailureReason: $latestFailureReason
+      repairValidated: true
+      estimatedLatencyMs: 200
+  default:
+    template:
+      note: $defaultNote
+      objective: $objective
+      estimatedLatencyMs: 120
